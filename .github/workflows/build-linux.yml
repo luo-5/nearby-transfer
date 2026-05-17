@@ -26,11 +26,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Build Linux packages
-        run: npm run dist:linux -- --publish never
+        run: npm run dist:linux -- --publish never --config.directories.output=dist
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: nearby-transfer-linux
-          path: ../nearby-transfer-dist/**/*
+          path: dist/**/*
           if-no-files-found: error

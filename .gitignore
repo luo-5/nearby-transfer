@@ -8,6 +8,7 @@ android-app/build/
 .cache/
 .tmp/
 dist-test/
+release-artifacts/
 local.properties
 *.log
 *.part-*

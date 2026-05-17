@@ -1,6 +1,0 @@
-68415ce3abcfe10510e1b883b42d32d0ecbcd104f197593449df0144398c3188  release-artifacts/latest.yml
-478838c72cb363d825c8822a8fed9398acd92d3b0db44739a4bc5b7bf11c99b2  release-artifacts/nearby-transfer-0.1.0-android-debug-ui.apk
-d9deab9214cacd45cd0d9b2e5be0a82c5a7f1588bde2ba424ab9ab29ea916604  release-artifacts/nearby-transfer-0.1.0-linux-amd64.deb
-620872358ecb47b8a053659742c238d91bafa34eadb1eb8de8bf677259ae8698  release-artifacts/nearby-transfer-0.1.0-linux-x86_64.rpm
-e72e18faa369d5e233daa187cdb6b3d570d48a7866ba5b7bed912a8801b0d98e  release-artifacts/nearby-transfer-0.1.0-win-x64.exe
-af1a5ef9fc7514c6849a3dfe87a22c1fe684950115bf1d756c3c6c7c7c78f908  release-artifacts/nearby-transfer-0.1.0-win-x64.exe.blockmap
