@@ -26,7 +26,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Build Linux packages
-        run: npm run dist:linux
+        run: npm run dist:linux -- --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

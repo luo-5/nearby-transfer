@@ -23,7 +23,7 @@ jobs:
         run: npm ci
 
       - name: Build Windows packages
-        run: npm run dist:windows
+        run: npm run dist:windows -- --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
