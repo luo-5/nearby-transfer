@@ -1,0 +1,28 @@
+{
+  "name": "nearby-transfer",
+  "version": "0.1.0",
+  "description": "Encrypted nearby device file transfer app for desktop and Android.",
+  "main": "src/main.js",
+  "license": "MIT",
+  "author": "Nearby Transfer Contributors",
+  "homepage": "https://github.com/nearby-transfer/nearby-transfer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nearby-transfer/nearby-transfer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nearby-transfer/nearby-transfer/issues"
+  },
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer/renderer.js && node --check src/core/config.js && node --check src/core/crypto.js && node --check src/core/discovery.js && node --check src/core/path-utils.js && node --check src/core/server.js && node --check src/core/transfer.js && node --check test/crypto-smoke.js && node --check test/local-transfer-smoke.js",
+    "test": "node test/crypto-smoke.js && node test/local-transfer-smoke.js",
+    "dist:linux": "electron-builder --config packaging/linux/electron-builder.yml --linux deb rpm --x64 --arm64",
+    "dist:windows": "electron-builder --config packaging/electron-builder.yml --win nsis --x64 --arm64",
+    "dist:desktop": "npm run dist:linux && npm run dist:windows"
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3"
+  }
+}

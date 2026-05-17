@@ -1,0 +1,15 @@
+node_modules/
+dist/
+release/
+nearby-transfer-dist/
+android-app/build/
+.gradle/
+.gradle-user-home/
+.cache/
+.tmp/
+dist-test/
+local.properties
+*.log
+*.part-*
+.DS_Store
+Thumbs.db

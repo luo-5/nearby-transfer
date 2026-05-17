@@ -1,0 +1,6 @@
+extends: packaging/electron-builder.yml
+productName: nearby-transfer
+linux:
+  desktop:
+    Name: Nearby Transfer
+    StartupWMClass: Nearby Transfer

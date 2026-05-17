@@ -1,0 +1,33 @@
+name: Build Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows packages
+        run: npm run dist:windows
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nearby-transfer-windows
+          path: ../nearby-transfer-dist/**/*
+          if-no-files-found: error

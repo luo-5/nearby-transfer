@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>附近传输</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="send-panel">
+        <div id="dropZone" class="drop-zone" role="button" tabindex="0">
+          <span class="drop-icon">+</span>
+          <span class="drop-title">选择文件</span>
+          <span class="drop-help">也可以直接把文件拖到这里</span>
+        </div>
+
+        <div id="selectedFile" class="selected-file empty">未选择文件。</div>
+        <button id="sendButton" class="primary" type="button" disabled>发送</button>
+        <p id="statusText" class="status-text">先选择文件，再选择附近设备。</p>
+      </section>
+
+      <section class="grid">
+        <article class="panel peers-panel">
+          <div class="panel-title-row">
+            <h2>附近设备</h2>
+            <span id="peerCount" class="badge">0</span>
+          </div>
+          <div id="peers" class="peers empty">正在搜索...</div>
+          <button id="refreshButton" class="secondary" type="button">刷新设备</button>
+        </article>
+
+        <article class="panel identity">
+          <h2>本机</h2>
+          <dl>
+            <div>
+              <dt>名称</dt>
+              <dd id="deviceName">正在启动...</dd>
+            </div>
+            <div>
+              <dt>收到的文件保存到</dt>
+              <dd id="saveDirectory">-</dd>
+              <dd id="saveDirectoryMode" class="mode-line">-</dd>
+            </div>
+          </dl>
+          <div class="button-row">
+            <button id="changeSaveDirectoryButton" class="secondary" type="button">更改保存位置</button>
+            <button id="resetSaveDirectoryButton" class="secondary" type="button">恢复默认下载目录</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel transfers-panel">
+        <div class="panel-title-row">
+          <h2>传输记录</h2>
+          <span class="badge">实时</span>
+        </div>
+        <div id="transfers" class="transfers empty">暂无传输记录。</div>
+      </section>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>

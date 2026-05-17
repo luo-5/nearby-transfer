@@ -1,0 +1,43 @@
+appId: io.github.nearbytransfer.app
+productName: Nearby Transfer
+artifactName: nearby-transfer-${version}-${os}-${arch}.${ext}
+asar: true
+directories:
+  output: ../nearby-transfer-dist
+files:
+  - src/**/*
+  - package.json
+  - README.md
+  - LICENSE
+extraMetadata:
+  name: nearby-transfer
+  main: src/main.js
+linux:
+  category: Network
+  executableName: nearby-transfer
+  maintainer: Nearby Transfer Contributors
+  synopsis: Encrypted nearby file transfer
+  description: Encrypted local-network file transfer application for nearby devices.
+  target:
+    - target: deb
+      arch:
+        - x64
+        - arm64
+    - target: rpm
+      arch:
+        - x64
+        - arm64
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
