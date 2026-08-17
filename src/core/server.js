@@ -13,6 +13,9 @@ const FILE_STREAM_CHUNK_BYTES = 1024 * 1024;
 const PROGRESS_MIN_BYTES = 1024 * 1024;
 const PROGRESS_MIN_MS = 250;
 const UPLOAD_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const TRANSFER_REQUEST_LIMIT = 20;
+const TRANSFER_REQUEST_WINDOW_MS = 60 * 1000;
+const MAX_PENDING_TRANSFERS = 32;
 
 class TransferServer {
   constructor(options) {
@@ -23,6 +26,11 @@ class TransferServer {
     this.server = null;
     this.port = null;
     this.pending = new Map();
+    this.reservedTransferIds = new Set();
+    this.requestWindows = new Map();
+    this.transferRequestLimit = positiveIntegerOption(options.transferRequestLimit, TRANSFER_REQUEST_LIMIT);
+    this.transferRequestWindowMs = positiveIntegerOption(options.transferRequestWindowMs, TRANSFER_REQUEST_WINDOW_MS);
+    this.maxPendingTransfers = positiveIntegerOption(options.maxPendingTransfers, MAX_PENDING_TRANSFERS);
     this.cleanupTimer = null;
   }
 
@@ -58,6 +66,8 @@ class TransferServer {
       this.server.close();
       this.server = null;
     }
+    this.reservedTransferIds.clear();
+    this.requestWindows.clear();
   }
 
   setSaveDirectory(saveDirectory) {
@@ -88,6 +98,13 @@ class TransferServer {
   }
 
   async _handleTransferRequest(request, response) {
+    const rateLimit = this._consumeTransferRequest(request.socket.remoteAddress || 'unknown');
+    if (!rateLimit.allowed) {
+      response.setHeader('retry-after', String(rateLimit.retryAfterSeconds));
+      respondJson(response, 429, { ok: false, error: 'Too many transfer requests' });
+      return;
+    }
+
     const payload = await readJsonBody(request, REQUEST_BODY_LIMIT);
     const validationError = validateTransferRequest(payload);
     if (validationError) {
@@ -108,53 +125,67 @@ class TransferServer {
     }
 
     const transferId = payload.transferId;
-    const safeName = safeFilename(payload.file.name);
-    const savePath = uniqueDestinationPath(this.saveDirectory, safeName);
-    const key = deriveTransferKey(
-      this.device.encryptionPrivateKey,
-      payload.senderEphemeralPublicKey,
-      transferId
-    );
-
-    const incoming = {
-      transferId,
-      sender: payload.sender,
-      file: {
-        name: safeName,
-        originalName: payload.file.name,
-        size: payload.file.size,
-        sha256: payload.file.sha256
-      },
-      saveDirectory: this.saveDirectory,
-      savePath
-    };
-
-    const decision = await this.onIncomingRequest(incoming);
-    if (!decision || !decision.accepted) {
-      this.onTransferEvent(Object.assign({}, incoming, {
-        direction: 'receive',
-        status: 'rejected',
-        bytes: 0,
-        total: incoming.file.size
-      }));
-      respondJson(response, 200, { accepted: false });
+    if (this.pending.has(transferId) || this.reservedTransferIds.has(transferId)) {
+      respondJson(response, 409, { ok: false, error: 'Transfer ID is already pending' });
+      return;
+    }
+    if (this.pending.size + this.reservedTransferIds.size >= this.maxPendingTransfers) {
+      respondJson(response, 503, { ok: false, error: 'Too many pending transfers' });
       return;
     }
 
-    this.pending.set(transferId, {
-      createdAt: Date.now(),
-      key,
-      sender: incoming.sender,
-      file: incoming.file,
-      savePath: incoming.savePath
-    });
-    this.onTransferEvent(Object.assign({}, incoming, {
-      direction: 'receive',
-      status: 'accepted',
-      bytes: 0,
-      total: incoming.file.size
-    }));
-    respondJson(response, 200, { accepted: true, transferId });
+    this.reservedTransferIds.add(transferId);
+    try {
+      const safeName = safeFilename(payload.file.name);
+      const savePath = uniqueDestinationPath(this.saveDirectory, safeName);
+      const key = deriveTransferKey(
+        this.device.encryptionPrivateKey,
+        payload.senderEphemeralPublicKey,
+        transferId
+      );
+
+      const incoming = {
+        transferId,
+        sender: payload.sender,
+        file: {
+          name: safeName,
+          originalName: payload.file.name,
+          size: payload.file.size,
+          sha256: payload.file.sha256
+        },
+        saveDirectory: this.saveDirectory,
+        savePath
+      };
+
+      const decision = await this.onIncomingRequest(incoming);
+      if (!decision || !decision.accepted) {
+        this.onTransferEvent(Object.assign({}, incoming, {
+          direction: 'receive',
+          status: 'rejected',
+          bytes: 0,
+          total: incoming.file.size
+        }));
+        respondJson(response, 200, { accepted: false });
+        return;
+      }
+
+      this.pending.set(transferId, {
+        createdAt: Date.now(),
+        key,
+        sender: incoming.sender,
+        file: incoming.file,
+        savePath: incoming.savePath
+      });
+      this.onTransferEvent(Object.assign({}, incoming, {
+        direction: 'receive',
+        status: 'accepted',
+        bytes: 0,
+        total: incoming.file.size
+      }));
+      respondJson(response, 200, { accepted: true, transferId });
+    } finally {
+      this.reservedTransferIds.delete(transferId);
+    }
   }
 
   async _handleUpload(transferId, request, response) {
@@ -240,6 +271,23 @@ class TransferServer {
     }
   }
 
+  _consumeTransferRequest(remoteAddress) {
+    const now = Date.now();
+    let window = this.requestWindows.get(remoteAddress);
+    if (!window || now - window.startedAt >= this.transferRequestWindowMs) {
+      window = { startedAt: now, count: 0 };
+      this.requestWindows.set(remoteAddress, window);
+    }
+
+    if (window.count >= this.transferRequestLimit) {
+      const remainingMs = Math.max(1, this.transferRequestWindowMs - (now - window.startedAt));
+      return { allowed: false, retryAfterSeconds: Math.ceil(remainingMs / 1000) };
+    }
+
+    window.count += 1;
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
   _cleanupPending() {
     const now = Date.now();
     for (const [transferId, pending] of this.pending.entries()) {
@@ -247,7 +295,16 @@ class TransferServer {
         this.pending.delete(transferId);
       }
     }
+    for (const [remoteAddress, window] of this.requestWindows.entries()) {
+      if (now - window.startedAt >= this.transferRequestWindowMs) {
+        this.requestWindows.delete(remoteAddress);
+      }
+    }
   }
+}
+
+function positiveIntegerOption(value, fallback) {
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
 function validateTransferRequest(payload) {
