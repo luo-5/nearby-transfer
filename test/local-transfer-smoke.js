@@ -62,6 +62,8 @@ async function main() {
 
     await assertSenderDeviceIdRejected({ sender, port });
     await assertOversizedUploadRejected({ sender, receiver, port, saveDir, events });
+    await assertTransferRequestRateLimit({ sender, receiver, saveDir });
+    await assertPendingTransferLimits({ sender, receiver, saveDir });
   } finally {
     server.stop();
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -128,6 +130,84 @@ async function assertOversizedUploadRejected(options) {
   assert(options.events.some((event) => event.transferId === transferId && event.status === 'failed'));
 }
 
+async function assertTransferRequestRateLimit(options) {
+  let promptCount = 0;
+  const server = new TransferServer({
+    device: options.receiver,
+    saveDirectory: options.saveDir,
+    transferRequestLimit: 2,
+    transferRequestWindowMs: 60000,
+    onIncomingRequest: async () => {
+      promptCount += 1;
+      return { accepted: false };
+    }
+  });
+
+  try {
+    const port = await server.start(0);
+    const first = await postJsonWithStatus(port, '/transfer/request', createSignedRequest(options.sender, 'rate-limit-1'));
+    const second = await postJsonWithStatus(port, '/transfer/request', createSignedRequest(options.sender, 'rate-limit-2'));
+    const blocked = await postJsonWithStatus(port, '/transfer/request', createSignedRequest(options.sender, 'rate-limit-3'));
+
+    assert.strictEqual(first.statusCode, 200);
+    assert.strictEqual(second.statusCode, 200);
+    assert.strictEqual(blocked.statusCode, 429);
+    assert.strictEqual(blocked.body.error, 'Too many transfer requests');
+    assert(Number(blocked.headers['retry-after']) >= 1);
+    assert.strictEqual(promptCount, 2);
+  } finally {
+    server.stop();
+  }
+}
+
+async function assertPendingTransferLimits(options) {
+  const server = new TransferServer({
+    device: options.receiver,
+    saveDirectory: options.saveDir,
+    maxPendingTransfers: 1,
+    onIncomingRequest: async () => ({ accepted: true })
+  });
+
+  try {
+    const port = await server.start(0);
+    const firstPayload = createSignedRequest(options.sender, 'pending-limit-1');
+    const accepted = await postJsonWithStatus(port, '/transfer/request', firstPayload);
+    const duplicate = await postJsonWithStatus(port, '/transfer/request', firstPayload);
+    const full = await postJsonWithStatus(port, '/transfer/request', createSignedRequest(options.sender, 'pending-limit-2'));
+
+    assert.strictEqual(accepted.statusCode, 200);
+    assert.strictEqual(accepted.body.accepted, true);
+    assert.strictEqual(duplicate.statusCode, 409);
+    assert.strictEqual(duplicate.body.error, 'Transfer ID is already pending');
+    assert.strictEqual(full.statusCode, 503);
+    assert.strictEqual(full.body.error, 'Too many pending transfers');
+  } finally {
+    server.stop();
+  }
+}
+
+function createSignedRequest(sender, transferId) {
+  const ephemeral = createX25519KeyPair();
+  const payload = {
+    protocolVersion: 1,
+    transferId,
+    sender: {
+      deviceId: sender.deviceId,
+      deviceName: sender.deviceName,
+      fingerprint: sender.fingerprint,
+      signingPublicKey: sender.signingPublicKey
+    },
+    file: {
+      name: transferId + '.txt',
+      size: 0,
+      sha256: crypto.createHash('sha256').digest('hex')
+    },
+    senderEphemeralPublicKey: ephemeral.publicKey
+  };
+  payload.signature = signTransferRequest(payload, sender.signingPrivateKey);
+  return payload;
+}
+
 function postJsonWithStatus(port, requestPath, payload) {
   const body = Buffer.from(JSON.stringify(payload));
   return new Promise((resolve, reject) => {
@@ -140,7 +220,7 @@ function postJsonWithStatus(port, requestPath, payload) {
         'content-type': 'application/json; charset=utf-8',
         'content-length': body.length
       }
-    }, (response) => collectJson(response, (body) => resolve({ statusCode: response.statusCode, body }), reject));
+    }, (response) => collectJson(response, (body) => resolve({ statusCode: response.statusCode, headers: response.headers, body }), reject));
     request.on('error', reject);
     request.end(body);
   });
