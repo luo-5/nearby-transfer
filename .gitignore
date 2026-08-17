@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Local desktop package test output (for example dist-win-smoke/).
+dist-*/
 release/
 nearby-transfer-dist/
 android-app/build/
