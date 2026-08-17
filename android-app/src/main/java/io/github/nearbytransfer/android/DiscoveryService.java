@@ -32,8 +32,6 @@ final class DiscoveryService {
         void onStatus(String message);
     }
 
-    private static final String APP_ID = "nearby-transfer";
-    private static final int PROTOCOL_VERSION = 1;
     private static final String MULTICAST_ADDRESS = "239.255.77.77";
     private static final int DISCOVERY_PORT = 47777;
     private static final long PEER_TTL_MS = 10000;
@@ -116,7 +114,7 @@ final class DiscoveryService {
             socket.joinGroup(group);
             notifyStatus("已加入发现组播 " + MULTICAST_ADDRESS + ":" + DISCOVERY_PORT);
 
-            byte[] buffer = new byte[65535];
+            byte[] buffer = new byte[DiscoveryAnnouncement.MAX_BYTES + 1];
             while (running) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
@@ -151,45 +149,21 @@ final class DiscoveryService {
     }
 
     private void handleMessage(DatagramPacket packet) {
-        try {
-            JSONObject payload = new JSONObject(new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8));
-            if (!APP_ID.equals(payload.optString("app")) || payload.optInt("protocolVersion") != PROTOCOL_VERSION) {
-                return;
-            }
-            if (!"announce".equals(payload.optString("type"))) {
-                return;
-            }
-            String deviceId = payload.optString("deviceId", "");
-            if (deviceId.isEmpty() || deviceId.equals(device.deviceId)) {
-                return;
-            }
-            String encryptionPublicKey = payload.optString("encryptionPublicKey", "");
-            String signingPublicKey = payload.optString("signingPublicKey", "");
-            int transferPort = payload.optInt("port");
-            String fingerprint = payload.optString("fingerprint", "");
-            if (encryptionPublicKey.isEmpty() || signingPublicKey.isEmpty() || transferPort <= 0) {
-                return;
-            }
-            if (!deviceId.equals(CryptoUtil.deviceIdFor(signingPublicKey)) || !fingerprint.equals(CryptoUtil.fingerprintFor(signingPublicKey))) {
-                return;
-            }
-
-            PeerDevice peer = new PeerDevice(
-                deviceId,
-                payload.optString("deviceName", "Unknown"),
-                packet.getAddress().getHostAddress(),
-                transferPort,
-                signingPublicKey,
-                encryptionPublicKey,
-                fingerprint,
-                System.currentTimeMillis()
-            );
-            peers.put(peer.deviceId, peer);
-            notifyStatus("发现设备：" + peer.deviceName + " " + peer.host + ":" + peer.port);
-            peerListener.onPeers(listPeers());
-        } catch (Exception ignored) {
-            // Ignore malformed or unrelated multicast packets on the LAN.
+        PeerDevice peer = DiscoveryAnnouncement.parse(
+            packet.getData(),
+            packet.getOffset(),
+            packet.getLength(),
+            packet.getAddress().getHostAddress(),
+            device.deviceId,
+            System.currentTimeMillis()
+        );
+        if (peer == null) {
+            return;
         }
+
+        peers.put(peer.deviceId, peer);
+        notifyStatus("发现设备：" + peer.deviceName + " " + peer.host + ":" + peer.port);
+        peerListener.onPeers(listPeers());
     }
 
     private void prunePeers() {
