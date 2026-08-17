@@ -32,6 +32,12 @@ jobs:
         with:
           gradle-version: 8.7
 
+      - name: Run Android unit tests
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+        run: gradle :android-app:testDebugUnitTest
+
       - name: Build Android debug APK
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
