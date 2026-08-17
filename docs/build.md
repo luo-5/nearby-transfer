@@ -72,9 +72,10 @@ electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
 
 The NSIS installer target requires a Windows runner or Wine when cross-building from Linux.
 
-## Build Android Debug APK
+## Test and Build Android
 
 ```bash
+gradle :android-app:testDebugUnitTest
 gradle :android-app:assembleDebug
 ```
 
