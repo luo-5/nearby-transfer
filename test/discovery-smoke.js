@@ -52,6 +52,12 @@ function main() {
   assert.strictEqual(peerEvents, 1);
   assert.deepStrictEqual(discovery.getPeer(accepted.deviceId).port, accepted.port);
 
+  const x25519SigningKey = accepted.encryptionPublicKey;
+  const wrongSigningKeyType = Object.assign({}, accepted, {
+    deviceId: deviceIdFor(x25519SigningKey),
+    signingPublicKey: x25519SigningKey,
+    fingerprint: fingerprintFor(x25519SigningKey)
+  });
   for (const invalidPayload of [
     null,
     [],
@@ -59,13 +65,20 @@ function main() {
     Object.assign({}, accepted, { port: 65536 }),
     Object.assign({}, accepted, { port: '47778' }),
     Object.assign({}, accepted, { deviceName: 123 }),
-    Object.assign({}, accepted, { fingerprint: '' })
+    Object.assign({}, accepted, { deviceName: '   ' }),
+    Object.assign({}, accepted, { deviceName: 'a'.repeat(129) }),
+    Object.assign({}, accepted, { fingerprint: '' }),
+    wrongSigningKeyType,
+    Object.assign({}, accepted, { encryptionPublicKey: accepted.signingPublicKey }),
+    Object.assign({}, accepted, { encryptionPublicKey: 'not a public key' })
   ]) {
     assert.doesNotThrow(() => deliver(discovery, invalidPayload));
     assert.strictEqual(peerEvents, 1);
   }
 
   assert.doesNotThrow(() => discovery._handleMessage(Buffer.from('null'), { address: '127.0.0.1' }));
+  assert.doesNotThrow(() => discovery._handleMessage('not a buffer', { address: '127.0.0.1' }));
+  deliver(discovery, Object.assign({}, accepted, { padding: 'a'.repeat(17 * 1024) }));
   assert.strictEqual(peerEvents, 1);
 }
 
