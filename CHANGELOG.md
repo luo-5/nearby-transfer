@@ -2,7 +2,22 @@
 
 All notable changes to Nearby Transfer will be documented in this file.
 
-## 0.1.0 - Unreleased
+## 0.2.0 - Unreleased
+
+### Security and reliability
+
+- Upgraded the desktop Electron build toolchain and refreshed the dependency lockfile.
+- Hardened desktop and Android UDP discovery announcement validation, including protocol, key, fingerprint, and size checks.
+- Added limits for pending desktop transfer requests and stronger validation for malformed encrypted frames.
+- Normalized Windows destination filenames to avoid reserved device names and unsupported trailing characters.
+
+### Quality and maintenance
+
+- Added smoke and Android unit tests for transfer limits, encrypted-frame failures, discovery parsing, and Windows-safe filenames.
+- Run Android unit tests before producing the debug APK in CI.
+- Added Dependabot, least-privilege workflow permissions, and workflow timeouts.
+
+## 0.1.0
 
 - Added desktop MVP with LAN peer discovery.
 - Added encrypted file transfer with X25519, HKDF-SHA256, and AES-256-GCM frames.

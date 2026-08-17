@@ -49,10 +49,10 @@ This uses `packaging/linux/electron-builder.yml`, which installs the Linux app u
 
 Expected artifacts:
 
-- `nearby-transfer-0.1.0-linux-amd64.deb`
-- `nearby-transfer-0.1.0-linux-arm64.deb`
-- `nearby-transfer-0.1.0-linux-x86_64.rpm`
-- `nearby-transfer-0.1.0-linux-aarch64.rpm`
+- `nearby-transfer-0.2.0-linux-amd64.deb`
+- `nearby-transfer-0.2.0-linux-arm64.deb`
+- `nearby-transfer-0.2.0-linux-x86_64.rpm`
+- `nearby-transfer-0.2.0-linux-aarch64.rpm`
 
 ## Build Windows Packages
 

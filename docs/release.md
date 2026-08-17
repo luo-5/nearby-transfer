@@ -12,10 +12,10 @@ Linux packages use a Linux-specific electron-builder config so the installed app
 
 Expected artifacts:
 
-- `nearby-transfer-0.1.0-linux-amd64.deb`
-- `nearby-transfer-0.1.0-linux-arm64.deb`
-- `nearby-transfer-0.1.0-linux-x86_64.rpm`
-- `nearby-transfer-0.1.0-linux-aarch64.rpm`
+- `nearby-transfer-0.2.0-linux-amd64.deb`
+- `nearby-transfer-0.2.0-linux-arm64.deb`
+- `nearby-transfer-0.2.0-linux-x86_64.rpm`
+- `nearby-transfer-0.2.0-linux-aarch64.rpm`
 
 The RPM build requires `rpmbuild`.
 
@@ -31,8 +31,8 @@ ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" electron-builder --con
 
 Expected local test artifacts:
 
-- `nearby-transfer-0.1.0-win-x64.zip`
-- `nearby-transfer-0.1.0-win-arm64.zip`
+- `nearby-transfer-0.2.0-win-x64.zip`
+- `nearby-transfer-0.2.0-win-arm64.zip`
 
 The NSIS installer remains the Windows release target and is produced by `.github/workflows/build-windows.yml` on a Windows runner.
 
@@ -41,6 +41,7 @@ The NSIS installer remains the Windows release target and is produced by `.githu
 The Android project currently builds a debug APK with the native LAN discovery and encrypted transfer MVP. GitHub Actions installs Android SDK 35 and runs:
 
 ```bash
+gradle :android-app:testDebugUnitTest
 gradle :android-app:assembleDebug
 ```
 

@@ -1,6 +1,6 @@
 {
   "name": "nearby-transfer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Encrypted nearby device file transfer app for desktop and Android.",
   "main": "src/main.js",
   "license": "MIT",
