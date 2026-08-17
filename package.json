@@ -22,7 +22,7 @@
     "dist:desktop": "npm run dist:linux && npm run dist:windows"
   },
   "devDependencies": {
-    "electron": "^30.5.1",
-    "electron-builder": "^24.13.3"
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3"
   }
 }
