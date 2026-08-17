@@ -9,6 +9,9 @@ const MULTICAST_ADDRESS = '239.255.77.77';
 const DISCOVERY_PORT = 47777;
 const ANNOUNCE_INTERVAL_MS = 2000;
 const PEER_TTL_MS = 10000;
+const MAX_ANNOUNCEMENT_BYTES = 16 * 1024;
+const MAX_DEVICE_NAME_LENGTH = 128;
+const MAX_PUBLIC_KEY_LENGTH = 4096;
 
 class Discovery extends EventEmitter {
   constructor(options) {
@@ -89,6 +92,10 @@ class Discovery extends EventEmitter {
   }
 
   _handleMessage(message, remote) {
+    if (!Buffer.isBuffer(message) || message.length > MAX_ANNOUNCEMENT_BYTES) {
+      return;
+    }
+
     let payload;
     try {
       payload = JSON.parse(message.toString('utf8'));
@@ -140,16 +147,19 @@ function isValidAnnouncement(payload, localDeviceId) {
   if (payload.deviceId === localDeviceId) {
     return false;
   }
-  if (!isNonEmptyString(payload.deviceId) || !isNonEmptyString(payload.deviceName) ||
-    !isValidPort(payload.port) || !isNonEmptyString(payload.signingPublicKey) ||
-    !isNonEmptyString(payload.encryptionPublicKey) || !isNonEmptyString(payload.fingerprint)) {
+  if (!/^[a-f0-9]{16}$/.test(payload.deviceId) ||
+    !isNonEmptyBoundedString(payload.deviceName, MAX_DEVICE_NAME_LENGTH) ||
+    !isValidPort(payload.port) ||
+    !isNonEmptyBoundedString(payload.signingPublicKey, MAX_PUBLIC_KEY_LENGTH) ||
+    !isNonEmptyBoundedString(payload.encryptionPublicKey, MAX_PUBLIC_KEY_LENGTH) ||
+    !isNonEmptyBoundedString(payload.fingerprint, 64)) {
     return false;
   }
-  return isIdentityConsistent(payload);
+  return isIdentityConsistent(payload) && hasExpectedKeyTypes(payload);
 }
 
-function isNonEmptyString(value) {
-  return typeof value === 'string' && value.length > 0;
+function isNonEmptyBoundedString(value, maxLength) {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength;
 }
 
 function isValidPort(port) {
@@ -163,6 +173,16 @@ function isIdentityConsistent(payload) {
       .digest('hex')
       .slice(0, 16);
     return payload.deviceId === expectedDeviceId && payload.fingerprint === fingerprintFor(payload.signingPublicKey);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function hasExpectedKeyTypes(payload) {
+  try {
+    const signingKey = crypto.createPublicKey(payload.signingPublicKey);
+    const encryptionKey = crypto.createPublicKey(payload.encryptionPublicKey);
+    return signingKey.asymmetricKeyType === 'ed25519' && encryptionKey.asymmetricKeyType === 'x25519';
   } catch (_error) {
     return false;
   }
