@@ -96,16 +96,7 @@ class Discovery extends EventEmitter {
       return;
     }
 
-    if (payload.app !== APP_ID || payload.protocolVersion !== PROTOCOL_VERSION) {
-      return;
-    }
-    if (payload.type !== 'announce' || payload.deviceId === this.device.deviceId) {
-      return;
-    }
-    if (!payload.deviceId || !payload.deviceName || !payload.port || !payload.signingPublicKey || !payload.encryptionPublicKey) {
-      return;
-    }
-    if (!isIdentityConsistent(payload)) {
+    if (!isValidAnnouncement(payload, this.device.deviceId)) {
       return;
     }
 
@@ -137,6 +128,32 @@ class Discovery extends EventEmitter {
       this.emit('peers', this.listPeers());
     }
   }
+}
+
+function isValidAnnouncement(payload, localDeviceId) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+  if (payload.app !== APP_ID || payload.protocolVersion !== PROTOCOL_VERSION || payload.type !== 'announce') {
+    return false;
+  }
+  if (payload.deviceId === localDeviceId) {
+    return false;
+  }
+  if (!isNonEmptyString(payload.deviceId) || !isNonEmptyString(payload.deviceName) ||
+    !isValidPort(payload.port) || !isNonEmptyString(payload.signingPublicKey) ||
+    !isNonEmptyString(payload.encryptionPublicKey) || !isNonEmptyString(payload.fingerprint)) {
+    return false;
+  }
+  return isIdentityConsistent(payload);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isValidPort(port) {
+  return Number.isSafeInteger(port) && port >= 1 && port <= 65535;
 }
 
 function isIdentityConsistent(payload) {
