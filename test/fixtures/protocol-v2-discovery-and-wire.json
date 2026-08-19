@@ -1,0 +1,59 @@
+{
+  "fixtureVersion": 1,
+  "generatedFor": "protocol-v2 cross-language verification; no private key material is retained",
+  "discovery": {
+    "nowEpochMillis": 1760000000000,
+    "sourceHost": "192.0.2.10",
+    "announcement": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "type": "discovery-announce",
+      "issuedAt": 1760000000000,
+      "identity": {
+        "deviceId": "8fa1d28f6686c3eb",
+        "deviceName": "Fixture desktop",
+        "fingerprint": "8FA1-D28F-6686-C3EB-B8A1-6276",
+        "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEATMUSgpqeqVAhUXlDLFxWwkBX8SIQLb695DgPa5b8TYk=\n-----END PUBLIC KEY-----\n",
+        "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAzhDuq6k31ovjH87v+27c6OpQYZi78QWrUPmZ9kPfg3w=\n-----END PUBLIC KEY-----\n"
+      },
+      "port": 47888,
+      "capabilities": [
+        "pairing"
+      ],
+      "signature": "Lh0s8cMGj3ueAX+vwlfBTW3evwkOwt/sdagsu3jossx1dURAOkl5zF+uCv++qRB8WinFwoUpuC872MTHZeOWDw=="
+    },
+    "canonicalUnsigned": "{\"app\":\"nearby-transfer\",\"capabilities\":[\"pairing\"],\"identity\":{\"deviceId\":\"8fa1d28f6686c3eb\",\"deviceName\":\"Fixture desktop\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAzhDuq6k31ovjH87v+27c6OpQYZi78QWrUPmZ9kPfg3w=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"8FA1-D28F-6686-C3EB-B8A1-6276\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEATMUSgpqeqVAhUXlDLFxWwkBX8SIQLb695DgPa5b8TYk=\\n-----END PUBLIC KEY-----\\n\"},\"issuedAt\":1760000000000,\"port\":47888,\"protocolVersion\":2,\"type\":\"discovery-announce\"}",
+    "canonicalSigned": "{\"app\":\"nearby-transfer\",\"capabilities\":[\"pairing\"],\"identity\":{\"deviceId\":\"8fa1d28f6686c3eb\",\"deviceName\":\"Fixture desktop\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAzhDuq6k31ovjH87v+27c6OpQYZi78QWrUPmZ9kPfg3w=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"8FA1-D28F-6686-C3EB-B8A1-6276\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEATMUSgpqeqVAhUXlDLFxWwkBX8SIQLb695DgPa5b8TYk=\\n-----END PUBLIC KEY-----\\n\"},\"issuedAt\":1760000000000,\"port\":47888,\"protocolVersion\":2,\"signature\":\"Lh0s8cMGj3ueAX+vwlfBTW3evwkOwt/sdagsu3jossx1dURAOkl5zF+uCv++qRB8WinFwoUpuC872MTHZeOWDw==\",\"type\":\"discovery-announce\"}",
+    "signatureBase64": "Lh0s8cMGj3ueAX+vwlfBTW3evwkOwt/sdagsu3jossx1dURAOkl5zF+uCv++qRB8WinFwoUpuC872MTHZeOWDw=="
+  },
+  "pairingOffer": {
+    "offer": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "type": "pairing-offer",
+      "pairingId": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "issuedAt": 1760000000100,
+      "identity": {
+        "deviceId": "8fa1d28f6686c3eb",
+        "deviceName": "Fixture desktop",
+        "fingerprint": "8FA1-D28F-6686-C3EB-B8A1-6276",
+        "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEATMUSgpqeqVAhUXlDLFxWwkBX8SIQLb695DgPa5b8TYk=\n-----END PUBLIC KEY-----\n",
+        "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAzhDuq6k31ovjH87v+27c6OpQYZi78QWrUPmZ9kPfg3w=\n-----END PUBLIC KEY-----\n"
+      },
+      "capabilities": [
+        "pairing"
+      ]
+    },
+    "signatureBase64": "JJQy8IJfQeweiVckwWtxZhvIFNg7b70lh2zP4XSU2dS+DlNxF41uAHQP0DoAzvvFrsIKpCEiX07NaXYPQ+0DDg==",
+    "canonicalSigningPayload": "{\"app\":\"nearby-transfer\",\"capabilities\":[\"pairing\"],\"identity\":{\"deviceId\":\"8fa1d28f6686c3eb\",\"deviceName\":\"Fixture desktop\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAzhDuq6k31ovjH87v+27c6OpQYZi78QWrUPmZ9kPfg3w=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"8FA1-D28F-6686-C3EB-B8A1-6276\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEATMUSgpqeqVAhUXlDLFxWwkBX8SIQLb695DgPa5b8TYk=\\n-----END PUBLIC KEY-----\\n\"},\"issuedAt\":1760000000100,\"pairingId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"protocolVersion\":2,\"type\":\"pairing-offer\"}"
+  },
+  "wireFrame": {
+    "header": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "type": "pairing-offer"
+    },
+    "payloadUtf8": "{\"offer\":{\"app\":\"nearby-transfer\",\"capabilities\":[\"pairing\"],\"identity\":{\"deviceId\":\"8fa1d28f6686c3eb\",\"deviceName\":\"Fixture desktop\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAzhDuq6k31ovjH87v+27c6OpQYZi78QWrUPmZ9kPfg3w=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"8FA1-D28F-6686-C3EB-B8A1-6276\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEATMUSgpqeqVAhUXlDLFxWwkBX8SIQLb695DgPa5b8TYk=\\n-----END PUBLIC KEY-----\\n\"},\"issuedAt\":1760000000100,\"pairingId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"protocolVersion\":2,\"type\":\"pairing-offer\"},\"signature\":\"JJQy8IJfQeweiVckwWtxZhvIFNg7b70lh2zP4XSU2dS+DlNxF41uAHQP0DoAzvvFrsIKpCEiX07NaXYPQ+0DDg==\"}",
+    "encodedHex": "000002e300447b22617070223a226e65617262792d7472616e73666572222c2270726f746f636f6c56657273696f6e223a322c2274797065223a2270616972696e672d6f66666572227d7b226f66666572223a7b22617070223a226e65617262792d7472616e73666572222c226361706162696c6974696573223a5b2270616972696e67225d2c226964656e74697479223a7b226465766963654964223a2238666131643238663636383663336562222c226465766963654e616d65223a2246697874757265206465736b746f70222c22656e6372797074696f6e5075626c69634b6579223a222d2d2d2d2d424547494e205055424c4943204b45592d2d2d2d2d5c6e4d436f77425159444b325675417945417a68447571366b33316f766a483837762b323763364f7051595a69373851577255506d5a396b50666733773d5c6e2d2d2d2d2d454e44205055424c4943204b45592d2d2d2d2d5c6e222c2266696e6765727072696e74223a22384641312d443238462d363638362d433345422d423841312d36323736222c227369676e696e675075626c69634b6579223a222d2d2d2d2d424547494e205055424c4943204b45592d2d2d2d2d5c6e4d436f77425159444b32567741794541544d5553677071657156416855586c444c467857776b4258385349514c623639354467506135623854596b3d5c6e2d2d2d2d2d454e44205055424c4943204b45592d2d2d2d2d5c6e227d2c226973737565644174223a313736303030303030303130302c2270616972696e674964223a2241514944424155474277674a4367734d445134504541222c2270726f746f636f6c56657273696f6e223a322c2274797065223a2270616972696e672d6f66666572227d2c227369676e6174757265223a224a4a517938494a66516577656956636b775774785a687649464e67376237306c68327a50345853553264532b446c4e78463431754148515030446f417a7676467273494b704345695830374e61585950512b304444673d3d227d"
+  }
+}
