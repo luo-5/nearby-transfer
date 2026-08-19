@@ -11,6 +11,8 @@ internal fun TrustedPeer.toEntity(): TrustedPeerEntity {
         deviceId = deviceId,
         displayName = displayName,
         fingerprint = fingerprint,
+        signingPublicKey = signingPublicKey,
+        encryptionPublicKey = encryptionPublicKey,
         encodedPermissions = PeerPermissionCodec.encode(effectivePermissions),
         trustStatus = trustStatus.name,
         pairedAtEpochMillis = pairedAtEpochMillis,
@@ -23,10 +25,17 @@ internal fun TrustedPeerEntity.toDomain(): TrustedPeer {
         .getOrElse { throw IllegalStateException("Unknown trusted-peer status: $trustStatus", it) }
     val permissions = if (status == TrustStatus.REVOKED) emptySet() else PeerPermissionCodec.decode(encodedPermissions)
 
+    if (status == TrustStatus.TRUSTED) {
+        check(signingPublicKey.isNotBlank()) { "Trusted peer is missing its signing public key." }
+        check(encryptionPublicKey.isNotBlank()) { "Trusted peer is missing its encryption public key." }
+    }
+
     return TrustedPeer(
         deviceId = deviceId,
         displayName = displayName,
         fingerprint = fingerprint,
+        signingPublicKey = signingPublicKey,
+        encryptionPublicKey = encryptionPublicKey,
         permissions = permissions,
         trustStatus = status,
         pairedAtEpochMillis = pairedAtEpochMillis,

@@ -19,6 +19,10 @@ data class TrustedPeerEntity(
     @ColumnInfo(name = "display_name")
     val displayName: String,
     val fingerprint: String,
+    @ColumnInfo(name = "signing_public_key")
+    val signingPublicKey: String,
+    @ColumnInfo(name = "encryption_public_key")
+    val encryptionPublicKey: String,
     @ColumnInfo(name = "permissions")
     val encodedPermissions: String,
     @ColumnInfo(name = "trust_status")

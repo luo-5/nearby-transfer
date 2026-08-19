@@ -9,6 +9,8 @@ class TrustedPeerTest {
         deviceId = "device-1",
         displayName = "Test device",
         fingerprint = "fingerprint",
+        signingPublicKey = "ed25519-public-key",
+        encryptionPublicKey = "x25519-public-key",
         permissions = setOf(PeerPermission.TRANSFER, PeerPermission.LIBRARY_READ),
         trustStatus = TrustStatus.TRUSTED,
         pairedAtEpochMillis = 1L,

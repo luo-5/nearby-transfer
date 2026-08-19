@@ -15,13 +15,17 @@ enum class TrustStatus {
 /**
  * Platform-neutral trusted-device domain object.
  *
- * deviceId and fingerprint are protocol-v2 public identity values. Private keys and
- * session secrets never belong in this model or its future Room representation.
+ * deviceId and fingerprint are protocol-v2 public identity values. The two
+ * public keys bind a trusted peer to its Ed25519 signing identity and X25519
+ * encryption identity. Private keys and session secrets never belong in this
+ * model or its Room representation.
  */
 data class TrustedPeer(
     val deviceId: String,
     val displayName: String,
     val fingerprint: String,
+    val signingPublicKey: String,
+    val encryptionPublicKey: String,
     val permissions: Set<PeerPermission>,
     val trustStatus: TrustStatus,
     val pairedAtEpochMillis: Long,

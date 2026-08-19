@@ -45,6 +45,10 @@ class RoomTrustedPeerRepository(
         require(peer.deviceId.isNotBlank()) { "deviceId is required." }
         require(peer.displayName.isNotBlank()) { "displayName is required." }
         require(peer.fingerprint.isNotBlank()) { "fingerprint is required." }
+        if (peer.trustStatus == TrustStatus.TRUSTED) {
+            require(peer.signingPublicKey.isNotBlank()) { "signingPublicKey is required for a trusted peer." }
+            require(peer.encryptionPublicKey.isNotBlank()) { "encryptionPublicKey is required for a trusted peer." }
+        }
         require(peer.pairedAtEpochMillis >= 0) { "pairedAtEpochMillis must be non-negative." }
         require(peer.updatedAtEpochMillis >= peer.pairedAtEpochMillis) {
             "updatedAtEpochMillis must not predate pairedAtEpochMillis."
