@@ -62,6 +62,8 @@ public class MainActivity extends Activity {
     private HttpTransferServer transferServer;
     private SaveTarget saveTarget;
     private DiscoveryService discoveryService;
+    private V2PairingController v2PairingController;
+    private List<V2DiscoveryService.Peer> v2Peers = new ArrayList<>();
     private SelectedFile selectedFile;
     private PeerDevice selectedPeer;
     private List<PeerDevice> peers = new ArrayList<>();
@@ -73,6 +75,9 @@ public class MainActivity extends Activity {
     private TextView statusText;
     private TextView logText;
     private LinearLayout peersLayout;
+    private LinearLayout v2PeersLayout;
+    private LinearLayout v2SessionsLayout;
+    private TextView v2StatusText;
     private Button sendButton;
     private ProgressBar transferProgress;
     private TextView progressTitleText;
@@ -120,6 +125,9 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         if (discoveryService != null) {
             discoveryService.stop();
+        }
+        if (v2PairingController != null) {
+            v2PairingController.close();
         }
         if (transferServer != null) {
             transferServer.stop();
@@ -287,6 +295,40 @@ public class MainActivity extends Activity {
         peerCard.addView(peersLayout, matchWrap());
         root.addView(peerCard, cardParams());
 
+        LinearLayout v2Card = card(COLOR_SURFACE);
+        addCardHeader(v2Card, "安全配对（协议 v2）", "先核对六位配对码，再把设备保存为可信设备。当前不传输文件。");
+        v2StatusText = text("正在启动协议 v2 安全配对…", 14, COLOR_MUTED, Typeface.NORMAL);
+        v2StatusText.setPadding(dp(14), dp(12), dp(14), dp(12));
+        v2StatusText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+        v2Card.addView(v2StatusText, matchWrap());
+        Button v2RefreshButton = new Button(this);
+        v2RefreshButton.setText("刷新可安全配对的设备");
+        v2RefreshButton.setAllCaps(false);
+        styleButton(v2RefreshButton, false);
+        v2RefreshButton.setOnClickListener(v -> {
+            if (v2PairingController != null) {
+                v2StatusText.setText("正在发送协议 v2 发现公告…");
+                v2PairingController.announceNow();
+                v2PeersLayout.postDelayed(this::renderV2Peers, 2500);
+            }
+        });
+        LinearLayout.LayoutParams v2RefreshParams = matchWrap();
+        v2RefreshParams.setMargins(0, dp(10), 0, 0);
+        v2Card.addView(v2RefreshButton, v2RefreshParams);
+        v2PeersLayout = new LinearLayout(this);
+        v2PeersLayout.setOrientation(LinearLayout.VERTICAL);
+        v2PeersLayout.setPadding(0, dp(10), 0, 0);
+        v2Card.addView(v2PeersLayout, matchWrap());
+        TextView v2SessionTitle = text("正在进行的配对", 15, COLOR_TEXT, Typeface.BOLD);
+        LinearLayout.LayoutParams v2SessionTitleParams = matchWrap();
+        v2SessionTitleParams.setMargins(0, dp(14), 0, 0);
+        v2Card.addView(v2SessionTitle, v2SessionTitleParams);
+        v2SessionsLayout = new LinearLayout(this);
+        v2SessionsLayout.setOrientation(LinearLayout.VERTICAL);
+        v2SessionsLayout.setPadding(0, dp(8), 0, 0);
+        v2Card.addView(v2SessionsLayout, matchWrap());
+        root.addView(v2Card, cardParams());
+
         LinearLayout localCard = card(COLOR_SURFACE);
         addCardHeader(localCard, "本机与保存", "确认本机身份、指纹和接收目录。");
         deviceText = text("正在生成本机密钥...", 14, COLOR_TEXT, Typeface.NORMAL);
@@ -366,6 +408,36 @@ public class MainActivity extends Activity {
                     renderSendState();
                 }), error -> runOnUiThread(() -> appendLog("发现失败：" + error.getMessage())), message -> runOnUiThread(() -> appendLog(message)));
                 discoveryService.start();
+
+                try {
+                    v2PairingController = new V2PairingController(this, device, new V2PairingController.Listener() {
+                        @Override public void onPeersChanged(List<V2DiscoveryService.Peer> updatedPeers) {
+                            v2Peers = updatedPeers;
+                            renderV2Peers();
+                        }
+
+                        @Override public void onSessionChanged(V2PairingSessionStore.Session session) {
+                            renderV2Sessions();
+                            appendLog("协议 v2 配对状态：" + pairingStatusLabel(session.status));
+                            if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
+                                v2StatusText.setText("双方已确认配对码；请点击“保存信任”。");
+                            }
+                        }
+
+                        @Override public void onStatus(String message) {
+                            v2StatusText.setText(message);
+                            appendLog(message);
+                        }
+
+                        @Override public void onError(Exception error) {
+                            v2StatusText.setText("协议 v2 配对错误：" + error.getMessage());
+                            appendLog("协议 v2 配对错误：" + error);
+                        }
+                    }, command -> runOnUiThread(command));
+                    v2PairingController.start();
+                } catch (Exception v2Error) {
+                    appendLog("协议 v2 安全配对未启动：" + v2Error);
+                }
 
                 runOnUiThread(() -> {
                     deviceText.setText("名称：" + device.deviceName + "\n指纹：" + device.fingerprint + "\n端口：" + port);
@@ -598,6 +670,101 @@ public class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private void renderV2Peers() {
+        if (v2PeersLayout == null) return;
+        if (v2PairingController != null) {
+            v2Peers = v2PairingController.listPeers();
+        }
+        v2PeersLayout.removeAllViews();
+        if (v2Peers.isEmpty()) {
+            TextView empty = text("尚未发现支持协议 v2 安全配对的设备。\n请在对端也打开新版应用，然后点击刷新。", 14, COLOR_MUTED, Typeface.NORMAL);
+            empty.setPadding(dp(14), dp(14), dp(14), dp(14));
+            empty.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+            v2PeersLayout.addView(empty, matchWrap());
+            return;
+        }
+        for (V2DiscoveryService.Peer peer : v2Peers) {
+            LinearLayout item = new LinearLayout(this);
+            item.setOrientation(LinearLayout.VERTICAL);
+            item.setPadding(dp(14), dp(14), dp(14), dp(14));
+            item.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+            item.addView(text(peer.deviceName + "  ·  " + peer.fingerprint, 15, COLOR_TEXT, Typeface.BOLD), matchWrap());
+            TextView endpoint = text(peer.host + ":" + peer.port + "\n仅在双方核对相同的六位配对码后保存信任。", 12, COLOR_MUTED, Typeface.NORMAL);
+            endpoint.setPadding(0, dp(5), 0, dp(10));
+            item.addView(endpoint, matchWrap());
+            Button pairButton = new Button(this);
+            pairButton.setText("开始安全配对");
+            pairButton.setAllCaps(false);
+            styleButton(pairButton, true);
+            pairButton.setOnClickListener(v -> {
+                v2StatusText.setText("正在连接 " + peer.deviceName + "…");
+                v2PairingController.startPairing(peer);
+            });
+            item.addView(pairButton, matchWrap());
+            LinearLayout.LayoutParams params = matchWrap();
+            params.setMargins(0, 0, 0, dp(10));
+            v2PeersLayout.addView(item, params);
+        }
+    }
+
+    private void renderV2Sessions() {
+        if (v2SessionsLayout == null) return;
+        v2SessionsLayout.removeAllViews();
+        List<V2PairingSessionStore.Session> sessions = v2PairingController == null
+            ? new ArrayList<>() : v2PairingController.listSessions();
+        if (sessions.isEmpty()) {
+            v2SessionsLayout.addView(text("暂无正在进行的配对。", 13, COLOR_MUTED, Typeface.NORMAL), matchWrap());
+            return;
+        }
+        for (V2PairingSessionStore.Session session : sessions) {
+            LinearLayout item = new LinearLayout(this);
+            item.setOrientation(LinearLayout.VERTICAL);
+            item.setPadding(dp(14), dp(14), dp(14), dp(14));
+            item.setBackground(roundedStroke(COLOR_PRIMARY_SOFT, dp(18), Color.rgb(153, 246, 228), 1));
+            String peerName = session.peerOffer == null ? "正在建立连接" : session.peerOffer.identity.deviceName;
+            item.addView(text(peerName + " · " + pairingStatusLabel(session.status), 15, COLOR_TEXT, Typeface.BOLD), matchWrap());
+            TextView code = text(session.pairingCode == null ? "等待身份验证…" : "请与对方核对配对码：" + session.pairingCode, 17, COLOR_PRIMARY_DARK, Typeface.BOLD);
+            code.setPadding(0, dp(7), 0, dp(7));
+            item.addView(code, matchWrap());
+            if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION) {
+                Button confirm = new Button(this);
+                confirm.setText("配对码相同，确认配对");
+                confirm.setAllCaps(false);
+                styleButton(confirm, true);
+                confirm.setOnClickListener(v -> v2PairingController.confirmPairing(session.pairingId));
+                item.addView(confirm, matchWrap());
+            } else if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
+                Button trust = new Button(this);
+                trust.setText("保存为可信设备");
+                trust.setAllCaps(false);
+                styleButton(trust, true);
+                trust.setOnClickListener(v -> v2PairingController.completePairing(session.pairingId));
+                item.addView(trust, matchWrap());
+            }
+            Button cancel = new Button(this);
+            cancel.setText("取消配对");
+            cancel.setAllCaps(false);
+            styleButton(cancel, false);
+            cancel.setOnClickListener(v -> v2PairingController.cancelPairing(session.pairingId, "user-cancelled"));
+            LinearLayout.LayoutParams cancelParams = matchWrap();
+            cancelParams.setMargins(0, dp(8), 0, 0);
+            item.addView(cancel, cancelParams);
+            LinearLayout.LayoutParams params = matchWrap();
+            params.setMargins(0, 0, 0, dp(10));
+            v2SessionsLayout.addView(item, params);
+        }
+    }
+
+    private static String pairingStatusLabel(V2PairingSessionStore.Status status) {
+        if (status == V2PairingSessionStore.Status.AWAITING_REMOTE_OFFER) return "等待对端响应";
+        if (status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION) return "等待本机确认";
+        if (status == V2PairingSessionStore.Status.AWAITING_REMOTE_CONFIRMATION) return "等待对端确认";
+        if (status == V2PairingSessionStore.Status.READY_TO_TRUST) return "可保存信任";
+        if (status == V2PairingSessionStore.Status.COMPLETED) return "已保存信任";
+        if (status == V2PairingSessionStore.Status.CANCELLED) return "已取消";
+        return "已过期";
     }
 
     private void renderPeers() {
