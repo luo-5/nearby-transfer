@@ -16,6 +16,8 @@ function createDesktopTransferJobApi({ transferJobStore }) {
     },
 
     // Transport-only operations: never registered as renderer IPC handlers.
+    getJob: (taskId) => transferJobStore.get(taskId),
+    listJobsForTransport: (options) => transferJobStore.list(options),
     queueOutgoing: (request) => transferJobStore.queueOutgoing(request),
     receivePending: (request) => transferJobStore.receivePending(request),
     approveIncoming: (taskId) => transferJobStore.approveIncoming(taskId),
@@ -50,6 +52,8 @@ function toPublicTransferJob(job) {
     peerDeviceId: job.peerDeviceId,
     direction: job.direction,
     status: job.status,
+    sourceMappingStatus: job.sourceMappingStatus,
+    recoverable: job.recoverable,
     manifest: {
       taskId: job.manifest.taskId,
       conflictStrategy: job.manifest.conflictStrategy,

@@ -6,11 +6,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createKeyPair, createX25519KeyPair, fingerprintFor } = require('../src/core/crypto');
-const { createTransferManifest } = require('../src/v2/transfer-manifest');
+const { createTransferManifest, serializeTransferManifest } = require('../src/v2/transfer-manifest');
 const { TrustedPeerStore } = require('../src/v2/trusted-peer-store');
 const {
   DIAGNOSTIC_CODE,
   JOB_STATUS,
+  SOURCE_MAPPING_STATUS,
   TransferJobStore
 } = require('../src/v2/transfer-job-store');
 
@@ -19,6 +20,8 @@ const TASK_B = 'ERITFBUWFxgZGhscHR4fIA';
 const TASK_C = 'ISIjJCUmJygpKissLS4vMA';
 const TASK_D = Buffer.alloc(16, 4).toString('base64url');
 const TASK_E = Buffer.alloc(16, 5).toString('base64url');
+const TASK_F = Buffer.alloc(16, 6).toString('base64url');
+const TASK_G = Buffer.alloc(16, 7).toString('base64url');
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
 
@@ -46,6 +49,14 @@ function manifest(taskId) {
   });
 }
 
+function sourceMappings() {
+  return [
+    { path: 'empty.txt', sourcePath: path.join(tempDir, 'sources', 'empty.txt'), size: 0, sha256: HASH_A },
+    { path: 'photos/one.jpg', sourcePath: path.join(tempDir, 'sources', 'one.jpg'), size: 5, sha256: HASH_A },
+    { path: 'photos/two.jpg', sourcePath: path.join(tempDir, 'sources', 'two.jpg'), size: 7, sha256: HASH_B }
+  ];
+}
+
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-transfer-job-store-'));
 let peers;
 let jobs;
@@ -54,17 +65,109 @@ try {
   peers = new TrustedPeerStore(tempDir);
   const peer = createIdentity('Transfer peer');
   peers.upsertTrustedPeer({ identity: peer, permissions: { transfer: true } });
-  jobs = new TransferJobStore(tempDir, peers);
 
-  const outgoing = jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_A), now: 1760000000000 });
+  const legacyManifest = manifest(TASK_F);
+  peers.database.exec(`
+    CREATE TABLE transfer_jobs (
+      task_id TEXT PRIMARY KEY, peer_device_id TEXT NOT NULL, direction TEXT NOT NULL, status TEXT NOT NULL,
+      manifest_json TEXT NOT NULL, total_files INTEGER NOT NULL, total_bytes INTEGER NOT NULL,
+      transferred_bytes INTEGER NOT NULL, completed_files INTEGER NOT NULL, diagnostic_code TEXT,
+      error_message TEXT, retry_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER, cancelled_at INTEGER
+    );
+    CREATE TABLE transfer_job_files (
+      task_id TEXT NOT NULL REFERENCES transfer_jobs(task_id) ON DELETE CASCADE, relative_path TEXT NOT NULL,
+      expected_bytes INTEGER NOT NULL, transferred_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
+      completed INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(task_id, relative_path)
+    );
+  `);
+  peers.database.prepare(`
+    INSERT INTO transfer_jobs (
+      task_id, peer_device_id, direction, status, manifest_json, total_files, total_bytes,
+      transferred_bytes, completed_files, diagnostic_code, error_message, retry_count,
+      created_at, updated_at, started_at, completed_at, cancelled_at
+    ) VALUES (?, ?, 'outgoing', 'queued', ?, ?, ?, 0, 1, NULL, NULL, 0, ?, ?, NULL, NULL, NULL)
+  `).run(
+    TASK_F, peer.deviceId, serializeTransferManifest(legacyManifest), legacyManifest.totalFiles,
+    legacyManifest.totalBytes, 1759999999900, 1759999999900
+  );
+  const insertLegacyFile = peers.database.prepare(`
+    INSERT INTO transfer_job_files (
+      task_id, relative_path, expected_bytes, transferred_bytes, sha256, completed, updated_at
+    ) VALUES (?, ?, ?, 0, ?, ?, ?)
+  `);
+  for (const file of legacyManifest.entries.filter((entry) => entry.kind === 'file')) {
+    insertLegacyFile.run(TASK_F, file.path, file.size, file.sha256, file.size === 0 ? 1 : 0, 1759999999900);
+  }
+
+  jobs = new TransferJobStore(tempDir, peers);
+  const migratedLegacy = jobs.get(TASK_F);
+  assert.strictEqual(migratedLegacy.sourceMappingStatus, SOURCE_MAPPING_STATUS.MISSING);
+  assert.strictEqual(migratedLegacy.sources, null);
+  assert.strictEqual(migratedLegacy.recoverable, false);
+  assert.strictEqual(
+    jobs.database.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('transfer_jobs') WHERE name = 'source_mapping_version'").get().count,
+    1
+  );
+
+  assert.throws(
+    () => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_G) }),
+    /sources must be an array/
+  );
+  assert.throws(
+    () => jobs.queueOutgoing({
+      peerDeviceId: peer.deviceId,
+      manifest: manifest(TASK_G),
+      sources: sourceMappings().slice(1)
+    }),
+    /match every manifest file exactly once/
+  );
+  const duplicatedSources = sourceMappings();
+  duplicatedSources[2] = { ...duplicatedSources[1] };
+  assert.throws(
+    () => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_G), sources: duplicatedSources }),
+    /unique manifest file paths/
+  );
+  const mismatchedSources = sourceMappings();
+  mismatchedSources[0] = { ...mismatchedSources[0], size: 1 };
+  assert.throws(
+    () => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_G), sources: mismatchedSources }),
+    /metadata does not match/
+  );
+  const relativeSources = sourceMappings();
+  relativeSources[0] = { ...relativeSources[0], sourcePath: 'relative/empty.txt' };
+  assert.throws(
+    () => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_G), sources: relativeSources }),
+    /absolute path/
+  );
+  jobs.database.exec(`
+    CREATE TEMP TRIGGER force_source_insert_rollback
+    BEFORE INSERT ON transfer_job_sources
+    WHEN NEW.task_id = '${TASK_G}'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced source mapping insert failure');
+    END;
+  `);
+  assert.throws(
+    () => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_G), sources: sourceMappings() }),
+    /forced source mapping insert failure/
+  );
+  jobs.database.exec('DROP TRIGGER force_source_insert_rollback');
+  assert.strictEqual(jobs.get(TASK_G), null);
+  assert.strictEqual(jobs.database.prepare('SELECT COUNT(*) AS count FROM transfer_job_files WHERE task_id = ?').get(TASK_G).count, 0);
+
+  const outgoing = jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_A), sources: sourceMappings(), now: 1760000000000 });
   assert.strictEqual(outgoing.direction, 'outgoing');
   assert.strictEqual(outgoing.status, JOB_STATUS.QUEUED);
   assert.strictEqual(outgoing.retryCount, 0);
   assert.strictEqual(outgoing.errorMessage, null);
+  assert.strictEqual(outgoing.sourceMappingStatus, SOURCE_MAPPING_STATUS.AVAILABLE);
+  assert.strictEqual(outgoing.recoverable, true);
+  assert.deepStrictEqual(outgoing.sources, sourceMappings());
   assert.deepStrictEqual(outgoing.progress, { totalFiles: 3, completedFiles: 1, totalBytes: 12, transferredBytes: 0 });
   assert.strictEqual(jobs.getFiles(TASK_A)[2].completed, false);
-  assert.throws(() => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_A) }), /already exists/);
-  assert.throws(() => jobs.queueOutgoing({ peerDeviceId: '0000000000000000', manifest: manifest(TASK_B) }), /not trusted/);
+  assert.throws(() => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_A), sources: sourceMappings() }), /already exists/);
+  assert.throws(() => jobs.queueOutgoing({ peerDeviceId: '0000000000000000', manifest: manifest(TASK_B), sources: sourceMappings() }), /not trusted/);
   assert.throws(() => jobs.pause(TASK_A, 1760000000001), /Illegal transfer job transition/);
   assert.throws(() => jobs.start(TASK_A, 1759999999999), /creation time/);
 
@@ -85,8 +188,19 @@ try {
   assert.strictEqual(completed.progress.completedFiles, 3);
   assert.throws(() => jobs.retry(TASK_A), /Illegal transfer job transition/);
 
+  assert.throws(
+    () => jobs.receivePending({
+      peerDeviceId: peer.deviceId,
+      manifest: manifest(TASK_G),
+      sources: sourceMappings(),
+      now: 1760000000009
+    }),
+    /must not contain local source mappings/
+  );
   const incoming = jobs.receivePending({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_B), now: 1760000000010 });
   assert.strictEqual(incoming.status, JOB_STATUS.AWAITING_APPROVAL);
+  assert.strictEqual(incoming.sourceMappingStatus, SOURCE_MAPPING_STATUS.NOT_APPLICABLE);
+  assert.strictEqual(incoming.sources, null);
   assert.throws(() => jobs.start(TASK_B), /Illegal transfer job transition/);
   jobs.approveIncoming(TASK_B, 1760000000011);
   jobs.start(TASK_B, 1760000000012);
@@ -131,19 +245,20 @@ try {
   assert.strictEqual(jobs.cancel(TASK_B, 1760000000018).status, JOB_STATUS.CANCELLED);
   assert.strictEqual(jobs.cancel(TASK_B), false);
 
-  const recoverable = jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_C), now: 1760000000020 });
+  const recoverable = jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_C), sources: sourceMappings(), now: 1760000000020 });
   jobs.start(recoverable.taskId, 1760000000021);
   jobs.recordFileProgress(TASK_C, 'photos/one.jpg', 4, 1760000000022);
 
-  jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_D), now: 1760000000023 });
+  jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_D), sources: sourceMappings(), now: 1760000000023 });
   jobs.start(TASK_D, 1760000000024);
   jobs.recordFileProgress(TASK_D, 'photos/one.jpg', 2, 1760000000025);
   jobs.database.prepare('UPDATE transfer_jobs SET transferred_bytes = 1 WHERE task_id = ?').run(TASK_D);
 
-  jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_E), now: 1760000000026 });
+  jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_E), sources: sourceMappings(), now: 1760000000026 });
   jobs.database.prepare(`
-    UPDATE transfer_job_files SET sha256 = 'corrupt' WHERE task_id = ? AND relative_path = 'photos/one.jpg'
+    UPDATE transfer_job_sources SET sha256 = 'corrupt' WHERE task_id = ? AND relative_path = 'photos/one.jpg'
   `).run(TASK_E);
+
 
   jobs.close();
   jobs = null;
@@ -155,6 +270,9 @@ try {
   assert.match(afterRestart.errorMessage, /application restarted/);
   assert.strictEqual(afterRestart.retryCount, 0);
   assert.strictEqual(afterRestart.progress.transferredBytes, 4);
+  assert.strictEqual(afterRestart.sourceMappingStatus, SOURCE_MAPPING_STATUS.AVAILABLE);
+  assert.strictEqual(afterRestart.recoverable, true);
+  assert.deepStrictEqual(afterRestart.sources, sourceMappings());
   assert.strictEqual(reopened.listRecoverable().some((job) => job.taskId === TASK_C), true);
 
   const repairedAggregate = reopened.get(TASK_D);
@@ -165,15 +283,24 @@ try {
     SELECT task_id, snapshot_json, reason FROM transfer_job_corruptions WHERE task_id = ?
   `).get(TASK_E);
   assert.strictEqual(quarantined.task_id, TASK_E);
-  assert.match(quarantined.reason, /metadata does not match/);
-  assert.doesNotThrow(() => JSON.parse(quarantined.snapshot_json));
+  assert.match(quarantined.reason, /source metadata does not match/);
+  const quarantinedSnapshot = JSON.parse(quarantined.snapshot_json);
+  assert.strictEqual(quarantinedSnapshot.sources.length, 3);
+  assert.strictEqual(quarantinedSnapshot.sources.some((source) => source.sha256 === 'corrupt'), true);
   assert.strictEqual(reopened.get(TASK_B).retryCount, 1);
+
+  const legacyOutgoing = reopened.get(TASK_F);
+  assert.strictEqual(legacyOutgoing.sourceMappingStatus, SOURCE_MAPPING_STATUS.MISSING);
+  assert.strictEqual(legacyOutgoing.sources, null);
+  assert.strictEqual(legacyOutgoing.recoverable, false);
+  assert.strictEqual(reopened.listRecoverable().some((job) => job.taskId === TASK_F), false);
+  assert.throws(() => reopened.start(TASK_F, 1760000000028), /source file mappings are unavailable/);
 
   peers.revokeTrustedPeer(peer.deviceId, 1760000000030);
   assert.throws(() => reopened.resume(TASK_C), /not trusted/);
   assert.strictEqual(reopened.cancel(TASK_C, 1760000000031).status, JOB_STATUS.CANCELLED);
   assert.strictEqual(reopened.list().some((job) => job.taskId === TASK_A), false);
-  assert.strictEqual(reopened.list({ includeTerminal: true }).length, 4);
+  assert.strictEqual(reopened.list({ includeTerminal: true }).length, 5);
   reopened.close();
   reopened = null;
   peers.close();

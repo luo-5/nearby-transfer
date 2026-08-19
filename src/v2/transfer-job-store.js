@@ -38,6 +38,12 @@ const DIAGNOSTIC_CODE = Object.freeze({
 
 const MAX_ERROR_MESSAGE_LENGTH = 1024;
 const RESTART_ERROR_MESSAGE = 'Transfer was interrupted because the application restarted';
+const SOURCE_MAPPING_STATUS = Object.freeze({
+  AVAILABLE: 'available',
+  MISSING: 'missing',
+  NOT_APPLICABLE: 'not-applicable'
+});
+const SOURCE_MAPPING_VERSION = 1;
 const ALLOWED_DIAGNOSTIC_CODES = new Set(Object.values(DIAGNOSTIC_CODE));
 const TRANSITIONS = Object.freeze({
   [JOB_STATUS.QUEUED]: new Set([JOB_STATUS.TRANSFERRING, JOB_STATUS.CANCELLED, JOB_STATUS.FAILED]),
@@ -73,20 +79,22 @@ class TransferJobStore {
     }
   }
 
-  queueOutgoing({ peerDeviceId, manifest, now = Date.now() }) {
+  queueOutgoing({ peerDeviceId, manifest, sources, now = Date.now() }) {
     return this._createJob({
       peerDeviceId,
       manifest,
+      sources,
       direction: JOB_DIRECTION.OUTGOING,
       status: JOB_STATUS.QUEUED,
       now
     });
   }
 
-  receivePending({ peerDeviceId, manifest, now = Date.now() }) {
+  receivePending({ peerDeviceId, manifest, sources, now = Date.now() }) {
     return this._createJob({
       peerDeviceId,
       manifest,
+      sources,
       direction: JOB_DIRECTION.INCOMING,
       status: JOB_STATUS.AWAITING_APPROVAL,
       now
@@ -240,7 +248,7 @@ class TransferJobStore {
   }
 
   listRecoverable() {
-    return this.list().filter((job) => !isTerminal(job.status));
+    return this.list().filter((job) => job.recoverable);
   }
 
   getFiles(taskId) {
@@ -262,12 +270,13 @@ class TransferJobStore {
     this.database.close();
   }
 
-  _createJob({ peerDeviceId, manifest, direction, status, now }) {
+  _createJob({ peerDeviceId, manifest, sources, direction, status, now }) {
     assertTimestamp(now, 'Creation time');
     assertDirection(direction);
     assertStatus(status);
     const peer = this._requireActiveTransferPeer(peerDeviceId);
     const normalizedManifest = normalizeManifest(manifest);
+    const normalizedSources = normalizeSourcesForJob(direction, sources, normalizedManifest);
     const existing = this.get(normalizedManifest.taskId);
     if (existing) {
       throw new Error('A transfer task with this ID already exists');
@@ -275,17 +284,22 @@ class TransferJobStore {
 
     const manifestJson = serializeTransferManifest(normalizedManifest);
     const files = normalizedManifest.entries.filter((entry) => entry.kind === 'file');
+    const sourceMappingVersion = direction === JOB_DIRECTION.OUTGOING ? SOURCE_MAPPING_VERSION : 0;
     const insertJob = this.database.prepare(`
       INSERT INTO transfer_jobs (
         task_id, peer_device_id, direction, status, manifest_json, total_files, total_bytes,
         transferred_bytes, completed_files, diagnostic_code, error_message, retry_count,
-        created_at, updated_at, started_at, completed_at, cancelled_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, 0, ?, ?, NULL, NULL, NULL)
+        source_mapping_version, created_at, updated_at, started_at, completed_at, cancelled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, 0, ?, ?, ?, NULL, NULL, NULL)
     `);
     const insertFile = this.database.prepare(`
       INSERT INTO transfer_job_files (
         task_id, relative_path, expected_bytes, transferred_bytes, sha256, completed, updated_at
       ) VALUES (?, ?, ?, 0, ?, ?, ?)
+    `);
+    const insertSource = this.database.prepare(`
+      INSERT INTO transfer_job_sources (task_id, relative_path, source_path, expected_bytes, sha256)
+      VALUES (?, ?, ?, ?, ?)
     `);
 
     this._withImmediateTransaction(() => {
@@ -297,6 +311,7 @@ class TransferJobStore {
         manifestJson,
         normalizedManifest.totalFiles,
         normalizedManifest.totalBytes,
+        sourceMappingVersion,
         now,
         now
       );
@@ -308,6 +323,15 @@ class TransferJobStore {
           file.sha256,
           file.size === 0 ? 1 : 0,
           now
+        );
+      }
+      for (const source of normalizedSources) {
+        insertSource.run(
+          normalizedManifest.taskId,
+          source.path,
+          source.sourcePath,
+          source.size,
+          source.sha256
         );
       }
       this._refreshProgress(normalizedManifest.taskId, now);
@@ -334,6 +358,11 @@ class TransferJobStore {
 
     this._withImmediateTransaction(() => {
       const job = this._requireJob(taskId);
+      if ((nextStatus === JOB_STATUS.QUEUED || nextStatus === JOB_STATUS.TRANSFERRING) &&
+          job.direction === JOB_DIRECTION.OUTGOING &&
+          job.sourceMappingStatus !== SOURCE_MAPPING_STATUS.AVAILABLE) {
+        throw new Error('Outgoing transfer cannot resume because its source file mappings are unavailable');
+      }
       const legalTargets = TRANSITIONS[job.status];
       if (!legalTargets || !legalTargets.has(nextStatus) || (allowedFrom && !allowedFrom.includes(job.status))) {
         throw new Error(`Illegal transfer job transition: ${job.status} -> ${nextStatus}`);
@@ -445,8 +474,11 @@ class TransferJobStore {
         const files = this.database.prepare(`
           SELECT * FROM transfer_job_files WHERE task_id = ? ORDER BY relative_path ASC
         `).all(row.task_id);
+        const sources = this.database.prepare(`
+          SELECT * FROM transfer_job_sources WHERE task_id = ? ORDER BY relative_path ASC
+        `).all(row.task_id);
         try {
-          const job = this._rowToJob(row);
+          const job = this._rowToJob(row, sources);
           const repaired = validatePersistedFiles(job, files);
           if (job.progress.transferredBytes !== repaired.transferredBytes ||
               job.progress.completedFiles !== repaired.completedFiles) {
@@ -459,7 +491,7 @@ class TransferJobStore {
           }
         } catch (error) {
           const reason = String(error && error.message ? error.message : error).slice(0, 2048);
-          const snapshot = JSON.stringify({ job: row, files });
+          const snapshot = JSON.stringify({ job: row, files, sources });
           this.database.prepare(`
             INSERT INTO transfer_job_corruptions(task_id, snapshot_json, reason, quarantined_at)
             VALUES (?, ?, ?, ?)
@@ -495,6 +527,7 @@ class TransferJobStore {
           diagnostic_code TEXT,
           error_message TEXT,
           retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count >= 0),
+          source_mapping_version INTEGER NOT NULL DEFAULT 0 CHECK(source_mapping_version IN (0, 1)),
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL,
           started_at INTEGER,
@@ -509,6 +542,14 @@ class TransferJobStore {
           sha256 TEXT NOT NULL,
           completed INTEGER NOT NULL CHECK(completed IN (0, 1)),
           updated_at INTEGER NOT NULL,
+          PRIMARY KEY(task_id, relative_path)
+        );
+        CREATE TABLE IF NOT EXISTS transfer_job_sources (
+          task_id TEXT NOT NULL REFERENCES transfer_jobs(task_id) ON DELETE CASCADE,
+          relative_path TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          expected_bytes INTEGER NOT NULL CHECK(expected_bytes >= 0),
+          sha256 TEXT NOT NULL,
           PRIMARY KEY(task_id, relative_path)
         );
         CREATE TABLE IF NOT EXISTS transfer_job_corruptions (
@@ -531,16 +572,22 @@ class TransferJobStore {
       if (!columns.has('retry_count')) {
         this.database.exec('ALTER TABLE transfer_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count >= 0)');
       }
+      if (!columns.has('source_mapping_version')) {
+        this.database.exec('ALTER TABLE transfer_jobs ADD COLUMN source_mapping_version INTEGER NOT NULL DEFAULT 0 CHECK(source_mapping_version IN (0, 1))');
+      }
       this.database.prepare(`
         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)
       `).run(Date.now());
       this.database.prepare(`
         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, ?)
       `).run(Date.now());
+      this.database.prepare(`
+        INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, ?)
+      `).run(Date.now());
     });
   }
 
-  _rowToJob(row) {
+  _rowToJob(row, persistedSources = null) {
     assertValidTaskId(row.task_id);
     assertDeviceId(row.peer_device_id);
     assertDirection(row.direction);
@@ -578,12 +625,29 @@ class TransferJobStore {
     if (manifest.taskId !== row.task_id || manifest.totalFiles !== row.total_files || manifest.totalBytes !== row.total_bytes) {
       throw new Error('Persisted transfer job manifest does not match its indexed metadata');
     }
+    if (!Number.isSafeInteger(row.source_mapping_version) ||
+        (row.source_mapping_version !== 0 && row.source_mapping_version !== SOURCE_MAPPING_VERSION)) {
+      throw new Error('Persisted transfer source mapping version is invalid');
+    }
+    const sourceRows = persistedSources || this.database.prepare(`
+      SELECT * FROM transfer_job_sources WHERE task_id = ? ORDER BY relative_path ASC
+    `).all(row.task_id);
+    const sourceMapping = validatePersistedSources({
+      direction: row.direction,
+      manifest,
+      sourceMappingVersion: row.source_mapping_version
+    }, sourceRows);
+    const recoverable = !isTerminal(row.status) &&
+      (row.direction !== JOB_DIRECTION.OUTGOING || sourceMapping.status === SOURCE_MAPPING_STATUS.AVAILABLE);
     return {
       taskId: row.task_id,
       peerDeviceId: row.peer_device_id,
       direction: row.direction,
       status: row.status,
       manifest,
+      sources: sourceMapping.sources,
+      sourceMappingStatus: sourceMapping.status,
+      recoverable,
       progress: {
         totalFiles: row.total_files,
         completedFiles: row.completed_files,
@@ -607,6 +671,109 @@ function normalizeManifest(manifest) {
     return parsePersistedTransferManifest(manifest);
   }
   return normalizeTransferManifest(manifest);
+}
+
+function normalizeSourcesForJob(direction, sources, manifest) {
+  const expectedFiles = manifest.entries.filter((entry) => entry.kind === 'file');
+  if (direction === JOB_DIRECTION.INCOMING) {
+    if (sources !== undefined && sources !== null) {
+      throw new TypeError('Incoming transfer jobs must not contain local source mappings');
+    }
+    return [];
+  }
+  if (!Array.isArray(sources)) {
+    throw new TypeError('Outgoing transfer sources must be an array');
+  }
+  if (sources.length !== expectedFiles.length) {
+    throw new Error('Outgoing transfer sources must match every manifest file exactly once');
+  }
+
+  const expectedByPath = new Map(expectedFiles.map((file) => [file.path, file]));
+  const normalizedByPath = new Map();
+  for (const source of sources) {
+    if (!source || typeof source !== 'object' || Array.isArray(source) || Object.getPrototypeOf(source) !== Object.prototype) {
+      throw new TypeError('Transfer source mapping must be a plain object');
+    }
+    const keys = Object.keys(source).sort();
+    if (keys.length !== 4 || keys.join(',') !== 'path,sha256,size,sourcePath') {
+      throw new TypeError('Transfer source mapping contains unsupported fields');
+    }
+    if (typeof source.path !== 'string' || normalizedByPath.has(source.path)) {
+      throw new TypeError('Transfer source paths must be unique manifest file paths');
+    }
+    const expected = expectedByPath.get(source.path);
+    if (!expected) {
+      throw new Error('Transfer source path is not declared as a manifest file');
+    }
+    assertSourcePath(source.sourcePath);
+    assertProgressValue(source.size, 'Transfer source size');
+    if (typeof source.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(source.sha256)) {
+      throw new TypeError('Transfer source SHA-256 must be 64 lowercase hexadecimal characters');
+    }
+    if (source.size !== expected.size || source.sha256 !== expected.sha256) {
+      throw new Error('Transfer source metadata does not match its manifest file');
+    }
+    normalizedByPath.set(source.path, {
+      path: source.path,
+      sourcePath: source.sourcePath,
+      size: source.size,
+      sha256: source.sha256
+    });
+  }
+  return expectedFiles.map((file) => normalizedByPath.get(file.path));
+}
+
+function validatePersistedSources(job, rows) {
+  const expectedFiles = job.manifest.entries.filter((entry) => entry.kind === 'file');
+  if (job.direction === JOB_DIRECTION.INCOMING) {
+    if (job.sourceMappingVersion !== 0 || rows.length !== 0) {
+      throw new Error('Persisted incoming transfer must not contain local source mappings');
+    }
+    return { status: SOURCE_MAPPING_STATUS.NOT_APPLICABLE, sources: null };
+  }
+
+  if (job.sourceMappingVersion === 0) {
+    if (rows.length !== 0) {
+      throw new Error('Legacy outgoing transfer has inconsistent source mapping metadata');
+    }
+    return expectedFiles.length === 0
+      ? { status: SOURCE_MAPPING_STATUS.AVAILABLE, sources: [] }
+      : { status: SOURCE_MAPPING_STATUS.MISSING, sources: null };
+  }
+  if (rows.length !== expectedFiles.length) {
+    throw new Error('Persisted transfer source list does not match its manifest');
+  }
+
+  const rowsByPath = new Map();
+  for (const row of rows) {
+    if (typeof row.relative_path !== 'string' || rowsByPath.has(row.relative_path)) {
+      throw new Error('Persisted transfer source paths are invalid or duplicated');
+    }
+    rowsByPath.set(row.relative_path, row);
+  }
+  const sources = expectedFiles.map((expected) => {
+    const row = rowsByPath.get(expected.path);
+    if (!row || row.expected_bytes !== expected.size || row.sha256 !== expected.sha256) {
+      throw new Error('Persisted transfer source metadata does not match its manifest');
+    }
+    assertSourcePath(row.source_path);
+    return {
+      path: expected.path,
+      sourcePath: row.source_path,
+      size: row.expected_bytes,
+      sha256: row.sha256
+    };
+  });
+  return { status: SOURCE_MAPPING_STATUS.AVAILABLE, sources };
+}
+
+function assertSourcePath(sourcePath) {
+  if (typeof sourcePath !== 'string' || sourcePath.length === 0 || sourcePath.includes('\0')) {
+    throw new TypeError('Transfer source path must be a non-empty absolute path');
+  }
+  if (Buffer.byteLength(sourcePath, 'utf8') > 32_768 || !path.isAbsolute(sourcePath)) {
+    throw new TypeError('Transfer source path must be a bounded absolute path');
+  }
 }
 
 function validatePersistedFiles(job, rows) {
@@ -718,6 +885,7 @@ function isTerminal(status) {
 
 module.exports = {
   DIAGNOSTIC_CODE,
+  SOURCE_MAPPING_STATUS,
   JOB_DIRECTION,
   JOB_STATUS,
   TransferJobStore

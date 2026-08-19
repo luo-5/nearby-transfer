@@ -37,7 +37,16 @@ try {
     taskId: 'AQIDBAUGBwgJCgsMDQ4PEA',
     entries: [{ kind: 'file', path: 'report.txt', size: 1, sha256: HASH }]
   });
-  api.queueOutgoing({ peerDeviceId: peer.deviceId, manifest });
+  const sourcePath = path.join(dir, 'private-source', 'report.txt');
+  api.queueOutgoing({
+    peerDeviceId: peer.deviceId,
+    manifest,
+    sources: [{ path: 'report.txt', sourcePath, size: 1, sha256: HASH }]
+  });
+
+  const transportJob = api.getJob(manifest.taskId);
+  assert.strictEqual(transportJob.sources[0].sourcePath, sourcePath);
+  assert.strictEqual(api.listJobsForTransport({ includeTerminal: true })[0].sources[0].sourcePath, sourcePath);
 
   const handlers = new Map();
   registerTransferJobIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, api);
@@ -56,8 +65,13 @@ try {
   assert.strictEqual(listed[0].manifest.entries[0].path, 'report.txt');
   assert.strictEqual(listed[0].retryCount, 0);
   assert.strictEqual(listed[0].errorMessage, null);
+  assert.strictEqual(listed[0].sourceMappingStatus, 'available');
+  assert.strictEqual(listed[0].recoverable, true);
   assert.strictEqual(Number.isSafeInteger(listed[0].updatedAt), true);
   assert.strictEqual(Object.hasOwn(listed[0], 'databasePath'), false);
+  assert.strictEqual(Object.hasOwn(listed[0], 'sources'), false);
+  assert.strictEqual(JSON.stringify(listed).includes(sourcePath), false);
+  assert.strictEqual(JSON.stringify(listed).includes('sourcePath'), false);
   assert.throws(() => handlers.get('v2:pause-transfer-job')(null, manifest.taskId), /Illegal transfer job transition/);
   assert.strictEqual(handlers.get('v2:cancel-transfer-job')(null, manifest.taskId).status, 'cancelled');
   assert.strictEqual(handlers.get('v2:cancel-transfer-job')(null, manifest.taskId), null);
