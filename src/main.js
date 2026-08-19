@@ -8,6 +8,8 @@ const { sendFile } = require('./core/transfer');
 const { TrustedPeerStore } = require('./v2/trusted-peer-store');
 const { PairingSessionStore } = require('./v2/pairing-session-store');
 const { createDesktopPairingApi, registerPairingIpcHandlers } = require('./v2/desktop-pairing-api');
+const { LanService } = require('./v2/lan-service');
+const { registerLanServiceIpcHandlers } = require('./v2/desktop-lan-api');
 const { TransferJobStore } = require('./v2/transfer-job-store');
 const { createDesktopTransferJobApi, registerTransferJobIpcHandlers } = require('./v2/desktop-transfer-job-api');
 
@@ -18,6 +20,8 @@ let transferServer = null;
 let trustedPeerStore = null;
 let pairingSessionStore = null;
 let transferJobStore = null;
+let desktopPairingApi = null;
+let v2LanService = null;
 let saveDirectory = null;
 let selectedFilePath = null;
 
@@ -44,6 +48,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (v2LanService) {
+    v2LanService.stop().catch(() => {});
+    v2LanService = null;
+  }
   if (discovery) {
     discovery.stop();
   }
@@ -258,10 +266,18 @@ async function startCore() {
   trustedPeerStore = new TrustedPeerStore(userDataDir);
   pairingSessionStore = new PairingSessionStore(userDataDir);
   transferJobStore = new TransferJobStore(userDataDir, trustedPeerStore);
-  registerPairingIpcHandlers(
-    ipcMain,
-    createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore })
-  );
+  desktopPairingApi = createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore });
+  registerPairingIpcHandlers(ipcMain, desktopPairingApi);
+  v2LanService = new LanService({ device, pairingApi: desktopPairingApi, capabilities: ['pairing'] });
+  v2LanService.on('peers', (peers) => sendToRenderer('v2-peers', peers.map(toPublicV2Peer)));
+  v2LanService.on('pairing-session', (session) => sendToRenderer('v2-pairing-session', session));
+  v2LanService.on('error', (error) => emitTransferEvent({
+    transferId: 'v2-discovery-error', direction: 'system', status: 'failed', error: error.message
+  }));
+  v2LanService.on('protocol-error', ({ error }) => emitTransferEvent({
+    transferId: 'v2-protocol-error', direction: 'system', status: 'failed', error: 'v2 pairing message rejected: ' + error.message
+  }));
+  registerLanServiceIpcHandlers(ipcMain, v2LanService);
   registerTransferJobIpcHandlers(
     ipcMain,
     createDesktopTransferJobApi({ transferJobStore })
@@ -284,7 +300,18 @@ async function startCore() {
     error: error.message
   }));
   discovery.start();
+  await v2LanService.start();
   emitState();
+}
+
+function toPublicV2Peer(peer) {
+  return {
+    deviceId: peer.deviceId,
+    deviceName: peer.deviceName,
+    fingerprint: peer.fingerprint,
+    capabilities: Array.isArray(peer.capabilities) ? peer.capabilities.slice() : [],
+    lastSeen: peer.lastSeen
+  };
 }
 
 function setSaveDirectory(nextDirectory, persist) {

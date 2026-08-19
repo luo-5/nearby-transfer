@@ -37,23 +37,17 @@ try {
   const handlers = new Map();
   registerPairingIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, api);
   assert.deepStrictEqual(Array.from(handlers.keys()).sort(), [
-    'v2:cancel-pairing',
-    'v2:confirm-pairing',
     'v2:list-pairing-sessions',
-    'v2:list-trusted-peers',
-    'v2:start-pairing'
+    'v2:list-trusted-peers'
   ]);
 
   const visiblePeers = handlers.get('v2:list-trusted-peers')();
   assert.strictEqual(visiblePeers.length, 1);
   assert.strictEqual(Object.hasOwn(visiblePeers[0], 'signingPublicKey'), false);
 
-  const started = handlers.get('v2:start-pairing')(null, { capabilities: ['transfer'] });
-  assert.match(started.session.pairingId, /^[A-Za-z0-9_-]{22}$/);
-  assert.strictEqual(started.session.pairingCode, null);
-  assert.strictEqual(Object.hasOwn(started.outboundOffer.offer, 'signingPrivateKey'), false);
-  assert.strictEqual(handlers.get('v2:cancel-pairing')(null, started.session.pairingId), true);
-  assert.deepStrictEqual(handlers.get('v2:list-pairing-sessions')(), []);
+  assert.strictEqual(handlers.has('v2:start-pairing'), false);
+  assert.strictEqual(handlers.has('v2:confirm-pairing'), false);
+  assert.strictEqual(handlers.has('v2:cancel-pairing'), false);
   console.log('desktop pairing API smoke tests passed');
 } finally {
   if (sessions) sessions.close();

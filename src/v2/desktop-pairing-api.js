@@ -31,7 +31,8 @@ function createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore
       };
     },
     confirmLocal: (pairingId) => toPublicSession(pairingSessionStore.confirmLocal(pairingId)),
-    cancel: (pairingId) => pairingSessionStore.cancel(pairingId),
+    cancel: (pairingId, reason) => pairingSessionStore.cancel(pairingId, reason),
+    getPairingSession: (pairingId) => pairingSessionStore.get(pairingId, { includeTerminal: true }),
     receiveIncomingOffer: (payload) => pairingSessionStore.receiveIncomingOffer({
       offer: payload.offer,
       signature: payload.signature,
@@ -70,14 +71,7 @@ function registerPairingIpcHandlers(ipcMain, api) {
   }
   ipcMain.handle('v2:list-trusted-peers', () => api.listTrustedPeers());
   ipcMain.handle('v2:list-pairing-sessions', () => api.listPairingSessions());
-  ipcMain.handle('v2:start-pairing', (_event, request) => {
-    const capabilities = request && typeof request === 'object' && !Array.isArray(request)
-      ? request.capabilities
-      : undefined;
-    return api.startPairing({ capabilities });
-  });
-  ipcMain.handle('v2:confirm-pairing', (_event, pairingId) => api.confirmLocal(pairingId));
-  ipcMain.handle('v2:cancel-pairing', (_event, pairingId) => api.cancel(pairingId));
+
 }
 
 function toPublicPeer(peer) {

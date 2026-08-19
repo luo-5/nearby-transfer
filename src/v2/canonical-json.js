@@ -1,12 +1,30 @@
 'use strict';
 
 /**
- * Serialize the restricted JSON subset used by protocol v2 signatures.
- * Objects are sorted by Unicode code unit, numbers must be safe integers, and
- * unsupported JavaScript values fail closed instead of being silently omitted.
+ * Serialize and parse the restricted JSON subset used by protocol v2.
+ * Parsing rejects syntactically valid JSON that is not byte-for-byte canonical,
+ * including duplicate keys, alternate number spellings, whitespace, and an
+ * unexpected key order. Callers that receive bytes must validate UTF-8 before
+ * passing the decoded string here.
  */
 function canonicalJson(value) {
   return serialize(value, '$');
+}
+
+function parseCanonicalJson(serialized, label = 'Protocol JSON') {
+  if (typeof serialized !== 'string') {
+    throw new TypeError(`${label} must be a string`);
+  }
+  let value;
+  try {
+    value = JSON.parse(serialized);
+  } catch (error) {
+    throw new SyntaxError(`${label} is not valid JSON: ${error.message}`);
+  }
+  if (canonicalJson(value) !== serialized) {
+    throw new SyntaxError(`${label} is not canonical JSON`);
+  }
+  return value;
 }
 
 function serialize(value, path) {
@@ -60,5 +78,6 @@ function assertWellFormedString(value, path) {
 }
 
 module.exports = {
-  canonicalJson
+  canonicalJson,
+  parseCanonicalJson
 };

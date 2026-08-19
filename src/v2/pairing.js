@@ -20,6 +20,7 @@ const PAIRING_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const CAPABILITY_PATTERN = /^[a-z][a-z0-9-]*$/;
 const PAIRING_CODE_PATTERN = /^[0-9]{6}$/;
 const PAIRING_CODE_DOMAIN = 'nearby-transfer/v2/pairing-code\0';
+const PAIRING_CANCEL_REASONS = new Set(['connection-closed', 'rejected', 'timeout', 'user-cancelled']);
 
 function publicIdentity(device) {
   return {
@@ -101,6 +102,20 @@ function createPairingConfirmation({ pairingId, device, pairingCode, issuedAt = 
   return confirmation;
 }
 
+function createPairingCancel({ pairingId, device, reason = 'user-cancelled', issuedAt = Date.now() }) {
+  const cancellation = {
+    app: APP_ID,
+    protocolVersion: PROTOCOL_VERSION,
+    type: MESSAGE_TYPES.PAIRING_CANCEL,
+    pairingId,
+    issuedAt,
+    deviceId: publicIdentity(device).deviceId,
+    reason
+  };
+  assertValidPairingCancel(cancellation);
+  return cancellation;
+}
+
 function signPairingOffer(offer, privateKeyPem) {
   assertValidPairingOffer(offer);
   return crypto.sign(
@@ -132,6 +147,24 @@ function verifyPairingConfirmation(confirmation, signature, signingPublicKey) {
   try {
     assertValidPairingConfirmation(confirmation);
     return verifySignedPayload(pairingConfirmationSigningPayload(confirmation), signature, signingPublicKey);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function signPairingCancel(cancellation, privateKeyPem) {
+  assertValidPairingCancel(cancellation);
+  return crypto.sign(
+    null,
+    Buffer.from(pairingCancelSigningPayload(cancellation), 'utf8'),
+    crypto.createPrivateKey(privateKeyPem)
+  ).toString('base64');
+}
+
+function verifyPairingCancel(cancellation, signature, signingPublicKey) {
+  try {
+    assertValidPairingCancel(cancellation);
+    return verifySignedPayload(pairingCancelSigningPayload(cancellation), signature, signingPublicKey);
   } catch (_error) {
     return false;
   }
@@ -177,6 +210,28 @@ function assertValidPairingConfirmation(confirmation) {
   return confirmation;
 }
 
+function assertValidPairingCancel(cancellation) {
+  if (!cancellation || typeof cancellation !== 'object' || Array.isArray(cancellation)) {
+    throw new TypeError('Pairing cancellation must be an object');
+  }
+  if (cancellation.app !== APP_ID || cancellation.protocolVersion !== PROTOCOL_VERSION || cancellation.type !== MESSAGE_TYPES.PAIRING_CANCEL) {
+    throw new TypeError('Pairing cancellation has an unsupported protocol envelope');
+  }
+  if (!PAIRING_ID_PATTERN.test(cancellation.pairingId || '')) {
+    throw new TypeError('Pairing ID must be a 16-byte base64url value');
+  }
+  if (!Number.isSafeInteger(cancellation.issuedAt) || cancellation.issuedAt <= 0) {
+    throw new TypeError('Pairing cancellation issue time must be a positive safe integer');
+  }
+  if (!DEVICE_ID_PATTERN.test(cancellation.deviceId || '')) {
+    throw new TypeError('Pairing cancellation device ID is invalid');
+  }
+  if (typeof cancellation.reason !== 'string' || !PAIRING_CANCEL_REASONS.has(cancellation.reason)) {
+    throw new TypeError('Pairing cancellation reason is invalid');
+  }
+  return cancellation;
+}
+
 function pairingOfferSigningPayload(offer) {
   assertValidPairingOffer(offer);
   return canonicalJson({
@@ -200,6 +255,19 @@ function pairingConfirmationSigningPayload(confirmation) {
     issuedAt: confirmation.issuedAt,
     deviceId: confirmation.deviceId,
     pairingCode: confirmation.pairingCode
+  });
+}
+
+function pairingCancelSigningPayload(cancellation) {
+  assertValidPairingCancel(cancellation);
+  return canonicalJson({
+    app: cancellation.app,
+    protocolVersion: cancellation.protocolVersion,
+    type: cancellation.type,
+    pairingId: cancellation.pairingId,
+    issuedAt: cancellation.issuedAt,
+    deviceId: cancellation.deviceId,
+    reason: cancellation.reason
   });
 }
 
@@ -266,16 +334,21 @@ module.exports = {
   assertValidPublicIdentity,
   assertValidPairingOffer,
   assertValidPairingConfirmation,
+  assertValidPairingCancel,
   createPairingId,
   createPairingOffer,
   createPairingConfirmation,
+  createPairingCancel,
   derivePairingCode,
   pairingCodeTranscript,
   pairingOfferSigningPayload,
   pairingConfirmationSigningPayload,
+  pairingCancelSigningPayload,
   publicIdentity,
   signPairingOffer,
   signPairingConfirmation,
+  signPairingCancel,
   verifyPairingOffer,
-  verifyPairingConfirmation
+  verifyPairingConfirmation,
+  verifyPairingCancel
 };

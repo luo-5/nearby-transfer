@@ -10,12 +10,15 @@ const {
   assertValidPairingConfirmation,
   createPairingOffer,
   createPairingConfirmation,
+  createPairingCancel,
   derivePairingCode,
   pairingCodeTranscript,
   signPairingOffer,
   signPairingConfirmation,
+  signPairingCancel,
   verifyPairingOffer,
-  verifyPairingConfirmation
+  verifyPairingConfirmation,
+  verifyPairingCancel
 } = require('../src/v2/pairing');
 const { createKeyPair, createX25519KeyPair, fingerprintFor } = require('../src/core/crypto');
 
@@ -86,7 +89,22 @@ function testSignedPairingOfferAndConfirmation() {
     sender.signingPublicKey
   ), false);
   assert.throws(() => assertValidPairingConfirmation(Object.assign({}, confirmation, { pairingCode: '42069' })), /code/);
+
+  const cancellation = createPairingCancel({
+    pairingId: offer.pairingId,
+    device: sender,
+    reason: 'user-cancelled',
+    issuedAt: offer.issuedAt + 2
+  });
+  const cancellationSignature = signPairingCancel(cancellation, sender.signingPrivateKey);
+  assert.strictEqual(verifyPairingCancel(cancellation, cancellationSignature, sender.signingPublicKey), true);
+  assert.strictEqual(verifyPairingCancel(
+    Object.assign({}, cancellation, { reason: 'timeout' }),
+    cancellationSignature,
+    sender.signingPublicKey
+  ), false);
 }
+
 
 testCanonicalJson();
 testPairingVector();
