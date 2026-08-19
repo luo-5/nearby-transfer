@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_PICK_FILE = 1001;
@@ -59,7 +60,9 @@ public class MainActivity extends Activity {
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final ArrayDeque<String> logs = new ArrayDeque<>();
+    private final Object coreLifecycleLock = new Object();
     private volatile boolean activityDestroyed;
+    private boolean coreStarting;
 
     private DeviceConfig device;
     private HttpTransferServer transferServer;
@@ -108,6 +111,14 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (hasRequiredCorePermissions()) {
+            startCore();
+        }
+    }
+
+    @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_NEARBY_WIFI) {
@@ -137,16 +148,19 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        activityDestroyed = true;
-        if (discoveryService != null) {
-            discoveryService.stop();
+        HttpTransferServer serverToStop;
+        DiscoveryService discoveryToStop;
+        V2PairingController pairingToStop;
+        synchronized (coreLifecycleLock) {
+            activityDestroyed = true;
+            serverToStop = transferServer;
+            discoveryToStop = discoveryService;
+            pairingToStop = v2PairingController;
+            transferServer = null;
+            discoveryService = null;
+            v2PairingController = null;
         }
-        if (v2PairingController != null) {
-            v2PairingController.close();
-        }
-        if (transferServer != null) {
-            transferServer.stop();
-        }
+        stopCoreServices(serverToStop, discoveryToStop, pairingToStop);
         executor.shutdownNow();
         super.onDestroy();
     }
@@ -298,6 +312,9 @@ public class MainActivity extends Activity {
                         statusText.setText(peers.isEmpty() ? "暂未发现设备，请确认同一 Wi-Fi 且未开启 AP 隔离。" : "发现 " + peers.size() + " 台设备。");
                     }
                 }, 2500);
+            } else {
+                statusText.setText("发现服务尚未启动，正在检查权限…");
+                requestPermissionsThenStart();
             }
         });
         peerCard.addView(refreshButton, matchWrap());
@@ -322,6 +339,9 @@ public class MainActivity extends Activity {
                 v2StatusText.setText("正在发送协议 v2 发现公告…");
                 v2PairingController.announceNow();
                 v2PeersLayout.postDelayed(this::renderV2Peers, 2500);
+            } else {
+                v2StatusText.setText("安全配对服务尚未启动，正在检查权限…");
+                requestPermissionsThenStart();
             }
         });
         LinearLayout.LayoutParams v2RefreshParams = matchWrap();
@@ -419,67 +439,132 @@ public class MainActivity extends Activity {
         startCore();
     }
 
+    private boolean hasRequiredCorePermissions() {
+        boolean nearbyGranted = Build.VERSION.SDK_INT < 33
+            || checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED;
+        boolean storageGranted = Build.VERSION.SDK_INT >= 29
+            || checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        return nearbyGranted && storageGranted;
+    }
+
     private void startCore() {
-        executor.execute(() -> {
+        synchronized (coreLifecycleLock) {
+            if (activityDestroyed || coreStarting || transferServer != null) {
+                return;
+            }
+            coreStarting = true;
+        }
+        try {
+            executor.execute(this::startCoreInBackground);
+        } catch (RejectedExecutionException rejected) {
+            synchronized (coreLifecycleLock) {
+                coreStarting = false;
+            }
+        }
+    }
+
+    private void startCoreInBackground() {
+        DeviceConfig localDevice = null;
+        SaveTarget localSaveTarget = null;
+        HttpTransferServer localServer = null;
+        DiscoveryService localDiscovery = null;
+        V2PairingController localPairing = null;
+        boolean installed = false;
+        try {
+            if (!canContinueCoreStart()) {
+                return;
+            }
+            localDevice = DeviceConfig.loadOrCreate(this);
+            localSaveTarget = loadSaveTarget();
+
+            HttpTransferServer candidateServer = new HttpTransferServer(
+                localDevice,
+                localSaveTarget,
+                this::confirmIncomingTransfer,
+                this::onTransferEvent
+            );
+            localServer = candidateServer;
+            int port = candidateServer.start(0);
+            if (!canContinueCoreStart()) {
+                return;
+            }
+
+            DiscoveryService candidateDiscovery = new DiscoveryService(this, localDevice, port, updatedPeers -> runOnUiThreadIfAlive(() -> {
+                peers = updatedPeers;
+                keepSelectedPeerOnline();
+                renderPeers();
+                renderSendState();
+            }), error -> runOnUiThreadIfAlive(() -> appendLog("发现失败：" + error.getMessage())), message -> runOnUiThreadIfAlive(() -> appendLog(message)));
+            localDiscovery = candidateDiscovery;
+            candidateDiscovery.start();
+            if (!canContinueCoreStart()) {
+                return;
+            }
+
             try {
-                device = DeviceConfig.loadOrCreate(this);
-                saveTarget = loadSaveTarget();
+                V2PairingController candidatePairing = new V2PairingController(this, localDevice, new V2PairingController.Listener() {
+                    @Override public void onPeersChanged(List<V2DiscoveryService.Peer> updatedPeers) {
+                        v2Peers = updatedPeers;
+                        renderV2Peers();
+                    }
 
-                transferServer = new HttpTransferServer(
-                    device,
-                    saveTarget,
-                    this::confirmIncomingTransfer,
-                    this::onTransferEvent
-                );
-                int port = transferServer.start(0);
-
-                discoveryService = new DiscoveryService(this, device, port, updatedPeers -> runOnUiThreadIfAlive(() -> {
-                    peers = updatedPeers;
-                    keepSelectedPeerOnline();
-                    renderPeers();
-                    renderSendState();
-                }), error -> runOnUiThreadIfAlive(() -> appendLog("发现失败：" + error.getMessage())), message -> runOnUiThreadIfAlive(() -> appendLog(message)));
-                discoveryService.start();
-
-                try {
-                    v2PairingController = new V2PairingController(this, device, new V2PairingController.Listener() {
-                        @Override public void onPeersChanged(List<V2DiscoveryService.Peer> updatedPeers) {
-                            v2Peers = updatedPeers;
-                            renderV2Peers();
+                    @Override public void onSessionChanged(V2PairingSessionStore.Session session) {
+                        renderV2Sessions();
+                        appendLog("协议 v2 配对状态：" + pairingStatusLabel(session.status));
+                        if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
+                            v2StatusText.setText("双方已确认配对码；请点击“保存信任”。");
+                        } else if (session.status == V2PairingSessionStore.Status.COMPLETED) {
+                            refreshTrustedPeers();
                         }
+                    }
 
-                        @Override public void onSessionChanged(V2PairingSessionStore.Session session) {
-                            renderV2Sessions();
-                            appendLog("协议 v2 配对状态：" + pairingStatusLabel(session.status));
-                            if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
-                                v2StatusText.setText("双方已确认配对码；请点击“保存信任”。");
-                            } else if (session.status == V2PairingSessionStore.Status.COMPLETED) {
-                                refreshTrustedPeers();
-                            }
-                        }
+                    @Override public void onStatus(String message) {
+                        v2StatusText.setText(message);
+                        appendLog(message);
+                    }
 
-                        @Override public void onStatus(String message) {
-                            v2StatusText.setText(message);
-                            appendLog(message);
-                        }
-
-                        @Override public void onError(Exception error) {
-                            v2StatusText.setText("协议 v2 配对错误：" + error.getMessage());
-                            appendLog("协议 v2 配对错误：" + error);
-                        }
-                    }, this::runOnUiThreadIfAlive);
-                    v2PairingController.start();
-                } catch (Exception v2Error) {
-                    appendLog("协议 v2 安全配对未启动：" + v2Error);
+                    @Override public void onError(Exception error) {
+                        v2StatusText.setText("协议 v2 配对错误：" + error.getMessage());
+                        appendLog("协议 v2 配对错误：" + error);
+                    }
+                }, this::runOnUiThreadIfAlive);
+                localPairing = candidatePairing;
+                candidatePairing.start();
+            } catch (Exception v2Error) {
+                if (localPairing != null) {
+                    localPairing.close();
+                    localPairing = null;
                 }
+                Exception reportedV2Error = v2Error;
+                runOnUiThreadIfAlive(() -> appendLog("协议 v2 安全配对未启动：" + reportedV2Error));
+            }
 
-                runOnUiThreadIfAlive(() -> {
-                    deviceText.setText("名称：" + device.deviceName + "\n指纹：" + device.fingerprint + "\n端口：" + port);
-                    renderSaveTarget();
-                    statusText.setText("已启动，正在搜索附近设备。");
-                    appendLog("Android 客户端已启动，端口 " + port);
-                });
-            } catch (Exception error) {
+            if (!canContinueCoreStart()) {
+                return;
+            }
+            synchronized (coreLifecycleLock) {
+                if (!activityDestroyed && !Thread.currentThread().isInterrupted()) {
+                    device = localDevice;
+                    saveTarget = localSaveTarget;
+                    transferServer = localServer;
+                    discoveryService = localDiscovery;
+                    v2PairingController = localPairing;
+                    installed = true;
+                }
+            }
+            if (!installed) {
+                return;
+            }
+
+            DeviceConfig startedDevice = localDevice;
+            runOnUiThreadIfAlive(() -> {
+                deviceText.setText("名称：" + startedDevice.deviceName + "\n指纹：" + startedDevice.fingerprint + "\n端口：" + port);
+                renderSaveTarget();
+                statusText.setText("已启动，正在搜索附近设备。");
+                appendLog("Android 客户端已启动，端口 " + port);
+            });
+        } catch (Exception error) {
+            if (canContinueCoreStart()) {
                 runOnUiThreadIfAlive(() -> {
                     statusText.setText("启动失败：" + error.getMessage());
                     appendLog("启动失败：" + error);
@@ -490,7 +575,30 @@ public class MainActivity extends Activity {
                         .show();
                 });
             }
-        });
+        } finally {
+            if (!installed) {
+                stopCoreServices(localServer, localDiscovery, localPairing);
+            }
+            synchronized (coreLifecycleLock) {
+                coreStarting = false;
+            }
+        }
+    }
+
+    private boolean canContinueCoreStart() {
+        return !activityDestroyed && !Thread.currentThread().isInterrupted();
+    }
+
+    private void stopCoreServices(HttpTransferServer server, DiscoveryService discovery, V2PairingController pairing) {
+        if (pairing != null) {
+            pairing.close();
+        }
+        if (discovery != null) {
+            discovery.stop();
+        }
+        if (server != null) {
+            server.stop();
+        }
     }
 
     private boolean confirmIncomingTransfer(IncomingTransfer incoming) {

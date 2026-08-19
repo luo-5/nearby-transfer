@@ -3,6 +3,7 @@ package io.github.nearbytransfer.android.core.data
 import androidx.room.withTransaction
 import io.github.nearbytransfer.android.core.data.local.NearbyTransferDatabase
 import io.github.nearbytransfer.android.core.data.local.TransferJobEntity
+import io.github.nearbytransfer.android.core.publication.PublicationBackendIdCodec
 import io.github.nearbytransfer.android.core.publication.PublicationFileSpec
 import io.github.nearbytransfer.android.core.publication.PublicationPlan
 import io.github.nearbytransfer.android.core.publication.PublicationRecord
@@ -222,7 +223,7 @@ class RoomTransferJobRepository(
             job
         } ?: return null
 
-        val plan = publicationPlan(current, normalizedPublicationId, publicationBackend)
+        val plan = publicationPlan(current, normalizedPublicationId, publicationBackend, normalizedRootToken)
         val journal = RoomPublicationJournal(database, normalizedRootToken) { nowEpochMillis }
         if (!journal.create(PublicationRecord(plan))) {
             val existing = requireNotNull(journal.load(normalizedPublicationId)) {
@@ -312,6 +313,7 @@ class RoomTransferJobRepository(
         job: TransferJob,
         publicationId: String,
         backend: PublicationBackend,
+        publicationRootToken: String,
     ): PublicationPlan {
         val entries = JSONObject(job.manifestJson).getJSONArray("entries")
         val files = buildList {
@@ -329,7 +331,7 @@ class RoomTransferJobRepository(
                 }
             }
         }
-        return PublicationPlan(publicationId, job.taskId, backend.name, files)
+        return PublicationPlan(publicationId, job.taskId, PublicationBackendIdCodec.backendIdFor(backend, publicationRootToken), files)
     }
 
     private suspend fun create(
@@ -397,7 +399,8 @@ class RoomTransferJobRepository(
             "Persisted publication state is invalid.",
         )
         val publicationBackend = entity.publicationBackend?.let {
-            parseEnum<PublicationBackend>(it, "Persisted publication backend is invalid.")
+            PublicationBackendIdCodec.publicationBackendFor(it, entity.publicationRootToken)
+                ?: throw IllegalArgumentException("Persisted publication backend is invalid.")
         }
         val manifest = TransferManifestCodec.normalize(entity.manifestJson)
         require(manifest.json == entity.manifestJson) { "Persisted transfer manifest is not canonical." }

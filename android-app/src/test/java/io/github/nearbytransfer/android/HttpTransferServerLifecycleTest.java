@@ -8,6 +8,10 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -19,7 +23,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -76,6 +82,56 @@ public class HttpTransferServerLifecycleTest {
             start.countDown();
             server.stop();
             callers.shutdownNow();
+        }
+    }
+
+    @Test
+    public void activeConnectionsAreBoundAndStopClosesTrackedSockets() throws Exception {
+        HttpTransferServer server = newServer(HttpTransferServer.RuntimeFactory.DEFAULT, 1);
+        Socket first = null;
+        Socket second = null;
+        try {
+            int port = server.start(0);
+            first = new Socket("127.0.0.1", port);
+            first.getOutputStream().write("GET /health HTTP/1.1\r\n".getBytes(StandardCharsets.US_ASCII));
+            first.getOutputStream().flush();
+            awaitActiveSocketCount(server, 1);
+
+            second = new Socket("127.0.0.1", port);
+            assertPeerClosed(second);
+            assertEquals(1, activeSocketCount(server));
+
+            server.stop();
+            assertPeerClosed(first);
+            awaitActiveSocketCount(server, 0);
+        } finally {
+            close(first);
+            close(second);
+            server.stop();
+        }
+    }
+
+    @Test
+    public void rejectedClientWorkerReleasesSocketAndConnectionPermit() throws Exception {
+        RejectClientWorkerRuntimeFactory runtime = new RejectClientWorkerRuntimeFactory();
+        HttpTransferServer server = newServer(runtime, 1);
+        Socket client = null;
+        try {
+            int port = server.start(0);
+            client = new Socket("127.0.0.1", port);
+            assertPeerClosed(client);
+            awaitActiveSocketCount(server, 0);
+
+            server.stop();
+            int restartedPort = server.start(0);
+            close(client);
+            client = new Socket("127.0.0.1", restartedPort);
+            client.getOutputStream().write("GET /missing HTTP/1.1\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            client.getOutputStream().flush();
+            assertTrue(readUntil(client, "404 Error"));
+        } finally {
+            close(client);
+            server.stop();
         }
     }
 
@@ -285,6 +341,10 @@ public class HttpTransferServerLifecycleTest {
     }
 
     private static HttpTransferServer newServer(HttpTransferServer.RuntimeFactory runtimeFactory) {
+        return newServer(runtimeFactory, 16);
+    }
+
+    private static HttpTransferServer newServer(HttpTransferServer.RuntimeFactory runtimeFactory, int maxActiveConnections) {
         SaveTarget saveTarget = new SaveTarget() {
             @Override
             public String displayName() {
@@ -301,7 +361,69 @@ public class HttpTransferServerLifecycleTest {
                 throw new AssertionError("No transfer request expected");
             }
         };
-        return new HttpTransferServer(null, saveTarget, incoming -> false, event -> { }, runtimeFactory);
+        if (maxActiveConnections == 16) {
+            return new HttpTransferServer(null, saveTarget, incoming -> false, event -> { }, runtimeFactory);
+        }
+        return new HttpTransferServer(null, saveTarget, incoming -> false, event -> { }, runtimeFactory, maxActiveConnections);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int activeSocketCount(HttpTransferServer server) throws Exception {
+        return ((java.util.Set<Socket>) readField(server, "activeSockets")).size();
+    }
+
+    private static void awaitActiveSocketCount(HttpTransferServer server, int expected) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (activeSocketCount(server) == expected) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        assertEquals(expected, activeSocketCount(server));
+    }
+
+    private static void assertPeerClosed(Socket socket) throws IOException {
+        socket.setSoTimeout(1000);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            try {
+                if (socket.getInputStream().read() == -1) {
+                    return;
+                }
+            } catch (SocketTimeoutException ignored) {
+            } catch (SocketException expected) {
+                return;
+            }
+        }
+        fail("Socket was not closed by the server");
+    }
+
+    private static boolean readUntil(Socket socket, String expected) throws IOException {
+        socket.setSoTimeout(2000);
+        byte[] buffer = new byte[4096];
+        int total = 0;
+        while (total < buffer.length) {
+            int read = socket.getInputStream().read(buffer, total, buffer.length - total);
+            if (read == -1) {
+                break;
+            }
+            total += read;
+            if (new String(buffer, 0, total, StandardCharsets.US_ASCII).contains(expected)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void close(Socket socket) {
+        if (socket == null) {
+            return;
+        }
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+        }
     }
 
     private static SaveTarget.PendingSave pendingSave(AtomicInteger aborts, boolean failOnAbort) {
@@ -389,6 +511,54 @@ public class HttpTransferServerLifecycleTest {
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             throw new AssertionError(error);
+        }
+    }
+
+    private static final class RejectClientWorkerRuntimeFactory implements HttpTransferServer.RuntimeFactory {
+        final List<ServerSocket> sockets = Collections.synchronizedList(new ArrayList<>());
+        final List<ExecutorService> workers = Collections.synchronizedList(new ArrayList<>());
+        final List<ScheduledThreadPoolExecutor> cleanups = Collections.synchronizedList(new ArrayList<>());
+
+        @Override
+        public ServerSocket openServerSocket(int requestedPort) throws IOException {
+            ServerSocket socket = new ServerSocket(requestedPort);
+            sockets.add(socket);
+            return socket;
+        }
+
+        @Override
+        public ExecutorService newWorkerExecutor() {
+            if (!workers.isEmpty()) {
+                ExecutorService executor = Executors.newCachedThreadPool();
+                workers.add(executor);
+                return executor;
+            }
+            ExecutorService executor = new ThreadPoolExecutor(
+                0,
+                Integer.MAX_VALUE,
+                60L,
+                TimeUnit.SECONDS,
+                new SynchronousQueue<Runnable>()
+            ) {
+                private final AtomicInteger submissions = new AtomicInteger();
+
+                @Override
+                public void execute(Runnable command) {
+                    if (submissions.incrementAndGet() > 1) {
+                        throw new RejectedExecutionException("client worker rejected");
+                    }
+                    super.execute(command);
+                }
+            };
+            workers.add(executor);
+            return executor;
+        }
+
+        @Override
+        public ScheduledThreadPoolExecutor newCleanupExecutor() {
+            ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1);
+            cleanups.add(executor);
+            return executor;
         }
     }
 

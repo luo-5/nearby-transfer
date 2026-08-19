@@ -39,7 +39,13 @@ class RoomPublicationJournal(
                 require(existingPublication.taskId == plan.taskId) {
                     "Publication ID is already bound to another task"
                 }
-                require(existingPublication.publicationBackend == plan.backendId) {
+                require(
+                    PublicationBackendIdCodec.backendIdsMatch(
+                        existingPublication.publicationBackend,
+                        plan.backendId,
+                        existingPublication.publicationRootToken,
+                    ),
+                ) {
                     "Publication ID is already bound to another backend"
                 }
                 require(existingPublication.publicationRootToken == publicationRootToken) {
@@ -171,8 +177,10 @@ class RoomPublicationJournal(
     private suspend fun loadInTransaction(publicationId: String): PublicationRecord? {
         val job = database.transferJobDao().findByPublicationId(publicationId) ?: return null
         require(job.publicationId == publicationId) { "Publication binding is corrupt" }
-        val backendId = job.publicationBackend
-            ?: throw IllegalStateException("Publication backend is missing")
+        val backendId = PublicationBackendIdCodec.canonicalBackendId(
+            job.publicationBackend ?: throw IllegalStateException("Publication backend is missing"),
+            job.publicationRootToken,
+        ) ?: throw IllegalStateException("Publication backend is missing")
         val rows = database.transferPublicationDao().listForTask(job.taskId)
         require(rows.isNotEmpty()) { "Publication receipt set is empty" }
         require(rows.all { it.taskId == job.taskId && it.publicationId == publicationId }) {

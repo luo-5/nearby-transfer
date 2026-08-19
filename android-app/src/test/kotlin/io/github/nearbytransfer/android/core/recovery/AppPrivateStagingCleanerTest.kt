@@ -110,6 +110,23 @@ class AppPrivateStagingCleanerTest {
     }
 
     @Test
+    fun symbolicLinkInStagingRootAncestorIsRejectedBeforeCleanup() {
+        val bytes = "outside".toByteArray()
+        val plan = plan(bytes)
+        val outsideParent = Files.createDirectory(root.resolve("outside-root-parent"))
+        val outsideRoot = Files.createDirectory(outsideParent.resolve("staging"))
+        val outsideTask = Files.createDirectory(V2StagingLayout.resolveTaskDirectory(outsideRoot, plan.taskId))
+        val outsideFile = Files.write(outsideTask.resolve(V2StagingLayout.fileId(0)), bytes)
+        val linkedParent = root.resolve("linked-root-parent")
+        createSymbolicLinkOrSkip(linkedParent, outsideParent)
+
+        assertThrows(SecurityException::class.java) {
+            AppPrivateStagingCleaner(linkedParent.resolve(outsideRoot.fileName)).cleanup(plan)
+        }
+        assertArrayEquals(bytes, Files.readAllBytes(outsideFile))
+    }
+
+    @Test
     fun rejectsTaskIdPathEscape() {
         val bytes = "escape".toByteArray()
         val unsafe = PublicationPlan(

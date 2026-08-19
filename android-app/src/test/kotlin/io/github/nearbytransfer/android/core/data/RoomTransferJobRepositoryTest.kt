@@ -3,6 +3,7 @@ package io.github.nearbytransfer.android.core.data
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
+import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.test.core.app.ApplicationProvider
 import io.github.nearbytransfer.android.core.data.local.NearbyTransferDatabase
 import io.github.nearbytransfer.android.core.data.local.TransferJobEntity
@@ -372,6 +373,35 @@ class RoomTransferJobRepositoryTest {
                 )
             }
         }
+        Unit
+    }
+
+    @Test
+    fun publicationPreparationPersistsCanonicalBackendIdAndAcceptsLegacyRows() = runBlocking {
+        val taskId = createFullyReceivedIncoming(14)
+        repository.preparePublication(
+            taskId,
+            "publication-14",
+            PublicationBackend.MEDIA_STORE,
+            "content://media/root",
+            5,
+        )
+
+        database.query(SimpleSQLiteQuery(
+            "SELECT publication_backend FROM transfer_jobs WHERE task_id = ?",
+            arrayOf(taskId),
+        )).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("android-mediastore-downloads-v1", cursor.getString(0))
+        }
+
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE transfer_jobs SET publication_backend = ? WHERE task_id = ?",
+            arrayOf(PublicationBackend.MEDIA_STORE.name, taskId),
+        )
+
+        val legacyLoaded = requireNotNull(repository.find(taskId))
+        assertEquals(PublicationBackend.MEDIA_STORE, legacyLoaded.publicationBackend)
         Unit
     }
 

@@ -96,6 +96,18 @@ class AppPrivatePublicationSourceProviderTest {
     }
 
     @Test
+    fun rejectsSymbolicLinkInStagingRootAncestor() {
+        val outsideParent = Files.createDirectory(root.resolve("outside-root-parent"))
+        val outsideRoot = Files.createDirectory(outsideParent.resolve("staging"))
+        val linkedParent = root.resolve("linked-root-parent")
+        createSymbolicLinkOrSkip(linkedParent, outsideParent)
+
+        assertThrows(SecurityException::class.java) {
+            AppPrivatePublicationSourceProvider(linkedParent.resolve(outsideRoot.fileName))
+        }
+    }
+
+    @Test
     fun rejectsChangedSizeBeforeOpening() {
         val original = "original".toByteArray()
         val plan = plan(original)

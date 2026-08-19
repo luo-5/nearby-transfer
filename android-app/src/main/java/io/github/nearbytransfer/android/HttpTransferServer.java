@@ -13,15 +13,19 @@ import java.net.Socket;
 import java.net.URLDecoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
@@ -30,9 +34,11 @@ final class HttpTransferServer {
     private static final int MAX_FRAME_BYTES = 16 * 1024 * 1024;
     private static final int MAX_HEADER_LINE_BYTES = 8192;
     private static final int SOCKET_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+    private static final int MAX_ACTIVE_CONNECTIONS = 16;
     private static final long PENDING_TTL_MS = 5 * 60 * 1000;
     private static final long PROGRESS_MIN_BYTES = 1024 * 1024;
     private static final long PROGRESS_MIN_MS = 250;
+    private static final Pattern CANONICAL_UUID = Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", Pattern.CASE_INSENSITIVE);
 
     private final DeviceConfig device;
     private volatile SaveTarget saveTarget;
@@ -41,15 +47,18 @@ final class HttpTransferServer {
     private final Map<String, PendingTransfer> pending = new ConcurrentHashMap<>();
     private final RuntimeFactory runtimeFactory;
     private final Object lifecycleLock = new Object();
+    private final int maxActiveConnections;
+    private final Set<Socket> activeSockets = ConcurrentHashMap.newKeySet();
 
     private volatile boolean running;
     private volatile ServerSocket serverSocket;
     private volatile ExecutorService workers;
     private volatile ScheduledExecutorService cleanup;
+    private volatile Semaphore connectionPermits;
     private volatile int port;
 
     HttpTransferServer(DeviceConfig device, SaveTarget saveTarget, IncomingDecision incomingDecision, TransferEventSink eventSink) {
-        this(device, saveTarget, incomingDecision, eventSink, RuntimeFactory.DEFAULT);
+        this(device, saveTarget, incomingDecision, eventSink, RuntimeFactory.DEFAULT, MAX_ACTIVE_CONNECTIONS);
     }
 
     HttpTransferServer(
@@ -59,11 +68,26 @@ final class HttpTransferServer {
         TransferEventSink eventSink,
         RuntimeFactory runtimeFactory
     ) {
+        this(device, saveTarget, incomingDecision, eventSink, runtimeFactory, MAX_ACTIVE_CONNECTIONS);
+    }
+
+    HttpTransferServer(
+        DeviceConfig device,
+        SaveTarget saveTarget,
+        IncomingDecision incomingDecision,
+        TransferEventSink eventSink,
+        RuntimeFactory runtimeFactory,
+        int maxActiveConnections
+    ) {
+        if (maxActiveConnections <= 0) {
+            throw new IllegalArgumentException("maxActiveConnections must be positive");
+        }
         this.device = device;
         this.saveTarget = saveTarget;
         this.incomingDecision = incomingDecision;
         this.eventSink = eventSink;
         this.runtimeFactory = runtimeFactory;
+        this.maxActiveConnections = maxActiveConnections;
     }
 
     int start(int requestedPort) throws IOException {
@@ -75,21 +99,26 @@ final class HttpTransferServer {
             ServerSocket createdSocket = null;
             ExecutorService createdWorkers = null;
             ScheduledExecutorService createdCleanup = null;
+            Semaphore createdConnectionPermits = null;
             try {
                 createdSocket = runtimeFactory.openServerSocket(requestedPort);
                 createdWorkers = runtimeFactory.newWorkerExecutor();
                 createdCleanup = runtimeFactory.newCleanupExecutor();
+                createdConnectionPermits = new Semaphore(maxActiveConnections);
 
                 serverSocket = createdSocket;
                 workers = createdWorkers;
                 cleanup = createdCleanup;
+                connectionPermits = createdConnectionPermits;
                 port = createdSocket.getLocalPort();
                 running = true;
 
                 ServerSocket acceptSocket = createdSocket;
                 ExecutorService acceptWorkers = createdWorkers;
-                createdWorkers.execute(() -> acceptLoop(acceptSocket, acceptWorkers));
-                createdCleanup.scheduleAtFixedRate(this::cleanupPending, 30, 30, TimeUnit.SECONDS);
+                Semaphore acceptConnectionPermits = createdConnectionPermits;
+                createdWorkers.execute(() -> acceptLoop(acceptSocket, acceptWorkers, acceptConnectionPermits));
+                ScheduledExecutorService cleanupRuntime = createdCleanup;
+                createdCleanup.scheduleAtFixedRate(() -> cleanupPending(cleanupRuntime), 30, 30, TimeUnit.SECONDS);
                 return port;
             } catch (Throwable error) {
                 running = false;
@@ -97,7 +126,9 @@ final class HttpTransferServer {
                 serverSocket = null;
                 workers = null;
                 cleanup = null;
+                connectionPermits = null;
                 closeQuietly(createdSocket);
+                closeActiveSockets();
                 shutdownNowQuietly(createdCleanup);
                 shutdownNowQuietly(createdWorkers);
                 if (error instanceof IOException) {
@@ -126,8 +157,10 @@ final class HttpTransferServer {
             serverSocket = null;
             workers = null;
             cleanup = null;
+            connectionPermits = null;
 
             closeQuietly(socketToClose);
+            closeActiveSockets();
             shutdownNowQuietly(cleanupToStop);
             shutdownNowQuietly(workersToStop);
             transfersToAbort = removeAllPending();
@@ -158,6 +191,12 @@ final class HttpTransferServer {
         }
     }
 
+    private void closeActiveSockets() {
+        for (Socket socket : activeSockets) {
+            closeQuietly(socket);
+        }
+    }
+
     private static void shutdownNowQuietly(ExecutorService executor) {
         if (executor == null) {
             return;
@@ -183,16 +222,31 @@ final class HttpTransferServer {
         this.saveTarget = saveTarget;
     }
 
-    private void acceptLoop(ServerSocket acceptSocket, ExecutorService acceptWorkers) {
+    private void acceptLoop(ServerSocket acceptSocket, ExecutorService acceptWorkers, Semaphore acceptConnectionPermits) {
         while (isActiveRuntime(acceptSocket, acceptWorkers)) {
             Socket socket = null;
             try {
                 socket = acceptSocket.accept();
                 socket.setSoTimeout(SOCKET_IDLE_TIMEOUT_MS);
+                if (!acceptConnectionPermits.tryAcquire()) {
+                    closeQuietly(socket);
+                    socket = null;
+                    continue;
+                }
+                if (!isActiveRuntime(acceptSocket, acceptWorkers)) {
+                    acceptConnectionPermits.release();
+                    closeQuietly(socket);
+                    socket = null;
+                    continue;
+                }
                 Socket acceptedSocket = socket;
-                acceptWorkers.execute(() -> handleSocket(acceptedSocket));
+                activeSockets.add(acceptedSocket);
+                acceptWorkers.execute(() -> handleSocket(acceptedSocket, acceptConnectionPermits));
                 socket = null;
             } catch (IOException | RuntimeException error) {
+                if (socket != null && activeSockets.remove(socket)) {
+                    acceptConnectionPermits.release();
+                }
                 closeQuietly(socket);
                 if (isActiveRuntime(acceptSocket, acceptWorkers)) {
                     eventSink.onTransferEvent(new TransferEvent("system", "system", "failed", "HTTP", 0, 0, error.getMessage()));
@@ -205,35 +259,51 @@ final class HttpTransferServer {
         return running && serverSocket == expectedSocket && workers == expectedWorkers;
     }
 
-    private void handleSocket(Socket socket) {
-        try (Socket ignored = socket) {
-            HttpRequest request = HttpRequest.read(socket.getInputStream());
+    private void handleSocket(Socket socket, Semaphore permits) {
+        try {
             OutputStream output = socket.getOutputStream();
-            if ("GET".equals(request.method) && "/health".equals(request.path)) {
-                respondJson(output, 200, jsonObject("ok", true, "deviceId", device.deviceId));
-                return;
-            }
-            if ("POST".equals(request.method) && "/transfer/request".equals(request.path)) {
-                handleTransferRequest(request, output);
-                return;
-            }
-            if ("POST".equals(request.method) && request.path.startsWith("/transfer/upload/")) {
-                String transferId = URLDecoder.decode(request.path.substring("/transfer/upload/".length()), "UTF-8");
-                handleUpload(transferId, request, output);
-                return;
-            }
-            respondJson(output, 404, jsonObject("ok", false, "error", "Not found"));
-        } catch (Exception error) {
             try {
-                respondJson(socket.getOutputStream(), 500, jsonObject("ok", false, "error", error.getMessage()));
-            } catch (Exception ignored) {
+                HttpRequest request = HttpRequest.read(socket.getInputStream());
+                if ("GET".equals(request.method) && "/health".equals(request.path)) {
+                    respondJson(output, 200, jsonObject("ok", true, "deviceId", device.deviceId));
+                    return;
+                }
+                if ("POST".equals(request.method) && "/transfer/request".equals(request.path)) {
+                    handleTransferRequest(request, output);
+                    return;
+                }
+                if ("POST".equals(request.method) && request.path.startsWith("/transfer/upload/")) {
+                    String transferId = decodePathSegment(request.path.substring("/transfer/upload/".length()));
+                    if (!isCanonicalTransferId(transferId)) {
+                        respondJson(output, 400, jsonObject("ok", false, "error", "Invalid transfer ID"));
+                        return;
+                    }
+                    handleUpload(transferId, request, output);
+                    return;
+                }
+                respondJson(output, 404, jsonObject("ok", false, "error", "Not found"));
+            } catch (BadHttpRequestException error) {
+                respondJson(output, 400, jsonObject("ok", false, "error", error.getMessage()));
+            } catch (Exception error) {
+                respondJson(output, 500, jsonObject("ok", false, "error", error.getMessage()));
             }
+        } catch (Exception ignored) {
+        } finally {
+            closeQuietly(socket);
+            activeSockets.remove(socket);
+            permits.release();
         }
     }
 
     private void handleTransferRequest(HttpRequest request, OutputStream output) throws Exception {
         String body = request.readBodyText(REQUEST_BODY_LIMIT);
-        JSONObject payload = new JSONObject(body);
+        JSONObject payload;
+        try {
+            payload = new JSONObject(body);
+        } catch (RuntimeException error) {
+            respondJson(output, 400, jsonObject("ok", false, "error", "Invalid JSON body"));
+            return;
+        }
         String validationError = validateTransferRequest(payload);
         if (validationError != null) {
             eventSink.onTransferEvent(new TransferEvent("request-error", "system", "failed", "传输请求", 0, 0, "请求格式错误：" + validationError));
@@ -282,7 +352,26 @@ final class HttpTransferServer {
             requestSaveTarget.displayPathFor(safeName)
         );
 
-        byte[] key = CryptoUtil.deriveTransferKey(device.encryptionPrivateKey, payload.getString("senderEphemeralPublicKey"), transferId);
+        byte[] key;
+        try {
+            key = CryptoUtil.deriveTransferKey(
+                device.encryptionPrivateKey,
+                payload.getString("senderEphemeralPublicKey"),
+                transferId
+            );
+        } catch (GeneralSecurityException | IllegalArgumentException error) {
+            eventSink.onTransferEvent(new TransferEvent(
+                transferId,
+                "receive",
+                "failed",
+                safeName,
+                0,
+                fileJson.getLong("size"),
+                "发送方临时公钥无效"
+            ));
+            respondJson(output, 400, jsonObject("ok", false, "error", "Invalid sender ephemeral public key"));
+            return;
+        }
         boolean accepted = incomingDecision.confirm(incoming);
         if (!accepted) {
             eventSink.onTransferEvent(new TransferEvent(transferId, "receive", "rejected", safeName, 0, incoming.size, null));
@@ -363,8 +452,21 @@ final class HttpTransferServer {
         }
     }
 
+    private static String decodePathSegment(String value) throws BadHttpRequestException {
+        try {
+            return URLDecoder.decode(value, "UTF-8");
+        } catch (Exception error) {
+            throw new BadHttpRequestException("Invalid URL encoding");
+        }
+    }
+
+    private static boolean isCanonicalTransferId(String value) {
+        return value != null && CANONICAL_UUID.matcher(value).matches();
+    }
+
     private static String validateTransferRequest(JSONObject payload) {
         if (!payload.has("transferId")) return "Missing transfer ID";
+        if (!isCanonicalTransferId(payload.optString("transferId", ""))) return "Invalid transfer ID";
         if (payload.optInt("protocolVersion") != 1) return "Unsupported protocol version";
         if (!payload.has("sender")) return "Missing sender metadata";
         if (!payload.has("file")) return "Missing file metadata";
@@ -447,18 +549,36 @@ final class HttpTransferServer {
     }
 
     private void cleanupPending() {
-        if (!running) {
-            return;
+        ScheduledExecutorService expectedCleanup;
+        synchronized (lifecycleLock) {
+            expectedCleanup = cleanup;
         }
+        cleanupPending(expectedCleanup);
+    }
+
+    private void cleanupPending(ScheduledExecutorService expectedCleanup) {
         long now = System.currentTimeMillis();
         for (Map.Entry<String, PendingTransfer> entry : pending.entrySet()) {
             PendingTransfer transfer = entry.getValue();
-            if (now - transfer.createdAt > PENDING_TTL_MS && pending.remove(entry.getKey(), transfer)) {
+            boolean removed;
+            synchronized (lifecycleLock) {
+                if (!running || cleanup != expectedCleanup) {
+                    return;
+                }
+                removed = now - transfer.createdAt > PENDING_TTL_MS && pending.remove(entry.getKey(), transfer);
+            }
+            if (removed) {
                 abortQuietly(transfer);
-                if (running) {
+                if (isActiveCleanupRuntime(expectedCleanup)) {
                     eventSink.onTransferEvent(new TransferEvent(entry.getKey(), "receive", "failed", transfer.fileName, 0, transfer.size, "传输请求已过期"));
                 }
             }
+        }
+    }
+
+    private boolean isActiveCleanupRuntime(ScheduledExecutorService expectedCleanup) {
+        synchronized (lifecycleLock) {
+            return running && cleanup == expectedCleanup;
         }
     }
 
@@ -529,6 +649,12 @@ final class HttpTransferServer {
         }
     }
 
+    private static final class BadHttpRequestException extends IOException {
+        BadHttpRequestException(String message) {
+            super(message);
+        }
+    }
+
     private static final class HttpRequest {
         final String method;
         final String path;
@@ -545,21 +671,50 @@ final class HttpTransferServer {
         static HttpRequest read(InputStream input) throws IOException {
             String requestLine = readLine(input);
             if (requestLine == null || requestLine.isEmpty()) {
-                throw new IOException("Empty HTTP request");
+                throw new BadHttpRequestException("Empty HTTP request");
             }
-            String[] parts = requestLine.split(" ");
-            if (parts.length < 2) {
-                throw new IOException("Invalid HTTP request line");
+            String[] parts = requestLine.split(" ", -1);
+            if (parts.length != 3 || parts[0].isEmpty() || parts[1].isEmpty() || parts[2].isEmpty()) {
+                throw new BadHttpRequestException("Invalid HTTP request line");
             }
+            String method = parts[0];
+            String requestPath = parts[1];
+            String version = parts[2];
+            if (!isHttpToken(method) || !method.equals(method.toUpperCase(Locale.ROOT))) {
+                throw new BadHttpRequestException("Invalid HTTP method");
+            }
+            if (!requestPath.startsWith("/") || containsControlCharacters(requestPath) || requestPath.indexOf(' ') >= 0) {
+                throw new BadHttpRequestException("Invalid HTTP path");
+            }
+            if (!"HTTP/1.1".equals(version) && !"HTTP/1.0".equals(version)) {
+                throw new BadHttpRequestException("Unsupported HTTP version");
+            }
+
             Map<String, String> headers = new HashMap<>();
             String line;
-            while ((line = readLine(input)) != null && !line.isEmpty()) {
-                int colon = line.indexOf(':');
-                if (colon > 0) {
-                    headers.put(line.substring(0, colon).trim().toLowerCase(Locale.ROOT), line.substring(colon + 1).trim());
+            while (true) {
+                line = readLine(input);
+                if (line == null) {
+                    throw new BadHttpRequestException("Incomplete HTTP headers");
                 }
+                if (line.isEmpty()) {
+                    break;
+                }
+                int colon = line.indexOf(':');
+                if (colon <= 0) {
+                    throw new BadHttpRequestException("Invalid HTTP header");
+                }
+                String name = line.substring(0, colon).trim().toLowerCase(Locale.ROOT);
+                String value = line.substring(colon + 1).trim();
+                if (!isHttpToken(name) || containsControlCharacters(value)) {
+                    throw new BadHttpRequestException("Invalid HTTP header");
+                }
+                if (headers.containsKey(name)) {
+                    throw new BadHttpRequestException("Duplicate HTTP header: " + name);
+                }
+                headers.put(name, value);
             }
-            return new HttpRequest(parts[0], parts[1], headers, input);
+            return new HttpRequest(method, requestPath, headers, input);
         }
 
         String readBodyText(int limit) throws IOException {
@@ -579,13 +734,46 @@ final class HttpTransferServer {
             }
         }
 
-        InputStream bodyStream() {
+        InputStream bodyStream() throws BadHttpRequestException {
             String transferEncoding = headers.get("transfer-encoding");
-            if (transferEncoding != null && transferEncoding.toLowerCase(Locale.ROOT).contains("chunked")) {
+            if (transferEncoding != null) {
+                String normalized = transferEncoding.toLowerCase(Locale.ROOT);
+                if (!"chunked".equals(normalized)) {
+                    throw new BadHttpRequestException("Unsupported transfer encoding");
+                }
                 return new ChunkedInputStream(input);
             }
-            long contentLength = Long.parseLong(headers.getOrDefault("content-length", "0"));
+            String contentLengthText = headers.getOrDefault("content-length", "0");
+            if (!contentLengthText.matches("^[0-9]+$")) {
+                throw new BadHttpRequestException("Invalid Content-Length");
+            }
+            long contentLength;
+            try {
+                contentLength = Long.parseLong(contentLengthText);
+            } catch (NumberFormatException error) {
+                throw new BadHttpRequestException("Invalid Content-Length");
+            }
             return new FixedLengthInputStream(input, contentLength);
+        }
+
+        private static boolean isHttpToken(String value) {
+            if (value == null || value.isEmpty()) return false;
+            for (int i = 0; i < value.length(); i += 1) {
+                char c = value.charAt(i);
+                boolean allowed = c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\''
+                    || c == '*' || c == '+' || c == '-' || c == '.' || c == '^' || c == '_' || c == '`'
+                    || c == '|' || c == '~' || Character.isDigit(c) || Character.isLetter(c);
+                if (!allowed) return false;
+            }
+            return true;
+        }
+
+        private static boolean containsControlCharacters(String value) {
+            for (int i = 0; i < value.length(); i += 1) {
+                char c = value.charAt(i);
+                if (c < 0x20 || c == 0x7f) return true;
+            }
+            return false;
         }
 
         private static String readLine(InputStream input) throws IOException {
@@ -602,7 +790,7 @@ final class HttpTransferServer {
                 }
                 output.write(next);
                 if (output.size() > MAX_HEADER_LINE_BYTES) {
-                    throw new IOException("HTTP header line is too long");
+                    throw new BadHttpRequestException("HTTP header line is too long");
                 }
                 previous = next;
             }
@@ -659,7 +847,14 @@ final class HttpTransferServer {
                 if (line == null) throw new EOFException("Missing chunk header");
                 int semicolon = line.indexOf(';');
                 String sizeText = semicolon >= 0 ? line.substring(0, semicolon) : line;
-                remainingInChunk = Long.parseLong(sizeText.trim(), 16);
+                try {
+                    remainingInChunk = Long.parseLong(sizeText.trim(), 16);
+                } catch (NumberFormatException error) {
+                    throw new BadHttpRequestException("Invalid chunk size");
+                }
+                if (remainingInChunk < 0) {
+                    throw new BadHttpRequestException("Invalid chunk size");
+                }
                 if (remainingInChunk == 0) {
                     do {
                         line = HttpRequest.readLine(input);
