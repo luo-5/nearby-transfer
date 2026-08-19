@@ -315,3 +315,193 @@ dd {
     padding: 20px;
   }
 }
+
+.pairing-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.pairing-title-row {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.pairing-title-row h2 {
+  margin-bottom: 7px;
+}
+
+.pairing-intro,
+.pairing-help,
+.pairing-status {
+  color: var(--muted);
+  margin: 0;
+}
+
+.pairing-intro {
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.pairing-status {
+  background: rgba(104, 225, 199, 0.08);
+  border: 1px solid rgba(104, 225, 199, 0.24);
+  border-radius: 14px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  padding: 10px 12px;
+}
+
+.pairing-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pairing-column {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.subsection-title-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.subsection-title-row h3 {
+  font-size: 0.92rem;
+  letter-spacing: 0.03em;
+  margin: 0;
+}
+
+.pairing-help {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  min-height: 2.4em;
+}
+
+.pairing-list {
+  display: grid;
+  gap: 10px;
+}
+
+.pairing-list.empty {
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  min-height: 76px;
+  padding: 14px;
+}
+
+.pairing-card {
+  align-items: center;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 14px;
+}
+
+.pairing-session-card {
+  align-items: start;
+}
+
+.trusted-peer-card {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pairing-details {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.pairing-name {
+  overflow-wrap: anywhere;
+}
+
+.pairing-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.pairing-sas-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  margin-top: 5px;
+}
+
+.pairing-sas {
+  background: rgba(104, 225, 199, 0.12);
+  border: 1px solid rgba(104, 225, 199, 0.4);
+  border-radius: 10px;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 1.18rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.pairing-permissions {
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 750;
+  margin-top: 4px;
+}
+
+.pairing-button-row {
+  display: grid;
+  gap: 8px;
+  justify-items: stretch;
+}
+
+.pairing-button {
+  font-size: 0.85rem;
+  margin: 0;
+  min-width: 9.6rem;
+  padding: 0.64rem 0.85rem;
+  width: auto;
+}
+
+.pairing-cancel {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.pairing-action {
+  margin-top: 0;
+}
+
+@media (max-width: 980px) {
+  .pairing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pairing-help {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .pairing-card {
+    grid-template-columns: 1fr;
+  }
+
+  .pairing-button-row,
+  .pairing-button {
+    width: 100%;
+  }
+}

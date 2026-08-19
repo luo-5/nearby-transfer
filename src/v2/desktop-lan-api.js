@@ -1,5 +1,7 @@
 'use strict';
 
+const { toPublicPeer, toPublicSession } = require('./desktop-pairing-api');
+
 function registerLanServiceIpcHandlers(ipcMain, lanService) {
   if (!ipcMain || typeof ipcMain.handle !== 'function') throw new TypeError('ipcMain.handle is required');
   if (!lanService || typeof lanService.listPeers !== 'function') throw new TypeError('A LAN service is required');
@@ -11,15 +13,15 @@ function registerLanServiceIpcHandlers(ipcMain, lanService) {
     if (typeof peerDeviceId !== 'string') throw new TypeError('A discovered peer device ID is required');
     const peer = lanService.listPeers().find((item) => item.deviceId === peerDeviceId);
     if (!peer) throw new Error('The selected v2 device is no longer available');
-    return lanService.startPairing(peer, { capabilities });
+    return toPublicSession(await lanService.startPairing(peer, { capabilities }));
   });
-  ipcMain.handle('v2:confirm-network-pairing', (_event, pairingId) => lanService.confirmPairing(pairingId));
+  ipcMain.handle('v2:confirm-network-pairing', (_event, pairingId) => toPublicSession(lanService.confirmPairing(pairingId)));
   ipcMain.handle('v2:complete-network-pairing', (_event, request) => {
     if (!request || typeof request !== 'object' || Array.isArray(request)) throw new TypeError('Pairing completion request is invalid');
-    return lanService.completePairing(request.pairingId, {
+    return toPublicPeer(lanService.completePairing(request.pairingId, {
       displayName: typeof request.displayName === 'string' ? request.displayName : undefined,
       permissions: normalizePermissions(request.permissions)
-    });
+    }));
   });
   ipcMain.handle('v2:cancel-network-pairing', (_event, pairingId) => lanService.cancelPairing(pairingId));
 }

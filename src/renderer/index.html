@@ -51,6 +51,47 @@
         </article>
       </section>
 
+      <section class="panel pairing-panel" aria-labelledby="v2PairingTitle">
+        <div class="panel-title-row pairing-title-row">
+          <div>
+            <h2 id="v2PairingTitle">v2 实验性配对</h2>
+            <p class="pairing-intro">发现不等于信任。请仅在双方当面核对相同的安全码后确认配对。</p>
+          </div>
+          <span id="v2PairingSummary" class="badge">未连接</span>
+        </div>
+        <p id="v2PairingStatus" class="pairing-status" role="status" aria-live="polite">正在准备实验性配对服务...</p>
+
+        <div class="pairing-grid">
+          <section class="pairing-column" aria-labelledby="v2DiscoveredTitle">
+            <div class="subsection-title-row">
+              <h3 id="v2DiscoveredTitle">可配对设备</h3>
+              <span id="v2DiscoveredCount" class="badge">0</span>
+            </div>
+            <p class="pairing-help">仅显示 v2 发现公告；不会显示主机地址、端口或公钥。</p>
+            <div id="v2DiscoveredPeers" class="pairing-list empty">正在搜索支持 v2 配对的设备...</div>
+            <button id="v2RefreshButton" class="secondary pairing-action" type="button">刷新 v2 设备</button>
+          </section>
+
+          <section class="pairing-column" aria-labelledby="v2SessionsTitle">
+            <div class="subsection-title-row">
+              <h3 id="v2SessionsTitle">正在配对</h3>
+              <span id="v2SessionCount" class="badge">0</span>
+            </div>
+            <p class="pairing-help">双方分别确认安全码一致后，才可完成信任。</p>
+            <div id="v2PairingSessions" class="pairing-list empty">暂无进行中的配对。</div>
+          </section>
+
+          <section class="pairing-column" aria-labelledby="v2TrustedTitle">
+            <div class="subsection-title-row">
+              <h3 id="v2TrustedTitle">受信设备</h3>
+              <span id="v2TrustedCount" class="badge">0</span>
+            </div>
+            <p class="pairing-help">新配对仅授予“传输”权限；其他权限不会自动开启。</p>
+            <div id="v2TrustedPeers" class="pairing-list empty">暂无受信设备。</div>
+          </section>
+        </div>
+      </section>
+
       <section class="panel transfers-panel">
         <div class="panel-title-row">
           <h2>传输记录</h2>

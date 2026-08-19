@@ -5,6 +5,21 @@ const state = {
   transfers: new Map()
 };
 
+const pairingState = {
+  discoveredPeers: [],
+  trustedPeers: [],
+  sessions: new Map(),
+  loading: false,
+  refreshVersion: 0,
+  startingPeerIds: new Set(),
+  busySessionIds: new Set(),
+  message: '正在准备实验性配对服务...',
+  messageIsError: false
+};
+
+const PAIRING_CAPABILITIES = Object.freeze(['pairing']);
+const MINIMUM_PAIRING_PERMISSIONS = Object.freeze({ transfer: true });
+
 const elements = {
   deviceName: document.getElementById('deviceName'),
   saveDirectory: document.getElementById('saveDirectory'),
@@ -18,10 +33,20 @@ const elements = {
   selectedFile: document.getElementById('selectedFile'),
   sendButton: document.getElementById('sendButton'),
   statusText: document.getElementById('statusText'),
-  saveDirectoryMode: document.getElementById('saveDirectoryMode')
+  saveDirectoryMode: document.getElementById('saveDirectoryMode'),
+  v2PairingSummary: document.getElementById('v2PairingSummary'),
+  v2PairingStatus: document.getElementById('v2PairingStatus'),
+  v2DiscoveredCount: document.getElementById('v2DiscoveredCount'),
+  v2DiscoveredPeers: document.getElementById('v2DiscoveredPeers'),
+  v2RefreshButton: document.getElementById('v2RefreshButton'),
+  v2SessionCount: document.getElementById('v2SessionCount'),
+  v2PairingSessions: document.getElementById('v2PairingSessions'),
+  v2TrustedCount: document.getElementById('v2TrustedCount'),
+  v2TrustedPeers: document.getElementById('v2TrustedPeers')
 };
 
 window.lanTransfer.getState().then(applyState);
+initializeV2Pairing();
 
 window.lanTransfer.onState(applyState);
 window.lanTransfer.onPeers((peers) => {
@@ -322,4 +347,428 @@ function formatBytes(bytes) {
     unit += 1;
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function initializeV2Pairing() {
+  const pairingApi = getPairingApi();
+  if (!pairingApi) {
+    setPairingMessage('当前版本未提供 v2 配对服务。', true);
+    renderV2Pairing();
+    return;
+  }
+
+  elements.v2RefreshButton.addEventListener('click', () => {
+    refreshV2Pairing({ announce: true });
+  });
+
+  if (typeof window.lanTransfer.onV2Peers === 'function') {
+    window.lanTransfer.onV2Peers((peers) => {
+      pairingState.discoveredPeers = normalizePeers(peers);
+      pairingState.loading = false;
+      if (!pairingState.messageIsError) {
+        setPairingMessage(pairingState.discoveredPeers.length > 0 ? '已更新 v2 设备发现结果。' : '正在局域网内搜索支持 v2 配对的设备。');
+      }
+      renderV2Pairing();
+    });
+  }
+
+  if (typeof window.lanTransfer.onV2PairingSession === 'function') {
+    window.lanTransfer.onV2PairingSession((session) => {
+      if (session && typeof session.pairingId === 'string') {
+        pairingState.sessions.set(session.pairingId, session);
+      } else {
+        // 完成或取消后主进程可能只通知会话列表已变化；以 IPC 列表为准刷新。
+        refreshV2Pairing({ silent: true });
+      }
+      renderV2Pairing();
+    });
+  }
+
+  refreshV2Pairing({ silent: true });
+}
+
+function getPairingApi() {
+  const api = window.lanTransfer && window.lanTransfer.pairing;
+  if (!api || typeof api.listDiscoveredPeers !== 'function' || typeof api.listTrustedPeers !== 'function' ||
+      typeof api.listSessions !== 'function' || typeof api.start !== 'function' ||
+      typeof api.confirm !== 'function' || typeof api.complete !== 'function' || typeof api.cancel !== 'function') {
+    return null;
+  }
+  return api;
+}
+
+async function refreshV2Pairing({ announce = false, silent = false } = {}) {
+  const pairingApi = getPairingApi();
+  if (!pairingApi) return;
+
+  const version = ++pairingState.refreshVersion;
+  pairingState.loading = true;
+  if (announce) setPairingMessage('正在刷新 v2 配对信息...');
+  renderV2Pairing();
+
+  const [peersResult, sessionsResult, trustedResult] = await Promise.allSettled([
+    pairingApi.listDiscoveredPeers(),
+    pairingApi.listSessions(),
+    pairingApi.listTrustedPeers()
+  ]);
+
+  if (version !== pairingState.refreshVersion) return;
+  pairingState.loading = false;
+  const errors = [];
+
+  if (peersResult.status === 'fulfilled') pairingState.discoveredPeers = normalizePeers(peersResult.value);
+  else errors.push(`发现设备：${errorMessage(peersResult.reason)}`);
+
+  if (sessionsResult.status === 'fulfilled') replacePairingSessions(sessionsResult.value);
+  else errors.push(`读取配对会话：${errorMessage(sessionsResult.reason)}`);
+
+  if (trustedResult.status === 'fulfilled') pairingState.trustedPeers = normalizeTrustedPeers(trustedResult.value);
+  else errors.push(`读取受信设备：${errorMessage(trustedResult.reason)}`);
+
+  if (errors.length > 0) {
+    setPairingMessage(errors.join('；'), true);
+  } else if (!silent || !pairingState.messageIsError) {
+    setPairingMessage(pairingState.discoveredPeers.length > 0 ? 'v2 配对设备列表已更新。' : '正在局域网内搜索支持 v2 配对的设备。');
+  }
+  renderV2Pairing();
+}
+
+function replacePairingSessions(sessions) {
+  pairingState.sessions = new Map(normalizeSessions(sessions).map((session) => [session.pairingId, session]));
+}
+
+function normalizePeers(peers) {
+  const uniquePeers = new Map();
+  for (const peer of Array.isArray(peers) ? peers : []) {
+    if (!peer || typeof peer.deviceId !== 'string' || typeof peer.deviceName !== 'string') continue;
+    uniquePeers.set(peer.deviceId, peer);
+  }
+  return Array.from(uniquePeers.values()).sort(compareByName);
+}
+
+function normalizeSessions(sessions) {
+  const uniqueSessions = new Map();
+  for (const session of Array.isArray(sessions) ? sessions : []) {
+    if (!session || typeof session.pairingId !== 'string' || typeof session.status !== 'string') continue;
+    uniqueSessions.set(session.pairingId, session);
+  }
+  return Array.from(uniqueSessions.values()).sort((left, right) => Number(right.createdAt || 0) - Number(left.createdAt || 0));
+}
+
+function normalizeTrustedPeers(peers) {
+  const uniquePeers = new Map();
+  for (const peer of Array.isArray(peers) ? peers : []) {
+    if (!peer || typeof peer.deviceId !== 'string') continue;
+    uniquePeers.set(peer.deviceId, peer);
+  }
+  return Array.from(uniquePeers.values()).sort(compareByName);
+}
+
+function compareByName(left, right) {
+  return peerLabel(left).localeCompare(peerLabel(right), 'zh-CN');
+}
+
+function renderV2Pairing() {
+  const pairingApi = getPairingApi();
+  elements.v2RefreshButton.disabled = !pairingApi || pairingState.loading;
+  elements.v2RefreshButton.textContent = pairingState.loading ? '正在刷新...' : '刷新 v2 设备';
+  elements.v2PairingStatus.textContent = pairingState.message;
+  elements.v2PairingStatus.className = pairingState.messageIsError ? 'pairing-status failed' : 'pairing-status';
+  elements.v2PairingSummary.textContent = pairingApi ? `${pairingState.sessions.size} 个会话` : '不可用';
+  renderV2DiscoveredPeers(pairingApi);
+  renderV2PairingSessions(pairingApi);
+  renderV2TrustedPeers();
+}
+
+function renderV2DiscoveredPeers(pairingApi) {
+  const peers = pairingState.discoveredPeers;
+  elements.v2DiscoveredCount.textContent = String(peers.length);
+  if (peers.length === 0) {
+    elements.v2DiscoveredPeers.className = 'pairing-list empty';
+    elements.v2DiscoveredPeers.textContent = pairingState.loading ? '正在刷新 v2 设备...' : '未发现可配对的 v2 设备。';
+    return;
+  }
+
+  elements.v2DiscoveredPeers.className = 'pairing-list';
+  elements.v2DiscoveredPeers.replaceChildren(...peers.map((peer) => {
+    const card = document.createElement('article');
+    card.className = 'pairing-card';
+
+    const details = document.createElement('div');
+    details.className = 'pairing-details';
+    const name = document.createElement('strong');
+    name.className = 'pairing-name';
+    name.textContent = peerLabel(peer);
+    const fingerprint = document.createElement('span');
+    fingerprint.className = 'pairing-meta';
+    fingerprint.textContent = `设备指纹：${shortFingerprint(peer.fingerprint)}`;
+    const discovery = document.createElement('span');
+    discovery.className = 'pairing-meta';
+    discovery.textContent = formatLastSeen(peer.lastSeen);
+    details.append(name, fingerprint, discovery);
+
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'primary pairing-button';
+    const isStarting = pairingState.startingPeerIds.has(peer.deviceId);
+    action.disabled = !pairingApi || isStarting;
+    action.textContent = isStarting ? '正在开始...' : '开始配对';
+    action.addEventListener('click', () => startV2Pairing(peer));
+
+    card.append(details, action);
+    return card;
+  }));
+}
+
+function renderV2PairingSessions(pairingApi) {
+  const sessions = Array.from(pairingState.sessions.values()).sort((left, right) => Number(right.createdAt || 0) - Number(left.createdAt || 0));
+  elements.v2SessionCount.textContent = String(sessions.length);
+  if (sessions.length === 0) {
+    elements.v2PairingSessions.className = 'pairing-list empty';
+    elements.v2PairingSessions.textContent = '暂无进行中的配对。';
+    return;
+  }
+
+  elements.v2PairingSessions.className = 'pairing-list';
+  elements.v2PairingSessions.replaceChildren(...sessions.map((session) => createPairingSessionCard(session, pairingApi)));
+}
+
+function createPairingSessionCard(session, pairingApi) {
+  const card = document.createElement('article');
+  card.className = 'pairing-card pairing-session-card';
+
+  const details = document.createElement('div');
+  details.className = 'pairing-details';
+  const name = document.createElement('strong');
+  name.className = 'pairing-name';
+  name.textContent = session.peer ? peerLabel(session.peer) : '正在等待对方设备信息';
+  const status = document.createElement('span');
+  status.className = 'pairing-meta';
+  status.textContent = `状态：${translatePairingStatus(session.status)}`;
+  details.append(name, status);
+
+  if (session.peer && session.peer.fingerprint) {
+    const fingerprint = document.createElement('span');
+    fingerprint.className = 'pairing-meta';
+    fingerprint.textContent = `设备指纹：${shortFingerprint(session.peer.fingerprint)}`;
+    details.append(fingerprint);
+  }
+
+  if (typeof session.pairingCode === 'string' && session.pairingCode.length > 0) {
+    const sasLabel = document.createElement('span');
+    sasLabel.className = 'pairing-sas-label';
+    sasLabel.textContent = '请双方核对以下安全码（SAS）';
+    const sas = document.createElement('output');
+    sas.className = 'pairing-sas';
+    sas.textContent = session.pairingCode;
+    details.append(sasLabel, sas);
+  } else {
+    const pending = document.createElement('span');
+    pending.className = 'pairing-meta';
+    pending.textContent = '等待获取双方可核对的安全码...';
+    details.append(pending);
+  }
+
+  const expires = formatExpiration(session.expiresAt);
+  if (expires) {
+    const expiration = document.createElement('span');
+    expiration.className = 'pairing-meta';
+    expiration.textContent = expires;
+    details.append(expiration);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'pairing-button-row';
+  const isBusy = pairingState.busySessionIds.has(session.pairingId);
+
+  if (session.status === 'awaiting-local-confirmation') {
+    const confirm = document.createElement('button');
+    confirm.type = 'button';
+    confirm.className = 'primary pairing-button';
+    confirm.disabled = !pairingApi || isBusy || !session.pairingCode;
+    confirm.textContent = isBusy ? '正在确认...' : '安全码一致，确认';
+    confirm.addEventListener('click', () => confirmV2Pairing(session));
+    actions.append(confirm);
+  }
+
+  if (session.status === 'ready-to-trust') {
+    const complete = document.createElement('button');
+    complete.type = 'button';
+    complete.className = 'primary pairing-button';
+    complete.disabled = !pairingApi || isBusy;
+    complete.textContent = isBusy ? '正在信任...' : '完成信任';
+    complete.addEventListener('click', () => completeV2Pairing(session));
+    actions.append(complete);
+  }
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'secondary pairing-button pairing-cancel';
+  cancel.disabled = !pairingApi || isBusy;
+  cancel.textContent = isBusy ? '正在处理...' : '取消';
+  cancel.addEventListener('click', () => cancelV2Pairing(session));
+  actions.append(cancel);
+
+  card.append(details, actions);
+  return card;
+}
+
+function renderV2TrustedPeers() {
+  const peers = pairingState.trustedPeers;
+  elements.v2TrustedCount.textContent = String(peers.length);
+  if (peers.length === 0) {
+    elements.v2TrustedPeers.className = 'pairing-list empty';
+    elements.v2TrustedPeers.textContent = '暂无受信设备。';
+    return;
+  }
+
+  elements.v2TrustedPeers.className = 'pairing-list';
+  elements.v2TrustedPeers.replaceChildren(...peers.map((peer) => {
+    const card = document.createElement('article');
+    card.className = 'pairing-card trusted-peer-card';
+    const details = document.createElement('div');
+    details.className = 'pairing-details';
+    const name = document.createElement('strong');
+    name.className = 'pairing-name';
+    name.textContent = peer.displayName || peerLabel(peer);
+    const device = document.createElement('span');
+    device.className = 'pairing-meta';
+    device.textContent = `设备：${peerLabel(peer)}`;
+    const fingerprint = document.createElement('span');
+    fingerprint.className = 'pairing-meta';
+    fingerprint.textContent = `设备指纹：${shortFingerprint(peer.fingerprint)}`;
+    const permissions = document.createElement('span');
+    permissions.className = 'pairing-permissions';
+    permissions.textContent = describePairingPermissions(peer.permissions);
+    details.append(name, device, fingerprint, permissions);
+    card.append(details);
+    return card;
+  }));
+}
+
+async function startV2Pairing(peer) {
+  const pairingApi = getPairingApi();
+  if (!pairingApi || pairingState.startingPeerIds.has(peer.deviceId)) return;
+
+  pairingState.startingPeerIds.add(peer.deviceId);
+  setPairingMessage(`正在向“${peerLabel(peer)}”发起配对...`);
+  renderV2Pairing();
+  try {
+    const session = await pairingApi.start({ peerDeviceId: peer.deviceId, capabilities: PAIRING_CAPABILITIES.slice() });
+    if (session && typeof session.pairingId === 'string') pairingState.sessions.set(session.pairingId, session);
+    setPairingMessage(`已发起与“${peerLabel(peer)}”的配对，等待双方安全码。`);
+    await refreshV2Pairing({ silent: true });
+  } catch (error) {
+    setPairingMessage(`无法开始配对：${errorMessage(error)}`, true);
+  } finally {
+    pairingState.startingPeerIds.delete(peer.deviceId);
+    renderV2Pairing();
+  }
+}
+
+async function confirmV2Pairing(session) {
+  await runV2SessionAction(session, '正在确认双方安全码...', async (pairingApi) => {
+    await pairingApi.confirm(session.pairingId);
+    setPairingMessage('本机已确认安全码，正在等待或同步对方确认。');
+  });
+}
+
+async function completeV2Pairing(session) {
+  await runV2SessionAction(session, '正在将设备加入受信列表...', async (pairingApi) => {
+    const displayName = session.peer && typeof session.peer.deviceName === 'string' ? session.peer.deviceName : undefined;
+    const trustedPeer = await pairingApi.complete({
+      pairingId: session.pairingId,
+      displayName,
+      permissions: Object.assign({}, MINIMUM_PAIRING_PERMISSIONS)
+    });
+    if (trustedPeer && typeof trustedPeer.deviceId === 'string') {
+      pairingState.trustedPeers = normalizeTrustedPeers([trustedPeer, ...pairingState.trustedPeers]);
+    }
+    pairingState.sessions.delete(session.pairingId);
+    setPairingMessage('配对完成：设备已受信任，已授予最小“传输”权限。');
+  });
+}
+
+async function cancelV2Pairing(session) {
+  await runV2SessionAction(session, '正在取消配对...', async (pairingApi) => {
+    await pairingApi.cancel(session.pairingId);
+    pairingState.sessions.delete(session.pairingId);
+    setPairingMessage('已取消配对。');
+  });
+}
+
+async function runV2SessionAction(session, pendingMessage, action) {
+  const pairingApi = getPairingApi();
+  if (!pairingApi || pairingState.busySessionIds.has(session.pairingId)) return;
+
+  pairingState.busySessionIds.add(session.pairingId);
+  setPairingMessage(pendingMessage);
+  renderV2Pairing();
+  try {
+    await action(pairingApi);
+    await refreshV2Pairing({ silent: true });
+  } catch (error) {
+    setPairingMessage(`配对操作失败：${errorMessage(error)}`, true);
+  } finally {
+    pairingState.busySessionIds.delete(session.pairingId);
+    renderV2Pairing();
+  }
+}
+
+function setPairingMessage(message, isError = false) {
+  pairingState.message = message;
+  pairingState.messageIsError = isError;
+}
+
+function peerLabel(peer) {
+  return peer && typeof peer.deviceName === 'string' && peer.deviceName.trim() ? peer.deviceName.trim() : '未命名设备';
+}
+
+function shortFingerprint(fingerprint) {
+  if (typeof fingerprint !== 'string' || fingerprint.length === 0) return '未知';
+  return fingerprint.length > 20 ? `${fingerprint.slice(0, 10)}…${fingerprint.slice(-8)}` : fingerprint;
+}
+
+function describePairingPermissions(permissions) {
+  const granted = [];
+  if (permissions && permissions.transfer) granted.push('传输');
+  if (permissions && permissions.libraryRead) granted.push('读取媒体库');
+  if (permissions && permissions.libraryUpload) granted.push('写入媒体库');
+  return granted.length > 0 ? `已授权：${granted.join('、')}` : '未授予可用权限';
+}
+
+function formatLastSeen(lastSeen) {
+  const timestamp = Number(lastSeen);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '最近发现';
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 10) return '刚刚发现';
+  if (seconds < 60) return `${seconds} 秒前发现`;
+  return `${Math.floor(seconds / 60)} 分钟前发现`;
+}
+
+function formatExpiration(expiresAt) {
+  const timestamp = Number(expiresAt);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
+  const remainingSeconds = Math.ceil((timestamp - Date.now()) / 1000);
+  if (remainingSeconds <= 0) return '会话即将过期，请刷新状态。';
+  if (remainingSeconds < 60) return `安全码将在约 ${remainingSeconds} 秒后过期`;
+  return `安全码将在约 ${Math.ceil(remainingSeconds / 60)} 分钟后过期`;
+}
+
+function translatePairingStatus(status) {
+  const labels = new Map([
+    ['awaiting-remote-offer', '等待对方响应'],
+    ['awaiting-local-confirmation', '请核对并确认安全码'],
+    ['awaiting-remote-confirmation', '已确认，等待对方确认'],
+    ['ready-to-trust', '双方已确认，可完成信任'],
+    ['completed', '已完成'],
+    ['cancelled', '已取消'],
+    ['expired', '已过期']
+  ]);
+  return labels.get(status) || '处理中';
+}
+
+function errorMessage(error) {
+  if (error && typeof error.message === 'string' && error.message.trim()) return error.message.trim();
+  return '未知错误';
 }
