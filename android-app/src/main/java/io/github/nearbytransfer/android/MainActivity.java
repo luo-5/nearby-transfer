@@ -102,6 +102,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
+        restoreSelectedFile(savedInstanceState);
         refreshTrustedPeers();
         requestPermissionsThenStart();
     }
@@ -126,6 +127,12 @@ public class MainActivity extends Activity {
                 appendLog("存储权限未授予，无法保存到公共下载目录。");
             }
         }
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        SelectedFileState.save(outState, selectedFile);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -164,10 +171,7 @@ public class MainActivity extends Activity {
             // Some file providers do not grant persistable permissions; the current grant is enough for this send.
         }
 
-        selectedFile = describeUri(uri);
-        selectedFileText.setText(selectedFile.name + "\n" + formatBytes(selectedFile.size));
-        appendLog("已选择文件：" + selectedFile.name);
-        renderSendState();
+        setSelectedFile(describeUri(uri), true);
     }
 
     private void buildUi() {
@@ -618,6 +622,22 @@ public class MainActivity extends Activity {
             updateTransferProgress(event);
             appendLog(event.toDisplayText());
         });
+    }
+
+    private void restoreSelectedFile(Bundle savedInstanceState) {
+        SelectedFile restored = SelectedFileState.restore(savedInstanceState);
+        if (restored != null) {
+            setSelectedFile(restored, false);
+        }
+    }
+
+    private void setSelectedFile(SelectedFile file, boolean logSelection) {
+        selectedFile = file;
+        selectedFileText.setText(file.name + "\n" + formatBytes(file.size));
+        if (logSelection) {
+            appendLog("已选择文件：" + file.name);
+        }
+        renderSendState();
     }
 
     private void chooseFile() {
