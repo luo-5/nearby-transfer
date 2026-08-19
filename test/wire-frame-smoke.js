@@ -38,6 +38,23 @@ function testRoundTripAndCanonicalHeader() {
   });
 }
 
+function testTransferControlMessageTypes() {
+  for (const type of [
+    'transfer-manifest',
+    'transfer-decision',
+    'transfer-resume',
+    'transfer-progress',
+    'transfer-complete'
+  ]) {
+    const decoded = decodeWireFrame(encodeWireFrame({
+      header: { app: 'nearby-transfer', protocolVersion: 2, type },
+      payload: Buffer.from(type)
+    }));
+    assert.strictEqual(decoded.header.type, type);
+    assert.strictEqual(decoded.payload.toString(), type);
+  }
+}
+
 function testIncrementalAndStickyPackets() {
   const first = encodeWireFrame({ header: HEADER, payload: Buffer.from('first') });
   const second = encodeWireFrame({
@@ -119,6 +136,7 @@ function makeFrame(header, payload) {
 }
 
 testRoundTripAndCanonicalHeader();
+testTransferControlMessageTypes();
 testIncrementalAndStickyPackets();
 testMalformedLengthsAndTruncation();
 testStrictHeaderValidation();

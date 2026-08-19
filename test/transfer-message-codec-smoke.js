@@ -4,16 +4,22 @@ const assert = require('assert');
 const fixture = require('./fixtures/protocol-v2-transfer-messages.json');
 const {
   MAX_CLOCK_SKEW_MS,
+  MAX_CONTROL_MESSAGE_BYTES,
   MAX_MESSAGE_TTL_MS,
+  MAX_RESUME_ENTRIES,
   TYPE_TRANSFER_COMPLETE,
   TYPE_TRANSFER_DECISION,
   TYPE_TRANSFER_MANIFEST,
+  TYPE_TRANSFER_PROGRESS,
+  TYPE_TRANSFER_RESUME,
+  advanceTransferControlCheckpoint,
   decodeTransferMessage,
   encodeTransferMessage,
   transferMessageSigningPayload,
   validateTransferMessage
 } = require('../src/v2/transfer-message-codec');
 const { canonicalJson } = require('../src/v2/canonical-json');
+const { MAX_SEQUENCE } = require('../src/v2/transfer-session-crypto');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -291,6 +297,230 @@ function testRestrictedDecisionAndCompletionModels() {
   );
 }
 
+
+function testResumeAndProgressModels() {
+  const resumeVector = fixture.vectors.transferResume;
+  const progressVector = fixture.vectors.transferProgress;
+  const resume = clone(resumeVector.message);
+
+  const second = { path: '资料/empty.txt', size: 0, committedOffset: 0 };
+  resume.files = [resume.files[0], second].reverse();
+  const normalized = validateTransferMessage(TYPE_TRANSFER_RESUME, resume, { now: fixture.validationNow });
+  assert.deepStrictEqual(normalized.files.map((file) => file.path), ['资料/empty.txt', '资料/hello.txt']);
+
+  const duplicate = clone(resumeVector.message);
+  duplicate.files.push(clone(duplicate.files[0]));
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_RESUME, duplicate, { now: fixture.validationNow }),
+    /duplicate path/
+  );
+
+  const windowsDuplicate = clone(resumeVector.message);
+  windowsDuplicate.files = [
+    { path: 'Folder/File.txt', size: 5, committedOffset: 0 },
+    { path: 'folder/file.TXT', size: 5, committedOffset: 0 }
+  ];
+  windowsDuplicate.totalTransferred = 0;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_RESUME, windowsDuplicate, { now: fixture.validationNow }),
+    /duplicate path/
+  );
+
+  const emptyFiles = clone(resumeVector.message);
+  emptyFiles.files = [];
+  emptyFiles.totalTransferred = 0;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_RESUME, emptyFiles, { now: fixture.validationNow }),
+    /bounded array/
+  );
+
+  const tooManyFiles = clone(resumeVector.message);
+  tooManyFiles.files = new Array(MAX_RESUME_ENTRIES + 1).fill(resumeVector.message.files[0]);
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_RESUME, tooManyFiles, { now: fixture.validationNow }),
+    /bounded array/
+  );
+
+  for (const mutate of [
+    (message) => { message.files[0].committedOffset = message.files[0].size + 1; },
+    (message) => { message.totalTransferred += 1; },
+    (message) => { message.manifestHash = message.manifestHash.toUpperCase(); },
+    (message) => { message.files[0].path = 'C:/secret.txt'; },
+    (message) => { message.sessionKey = 'forbidden'; },
+    (message) => { message.signature = Buffer.alloc(63).toString('base64url'); }
+  ]) {
+    const invalid = clone(resumeVector.message);
+    mutate(invalid);
+    assert.throws(
+      () => validateTransferMessage(TYPE_TRANSFER_RESUME, invalid, { now: fixture.validationNow })
+    );
+  }
+
+  const progress = clone(progressVector.message);
+  progress.nextSequence = MAX_SEQUENCE;
+  validateTransferMessage(TYPE_TRANSFER_PROGRESS, progress, { now: fixture.validationNow });
+  progress.nextSequence = MAX_SEQUENCE + 1;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, progress, { now: fixture.validationNow }),
+    /maximum sequence/
+  );
+
+  const overOffset = clone(progressVector.message);
+  overOffset.committedOffset = overOffset.fileSize + 1;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, overOffset, { now: fixture.validationNow }),
+    /exceeds the file size/
+  );
+
+  const tooSmallTotal = clone(progressVector.message);
+  tooSmallTotal.totalTransferred = tooSmallTotal.committedOffset - 1;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, tooSmallTotal, { now: fixture.validationNow }),
+    /outside the accepted bounds/
+  );
+
+  const pretty = Buffer.from(JSON.stringify(progressVector.message, null, 2));
+  assert.throws(
+    () => decodeTransferMessage(TYPE_TRANSFER_PROGRESS, pretty, { now: fixture.validationNow }),
+    /canonical JSON/
+  );
+  assert.throws(
+    () => decodeTransferMessage(
+      TYPE_TRANSFER_PROGRESS,
+      Buffer.alloc(MAX_CONTROL_MESSAGE_BYTES + 1),
+      { now: fixture.validationNow }
+    ),
+    /payload exceeds/
+  );
+}
+
+function testControlMonotonicityAndStableSigning() {
+  const sequence = fixture.monotonicity;
+  let checkpoint = advanceTransferControlCheckpoint(
+    TYPE_TRANSFER_RESUME,
+    clone(sequence.initialResume),
+    { now: fixture.validationNow }
+  );
+  assert.deepStrictEqual(checkpoint.files.map((file) => file.committedOffset), [10, 0]);
+
+  checkpoint = advanceTransferControlCheckpoint(
+    TYPE_TRANSFER_PROGRESS,
+    clone(sequence.progressA),
+    { now: fixture.validationNow, checkpoint }
+  );
+  checkpoint = advanceTransferControlCheckpoint(
+    TYPE_TRANSFER_PROGRESS,
+    clone(sequence.progressB),
+    { now: fixture.validationNow, checkpoint }
+  );
+  assert.deepStrictEqual(checkpoint.files.map((file) => file.committedOffset), [40, 30]);
+
+  assert.throws(
+    () => advanceTransferControlCheckpoint(
+      TYPE_TRANSFER_PROGRESS,
+      clone(sequence.regressedAAfterB),
+      { now: fixture.validationNow, checkpoint }
+    ),
+    /committed offset moved backwards/
+  );
+
+  const changedSize = clone(sequence.progressAAfterB);
+  changedSize.fileSize += 1;
+  assert.throws(
+    () => advanceTransferControlCheckpoint(
+      TYPE_TRANSFER_PROGRESS,
+      changedSize,
+      { now: fixture.validationNow, checkpoint }
+    ),
+    /file size changed/
+  );
+
+  const wrongTotal = clone(sequence.progressAAfterB);
+  wrongTotal.totalTransferred -= 1;
+  assert.throws(
+    () => advanceTransferControlCheckpoint(
+      TYPE_TRANSFER_PROGRESS,
+      wrongTotal,
+      { now: fixture.validationNow, checkpoint }
+    ),
+    /checkpoint plus committed offset delta/
+  );
+
+  const insufficientSequence = clone(sequence.progressAAfterB);
+  insufficientSequence.nextSequence = checkpoint.nextSequence;
+  assert.throws(
+    () => advanceTransferControlCheckpoint(
+      TYPE_TRANSFER_PROGRESS,
+      insufficientSequence,
+      { now: fixture.validationNow, checkpoint }
+    ),
+    /sequence delta is too small/
+  );
+
+  checkpoint = advanceTransferControlCheckpoint(
+    TYPE_TRANSFER_PROGRESS,
+    clone(sequence.progressAAfterB),
+    { now: fixture.validationNow, checkpoint }
+  );
+  assert.deepStrictEqual(checkpoint.files.map((file) => file.committedOffset), [50, 30]);
+  assert.strictEqual(checkpoint.totalTransferred, 80);
+  assert.strictEqual(checkpoint.nextSequence, 5);
+
+  const sparsePrevious = clone(sequence.progressB);
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, sequence.progressAAfterB, {
+      now: fixture.validationNow,
+      previous: sparsePrevious
+    }),
+    /complete checkpoint/
+  );
+
+  const unknownProgress = clone(sequence.progressAAfterB);
+  unknownProgress.path = '资料/not-in-manifest.txt';
+  assert.throws(
+    () => advanceTransferControlCheckpoint(
+      TYPE_TRANSFER_PROGRESS,
+      unknownProgress,
+      { now: fixture.validationNow, checkpoint }
+    ),
+    /outside the resume set/
+  );
+
+  const olderProgress = clone(sequence.progressAAfterB);
+  olderProgress.issuedAt = checkpoint.issuedAt - 1;
+  olderProgress.expiresAt = olderProgress.issuedAt + MAX_MESSAGE_TTL_MS;
+  assert.throws(
+    () => advanceTransferControlCheckpoint(
+      TYPE_TRANSFER_PROGRESS,
+      olderProgress,
+      { now: olderProgress.issuedAt, checkpoint }
+    ),
+    /issue time must not move backwards/
+  );
+
+  const lateProgress = clone(sequence.progressAAfterB);
+  const lateNow = sequence.initialResume.expiresAt + 10_000;
+  lateProgress.committedOffset = 60;
+  lateProgress.totalTransferred = 90;
+  lateProgress.nextSequence = 6;
+  lateProgress.issuedAt = lateNow;
+  lateProgress.expiresAt = lateNow + MAX_MESSAGE_TTL_MS;
+  advanceTransferControlCheckpoint(TYPE_TRANSFER_PROGRESS, lateProgress, { now: lateNow, checkpoint });
+
+  const changedProgress = clone(fixture.vectors.transferProgress.message);
+  changedProgress.totalTransferred += 1;
+  assert.notStrictEqual(
+    transferMessageSigningPayload(TYPE_TRANSFER_PROGRESS, changedProgress),
+    fixture.vectors.transferProgress.signingPayload
+  );
+  const unsigned = clone(fixture.vectors.transferResume.message);
+  delete unsigned.signature;
+  assert.strictEqual(
+    transferMessageSigningPayload(TYPE_TRANSFER_RESUME, unsigned),
+    fixture.vectors.transferResume.signingPayload
+  );
+}
+
 function main() {
   testSharedCanonicalVectors();
   testStrictCanonicalJsonAndFieldWhitelists();
@@ -299,6 +529,8 @@ function main() {
   testManifestSortingAndSummaries();
   testSigningPayloadStability();
   testRestrictedDecisionAndCompletionModels();
+  testResumeAndProgressModels();
+  testControlMonotonicityAndStableSigning();
   console.log('Protocol v2 transfer message codec smoke test passed');
 }
 

@@ -33,6 +33,9 @@ final class V2WireFrame {
         "pairing-confirm",
         "pairing-cancel",
         "transfer-manifest",
+        "transfer-decision",
+        "transfer-resume",
+        "transfer-progress",
         "transfer-chunk",
         "transfer-complete",
         "library-session"

@@ -1,5 +1,5 @@
 {
-  "fixtureVersion": 1,
+  "fixtureVersion": 2,
   "validationNow": 1760000001000,
   "vectors": {
     "transferManifest": {
@@ -97,6 +97,150 @@
       },
       "canonicalJson": "{\"app\":\"nearby-transfer\",\"bytes\":12,\"diagnostic\":\"hash-mismatch\",\"expiresAt\":1760000300300,\"issuedAt\":1760000000300,\"protocolVersion\":2,\"receiverDeviceId\":\"b4153ead60ea8430\",\"senderDeviceId\":\"8fa1d28f6686c3eb\",\"sequence\":1,\"sha256\":null,\"signature\":\"wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t_g4eLj5OXm5-jp6uvs7e7v8PHy8_T19vf4-fr7_P3-_w\",\"status\":\"failed\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-complete\"}",
       "signingPayload": "{\"app\":\"nearby-transfer\",\"bytes\":12,\"diagnostic\":\"hash-mismatch\",\"expiresAt\":1760000300300,\"issuedAt\":1760000000300,\"protocolVersion\":2,\"receiverDeviceId\":\"b4153ead60ea8430\",\"senderDeviceId\":\"8fa1d28f6686c3eb\",\"sequence\":1,\"sha256\":null,\"status\":\"failed\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-complete\"}"
+    },
+    "transferResume": {
+      "type": "transfer-resume",
+      "message": {
+        "app": "nearby-transfer",
+        "protocolVersion": 2,
+        "type": "transfer-resume",
+        "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "senderDeviceId": "b4153ead60ea8430",
+        "receiverDeviceId": "8fa1d28f6686c3eb",
+        "manifestHash": "cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7",
+        "files": [
+          {
+            "path": "资料/hello.txt",
+            "size": 12,
+            "committedOffset": 5
+          }
+        ],
+        "nextSequence": 2,
+        "totalTransferred": 5,
+        "issuedAt": 1760000000400,
+        "expiresAt": 1760000300400,
+        "signature": "ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUA"
+      },
+      "canonicalJson": "{\"app\":\"nearby-transfer\",\"expiresAt\":1760000300400,\"files\":[{\"committedOffset\":5,\"path\":\"资料/hello.txt\",\"size\":12}],\"issuedAt\":1760000000400,\"manifestHash\":\"cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7\",\"nextSequence\":2,\"protocolVersion\":2,\"receiverDeviceId\":\"8fa1d28f6686c3eb\",\"senderDeviceId\":\"b4153ead60ea8430\",\"signature\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUA\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"totalTransferred\":5,\"type\":\"transfer-resume\"}",
+      "signingPayload": "{\"app\":\"nearby-transfer\",\"expiresAt\":1760000300400,\"files\":[{\"committedOffset\":5,\"path\":\"资料/hello.txt\",\"size\":12}],\"issuedAt\":1760000000400,\"manifestHash\":\"cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7\",\"nextSequence\":2,\"protocolVersion\":2,\"receiverDeviceId\":\"8fa1d28f6686c3eb\",\"senderDeviceId\":\"b4153ead60ea8430\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"totalTransferred\":5,\"type\":\"transfer-resume\"}"
+    },
+    "transferProgress": {
+      "type": "transfer-progress",
+      "message": {
+        "app": "nearby-transfer",
+        "protocolVersion": 2,
+        "type": "transfer-progress",
+        "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "senderDeviceId": "b4153ead60ea8430",
+        "receiverDeviceId": "8fa1d28f6686c3eb",
+        "manifestHash": "cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7",
+        "path": "资料/hello.txt",
+        "fileSize": 12,
+        "committedOffset": 12,
+        "nextSequence": 3,
+        "totalTransferred": 12,
+        "issuedAt": 1760000000500,
+        "expiresAt": 1760000300500,
+        "signature": "UVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkA"
+      },
+      "canonicalJson": "{\"app\":\"nearby-transfer\",\"committedOffset\":12,\"expiresAt\":1760000300500,\"fileSize\":12,\"issuedAt\":1760000000500,\"manifestHash\":\"cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7\",\"nextSequence\":3,\"path\":\"资料/hello.txt\",\"protocolVersion\":2,\"receiverDeviceId\":\"8fa1d28f6686c3eb\",\"senderDeviceId\":\"b4153ead60ea8430\",\"signature\":\"UVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkA\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"totalTransferred\":12,\"type\":\"transfer-progress\"}",
+      "signingPayload": "{\"app\":\"nearby-transfer\",\"committedOffset\":12,\"expiresAt\":1760000300500,\"fileSize\":12,\"issuedAt\":1760000000500,\"manifestHash\":\"cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7\",\"nextSequence\":3,\"path\":\"资料/hello.txt\",\"protocolVersion\":2,\"receiverDeviceId\":\"8fa1d28f6686c3eb\",\"senderDeviceId\":\"b4153ead60ea8430\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"totalTransferred\":12,\"type\":\"transfer-progress\"}"
+    }
+  },
+  "monotonicity": {
+    "initialResume": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "senderDeviceId": "b4153ead60ea8430",
+      "receiverDeviceId": "8fa1d28f6686c3eb",
+      "manifestHash": "cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7",
+      "type": "transfer-resume",
+      "files": [
+        {
+          "path": "资料/a.bin",
+          "size": 100,
+          "committedOffset": 10
+        },
+        {
+          "path": "资料/b.bin",
+          "size": 100,
+          "committedOffset": 0
+        }
+      ],
+      "nextSequence": 2,
+      "totalTransferred": 10,
+      "issuedAt": 1760000000400,
+      "expiresAt": 1760000300400,
+      "signature": "UVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkA"
+    },
+    "progressA": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "senderDeviceId": "b4153ead60ea8430",
+      "receiverDeviceId": "8fa1d28f6686c3eb",
+      "manifestHash": "cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7",
+      "type": "transfer-progress",
+      "path": "资料/a.bin",
+      "fileSize": 100,
+      "committedOffset": 40,
+      "nextSequence": 3,
+      "totalTransferred": 40,
+      "issuedAt": 1760000000500,
+      "expiresAt": 1760000300500,
+      "signature": "UVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkA"
+    },
+    "progressB": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "senderDeviceId": "b4153ead60ea8430",
+      "receiverDeviceId": "8fa1d28f6686c3eb",
+      "manifestHash": "cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7",
+      "type": "transfer-progress",
+      "path": "资料/b.bin",
+      "fileSize": 100,
+      "committedOffset": 30,
+      "nextSequence": 4,
+      "totalTransferred": 70,
+      "issuedAt": 1760000000600,
+      "expiresAt": 1760000300600,
+      "signature": "UVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkA"
+    },
+    "progressAAfterB": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "senderDeviceId": "b4153ead60ea8430",
+      "receiverDeviceId": "8fa1d28f6686c3eb",
+      "manifestHash": "cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7",
+      "type": "transfer-progress",
+      "path": "资料/a.bin",
+      "fileSize": 100,
+      "committedOffset": 50,
+      "nextSequence": 5,
+      "totalTransferred": 80,
+      "issuedAt": 1760000000700,
+      "expiresAt": 1760000300700,
+      "signature": "UVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkA"
+    },
+    "regressedAAfterB": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "senderDeviceId": "b4153ead60ea8430",
+      "receiverDeviceId": "8fa1d28f6686c3eb",
+      "manifestHash": "cd1eca069ac5a7f01d2862bbe9eca7d94093c8da30cbc4fc4ec4312186a71db7",
+      "type": "transfer-progress",
+      "path": "资料/a.bin",
+      "fileSize": 100,
+      "committedOffset": 20,
+      "nextSequence": 5,
+      "totalTransferred": 70,
+      "issuedAt": 1760000000700,
+      "expiresAt": 1760000300700,
+      "signature": "UVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkA"
     }
   }
 }

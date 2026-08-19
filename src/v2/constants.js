@@ -15,6 +15,9 @@ const MESSAGE_TYPES = Object.freeze({
   PAIRING_CONFIRM: 'pairing-confirm',
   PAIRING_CANCEL: 'pairing-cancel',
   TRANSFER_MANIFEST: 'transfer-manifest',
+  TRANSFER_DECISION: 'transfer-decision',
+  TRANSFER_RESUME: 'transfer-resume',
+  TRANSFER_PROGRESS: 'transfer-progress',
   TRANSFER_CHUNK: 'transfer-chunk',
   TRANSFER_COMPLETE: 'transfer-complete',
   LIBRARY_SESSION: 'library-session'

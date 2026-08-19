@@ -8,10 +8,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -20,9 +22,12 @@ final class V2TransferMessage {
     static final String TYPE_MANIFEST = "transfer-manifest";
     static final String TYPE_DECISION = "transfer-decision";
     static final String TYPE_COMPLETE = "transfer-complete";
+    static final String TYPE_RESUME = "transfer-resume";
+    static final String TYPE_PROGRESS = "transfer-progress";
     static final int MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
     static final long MAX_MESSAGE_TTL_MS = 5 * 60 * 1000L;
     static final long MAX_CLOCK_SKEW_MS = 30 * 1000L;
+    static final int MAX_CONTROL_MESSAGE_BYTES = 1024 * 1024;
 
     private static final long MAX_SAFE_INTEGER = 9_007_199_254_740_991L;
     private static final String SIGNATURE_PLACEHOLDER = Base64.getUrlEncoder().withoutPadding()
@@ -31,6 +36,7 @@ final class V2TransferMessage {
     private static final long MAX_TOTAL_SIZE_BYTES = 4_398_046_511_104L;
     private static final int MAX_MANIFEST_ENTRIES = 10_000;
     private static final int MAX_TRANSFER_FILES = 8_192;
+    static final int MAX_RESUME_ENTRIES = MAX_TRANSFER_FILES;
     private static final int MAX_RELATIVE_PATH_BYTES = 4_096;
     private static final int MAX_PATH_COMPONENT_BYTES = 255;
 
@@ -164,22 +170,156 @@ final class V2TransferMessage {
         }
     }
 
+    static final class ResumeFile {
+        final String path;
+        final long size;
+        final long committedOffset;
+
+        ResumeFile(String path, long size, long committedOffset) {
+            this.path = path;
+            this.size = size;
+            this.committedOffset = committedOffset;
+        }
+
+        JSONObject toJson() throws Exception {
+            JSONObject json = new JSONObject();
+            json.put("path", path);
+            json.put("size", size);
+            json.put("committedOffset", committedOffset);
+            return json;
+        }
+    }
+
+    static final class Resume extends Message {
+        final String taskId;
+        final String senderDeviceId;
+        final String receiverDeviceId;
+        final String manifestHash;
+        final List<ResumeFile> files;
+        final long nextSequence;
+        final long totalTransferred;
+
+        Resume(String taskId, String senderDeviceId, String receiverDeviceId, String manifestHash,
+               List<ResumeFile> files, long nextSequence, long totalTransferred,
+               long issuedAt, long expiresAt, String signature) {
+            super(TYPE_RESUME, issuedAt, expiresAt, signature);
+            this.taskId = taskId;
+            this.senderDeviceId = senderDeviceId;
+            this.receiverDeviceId = receiverDeviceId;
+            this.manifestHash = manifestHash;
+            this.files = Collections.unmodifiableList(new ArrayList<>(files));
+            this.nextSequence = nextSequence;
+            this.totalTransferred = totalTransferred;
+        }
+
+        @Override JSONObject toJson() throws Exception {
+            JSONObject json = baseEnvelope(type);
+            json.put("taskId", taskId);
+            json.put("senderDeviceId", senderDeviceId);
+            json.put("receiverDeviceId", receiverDeviceId);
+            json.put("manifestHash", manifestHash);
+            JSONArray array = new JSONArray();
+            for (ResumeFile file : files) array.put(file.toJson());
+            json.put("files", array);
+            json.put("nextSequence", nextSequence);
+            json.put("totalTransferred", totalTransferred);
+            json.put("issuedAt", issuedAt);
+            json.put("expiresAt", expiresAt);
+            json.put("signature", signature);
+            return json;
+        }
+    }
+
+    static final class Progress extends Message {
+        final String taskId;
+        final String senderDeviceId;
+        final String receiverDeviceId;
+        final String manifestHash;
+        final String path;
+        final long fileSize;
+        final long committedOffset;
+        final long nextSequence;
+        final long totalTransferred;
+
+        Progress(String taskId, String senderDeviceId, String receiverDeviceId, String manifestHash,
+                 String path, long fileSize, long committedOffset, long nextSequence,
+                 long totalTransferred, long issuedAt, long expiresAt, String signature) {
+            super(TYPE_PROGRESS, issuedAt, expiresAt, signature);
+            this.taskId = taskId;
+            this.senderDeviceId = senderDeviceId;
+            this.receiverDeviceId = receiverDeviceId;
+            this.manifestHash = manifestHash;
+            this.path = path;
+            this.fileSize = fileSize;
+            this.committedOffset = committedOffset;
+            this.nextSequence = nextSequence;
+            this.totalTransferred = totalTransferred;
+        }
+
+        @Override JSONObject toJson() throws Exception {
+            JSONObject json = baseEnvelope(type);
+            json.put("taskId", taskId);
+            json.put("senderDeviceId", senderDeviceId);
+            json.put("receiverDeviceId", receiverDeviceId);
+            json.put("manifestHash", manifestHash);
+            json.put("path", path);
+            json.put("fileSize", fileSize);
+            json.put("committedOffset", committedOffset);
+            json.put("nextSequence", nextSequence);
+            json.put("totalTransferred", totalTransferred);
+            json.put("issuedAt", issuedAt);
+            json.put("expiresAt", expiresAt);
+            json.put("signature", signature);
+            return json;
+        }
+    }
+
+
+    /** Complete persisted state used to validate sparse resume/progress updates. */
+    static final class ControlCheckpoint {
+        final String taskId;
+        final String senderDeviceId;
+        final String receiverDeviceId;
+        final String manifestHash;
+        final List<ResumeFile> files;
+        final long nextSequence;
+        final long totalTransferred;
+        final long issuedAt;
+
+        private ControlCheckpoint(String taskId, String senderDeviceId, String receiverDeviceId,
+                                  String manifestHash, List<ResumeFile> files, long nextSequence,
+                                  long totalTransferred, long issuedAt) {
+            this.taskId = taskId;
+            this.senderDeviceId = senderDeviceId;
+            this.receiverDeviceId = receiverDeviceId;
+            this.manifestHash = manifestHash;
+            this.files = Collections.unmodifiableList(new ArrayList<>(files));
+            this.nextSequence = nextSequence;
+            this.totalTransferred = totalTransferred;
+            this.issuedAt = issuedAt;
+        }
+    }
+
     static byte[] encode(Message message, long nowEpochMillis) throws Exception {
         if (message == null) throw new IllegalArgumentException("Transfer message is required");
         Message normalized = fromJson(message.type, message.toJson(), nowEpochMillis);
         byte[] encoded = ProtocolV2.canonicalJson(normalized.toJson()).getBytes(StandardCharsets.UTF_8);
-        assertPayloadBounds(encoded);
+        assertPayloadBounds(message.type, encoded);
         return encoded;
     }
 
     static Message decode(String type, byte[] payload, long nowEpochMillis) throws Exception {
+        return decode(type, payload, nowEpochMillis, null);
+    }
+
+    static Message decode(String type, byte[] payload, long nowEpochMillis, ControlCheckpoint checkpoint) throws Exception {
         assertType(type);
-        assertPayloadBounds(payload);
+        assertPayloadBounds(type, payload);
         Object parsed = ProtocolV2.parseCanonicalJson(payload, "Transfer message payload");
         if (!(parsed instanceof JSONObject)) {
             throw new IllegalArgumentException("Transfer message payload must be an object");
         }
-        Message normalized = fromJson(type, (JSONObject) parsed, nowEpochMillis);
+        Message normalized = fromJson(type, (JSONObject) parsed, nowEpochMillis, checkpoint);
         String normalizedCanonical = ProtocolV2.canonicalJson(normalized.toJson());
         String receivedCanonical = new String(payload, StandardCharsets.UTF_8);
         if (!normalizedCanonical.equals(receivedCanonical)) {
@@ -218,19 +358,35 @@ final class V2TransferMessage {
     }
 
     static Message fromJson(String type, JSONObject json, long nowEpochMillis) throws Exception {
+        return fromJson(type, json, nowEpochMillis, null);
+    }
+
+    static Message fromJson(String type, JSONObject json, long nowEpochMillis, ControlCheckpoint checkpoint) throws Exception {
         assertType(type);
         assertPositiveSafeInteger(nowEpochMillis, "Transfer message validation time");
         if (json == null) throw new IllegalArgumentException("Transfer message is required");
+        Message normalized;
         switch (type) {
             case TYPE_MANIFEST:
-                return manifestFromJson(json, nowEpochMillis);
+                normalized = manifestFromJson(json, nowEpochMillis);
+                break;
             case TYPE_DECISION:
-                return decisionFromJson(json, nowEpochMillis);
+                normalized = decisionFromJson(json, nowEpochMillis);
+                break;
             case TYPE_COMPLETE:
-                return completeFromJson(json, nowEpochMillis);
+                normalized = completeFromJson(json, nowEpochMillis);
+                break;
+            case TYPE_RESUME:
+                normalized = resumeFromJson(json, nowEpochMillis);
+                break;
+            case TYPE_PROGRESS:
+                normalized = progressFromJson(json, nowEpochMillis);
+                break;
             default:
                 throw new IllegalArgumentException("Unsupported transfer message type");
         }
+        if (checkpoint != null) assertMonotonicControl(checkpoint, normalized);
+        return normalized;
     }
 
     private static ManifestEnvelope manifestFromJson(JSONObject json, long now) throws Exception {
@@ -322,6 +478,214 @@ final class V2TransferMessage {
         String signature = requiredString(json, "signature", "Transfer completion");
         assertCanonicalBase64Url(signature, 64, "Transfer message signature");
         return new Complete(taskId, sender, receiver, status, diagnostic, sha256, bytes, sequence, issuedAt, expiresAt, signature);
+    }
+
+    private static Resume resumeFromJson(JSONObject json, long now) throws Exception {
+        assertExactKeys(json, Arrays.asList(
+            "app", "protocolVersion", "type", "taskId", "senderDeviceId", "receiverDeviceId",
+            "manifestHash", "files", "nextSequence", "totalTransferred", "issuedAt", "expiresAt", "signature"
+        ), "Transfer resume");
+        assertProtocolEnvelope(json, TYPE_RESUME, "Transfer resume");
+        String taskId = requiredString(json, "taskId", "Transfer resume");
+        assertTaskId(taskId);
+        String sender = requiredString(json, "senderDeviceId", "Transfer resume");
+        String receiver = requiredString(json, "receiverDeviceId", "Transfer resume");
+        assertRoute(sender, receiver);
+        String manifestHash = requiredString(json, "manifestHash", "Transfer resume");
+        assertManifestHash(manifestHash);
+        Object filesValue = json.opt("files");
+        if (!(filesValue instanceof JSONArray)) throw new IllegalArgumentException("Transfer resume files must be an array");
+        JSONArray array = (JSONArray) filesValue;
+        if (array.length() == 0 || array.length() > MAX_RESUME_ENTRIES) {
+            throw new IllegalArgumentException("Transfer resume files must be a bounded non-empty array");
+        }
+        List<ResumeFile> files = new ArrayList<>();
+        Set<String> paths = new HashSet<>();
+        Set<String> windowsPaths = new HashSet<>();
+        long committedTotal = 0;
+        for (int index = 0; index < array.length(); index += 1) {
+            Object value = array.get(index);
+            if (!(value instanceof JSONObject)) throw new IllegalArgumentException("Transfer resume file must be an object");
+            JSONObject file = (JSONObject) value;
+            assertExactKeys(file, Arrays.asList("path", "size", "committedOffset"), "Transfer resume file");
+            String path = requiredString(file, "path", "Transfer resume file");
+            assertRelativePath(path);
+            String windowsPath = windowsComparisonPath(path);
+            if (!paths.add(path) || !windowsPaths.add(windowsPath)) {
+                throw new IllegalArgumentException("Transfer resume contains a duplicate path: " + path);
+            }
+            long size = requiredNonNegativeSafeLong(file, "size", "Transfer resume file size");
+            if (size > MAX_FILE_SIZE_BYTES) throw new IllegalArgumentException("Transfer resume file size exceeds the maximum");
+            long committedOffset = requiredNonNegativeSafeLong(file, "committedOffset", "Transfer resume committed offset");
+            if (committedOffset > size) throw new IllegalArgumentException("Transfer resume committed offset exceeds the file size");
+            committedTotal = checkedAdd(committedTotal, committedOffset, "Transfer resume committed total");
+            files.add(new ResumeFile(path, size, committedOffset));
+        }
+        files.sort((left, right) -> left.path.compareTo(right.path));
+        long nextSequence = requiredSequence(json, "nextSequence", "Transfer resume next sequence");
+        long totalTransferred = requiredNonNegativeSafeLong(json, "totalTransferred", "Transfer resume total transferred");
+        if (totalTransferred > MAX_TOTAL_SIZE_BYTES || totalTransferred != committedTotal) {
+            throw new IllegalArgumentException("Transfer resume total transferred must equal the bounded committed total");
+        }
+        long issuedAt = requiredPositiveSafeLong(json, "issuedAt", "Transfer resume");
+        long expiresAt = requiredPositiveSafeLong(json, "expiresAt", "Transfer resume");
+        assertTimeWindow(issuedAt, expiresAt, now);
+        String signature = requiredString(json, "signature", "Transfer resume");
+        assertCanonicalBase64Url(signature, 64, "Transfer message signature");
+        return new Resume(taskId, sender, receiver, manifestHash, files, nextSequence, totalTransferred,
+            issuedAt, expiresAt, signature);
+    }
+
+    private static Progress progressFromJson(JSONObject json, long now) throws Exception {
+        assertExactKeys(json, Arrays.asList(
+            "app", "protocolVersion", "type", "taskId", "senderDeviceId", "receiverDeviceId",
+            "manifestHash", "path", "fileSize", "committedOffset", "nextSequence", "totalTransferred",
+            "issuedAt", "expiresAt", "signature"
+        ), "Transfer progress acknowledgement");
+        assertProtocolEnvelope(json, TYPE_PROGRESS, "Transfer progress acknowledgement");
+        String taskId = requiredString(json, "taskId", "Transfer progress acknowledgement");
+        assertTaskId(taskId);
+        String sender = requiredString(json, "senderDeviceId", "Transfer progress acknowledgement");
+        String receiver = requiredString(json, "receiverDeviceId", "Transfer progress acknowledgement");
+        assertRoute(sender, receiver);
+        String manifestHash = requiredString(json, "manifestHash", "Transfer progress acknowledgement");
+        assertManifestHash(manifestHash);
+        String path = requiredString(json, "path", "Transfer progress acknowledgement");
+        assertRelativePath(path);
+        long fileSize = requiredNonNegativeSafeLong(json, "fileSize", "Transfer progress file size");
+        if (fileSize > MAX_FILE_SIZE_BYTES) throw new IllegalArgumentException("Transfer progress file size exceeds the maximum");
+        long committedOffset = requiredNonNegativeSafeLong(json, "committedOffset", "Transfer progress committed offset");
+        if (committedOffset > fileSize) throw new IllegalArgumentException("Transfer progress committed offset exceeds the file size");
+        long nextSequence = requiredSequence(json, "nextSequence", "Transfer progress next sequence");
+        long totalTransferred = requiredNonNegativeSafeLong(json, "totalTransferred", "Transfer progress total transferred");
+        if (totalTransferred < committedOffset || totalTransferred > MAX_TOTAL_SIZE_BYTES) {
+            throw new IllegalArgumentException("Transfer progress total transferred is outside the accepted bounds");
+        }
+        long issuedAt = requiredPositiveSafeLong(json, "issuedAt", "Transfer progress acknowledgement");
+        long expiresAt = requiredPositiveSafeLong(json, "expiresAt", "Transfer progress acknowledgement");
+        assertTimeWindow(issuedAt, expiresAt, now);
+        String signature = requiredString(json, "signature", "Transfer progress acknowledgement");
+        assertCanonicalBase64Url(signature, 64, "Transfer message signature");
+        return new Progress(taskId, sender, receiver, manifestHash, path, fileSize, committedOffset,
+            nextSequence, totalTransferred, issuedAt, expiresAt, signature);
+    }
+
+    private static void assertMonotonicControl(ControlCheckpoint previous, Message next) {
+        String nextTask = controlTaskId(next);
+        if (!previous.taskId.equals(nextTask)
+            || !previous.senderDeviceId.equals(controlSender(next))
+            || !previous.receiverDeviceId.equals(controlReceiver(next))
+            || !previous.manifestHash.equals(controlManifestHash(next))) {
+            throw new IllegalArgumentException("Transfer control message changed a bound identity field");
+        }
+        if (controlNextSequence(next) < previous.nextSequence) {
+            throw new IllegalArgumentException("Transfer control next sequence must not move backwards");
+        }
+        if (controlTotalTransferred(next) < previous.totalTransferred) {
+            throw new IllegalArgumentException("Transfer control total transferred must not move backwards");
+        }
+        if (next.issuedAt < previous.issuedAt) {
+            throw new IllegalArgumentException("Transfer control issue time must not move backwards");
+        }
+        Map<String, ResumeFile> priorFiles = new HashMap<>();
+        for (ResumeFile file : previous.files) priorFiles.put(file.path, file);
+        Map<String, ResumeFile> nextFiles = controlOffsets(next);
+        if (next instanceof Progress && !priorFiles.containsKey(((Progress) next).path)) {
+            throw new IllegalArgumentException("Transfer progress references a file outside the resume set");
+        }
+        long committedDelta = 0;
+        long changedFiles = 0;
+        for (Map.Entry<String, ResumeFile> entry : priorFiles.entrySet()) {
+            ResumeFile current = nextFiles.get(entry.getKey());
+            if (current == null) {
+                if (next instanceof Resume) {
+                    throw new IllegalArgumentException("Transfer resume dropped a previously tracked file");
+                }
+                continue;
+            }
+            ResumeFile old = entry.getValue();
+            if (current.size != old.size) throw new IllegalArgumentException("Transfer control file size changed");
+            if (current.committedOffset < old.committedOffset) {
+                throw new IllegalArgumentException("Transfer control committed offset must not move backwards");
+            }
+            long delta = current.committedOffset - old.committedOffset;
+            committedDelta = checkedAdd(committedDelta, delta, "Transfer control committed delta");
+            if (delta > 0) changedFiles += 1;
+        }
+        if (next instanceof Resume && priorFiles.size() != nextFiles.size()) {
+            throw new IllegalArgumentException("Transfer resume file set must remain stable");
+        }
+        long expectedTotal = checkedAdd(previous.totalTransferred, committedDelta,
+            "Transfer control total transferred");
+        if (controlTotalTransferred(next) != expectedTotal) {
+            throw new IllegalArgumentException(
+                "Transfer control total transferred must equal the checkpoint plus committed offset delta"
+            );
+        }
+        long sequenceDelta = controlNextSequence(next) - previous.nextSequence;
+        if (sequenceDelta < changedFiles) {
+            throw new IllegalArgumentException("Transfer control next sequence delta is too small for the changed files");
+        }
+    }
+
+    static ControlCheckpoint advanceCheckpoint(String type, JSONObject json, long nowEpochMillis,
+                                               ControlCheckpoint previous) throws Exception {
+        if (!TYPE_RESUME.equals(type) && !TYPE_PROGRESS.equals(type)) {
+            throw new IllegalArgumentException(
+                "Only transfer resume and progress messages can advance a control checkpoint"
+            );
+        }
+        if (previous == null && !TYPE_RESUME.equals(type)) {
+            throw new IllegalArgumentException(
+                "The first transfer control checkpoint must be created from a transfer resume message"
+            );
+        }
+        Message normalized = fromJson(type, json, nowEpochMillis, previous);
+        List<ResumeFile> files = new ArrayList<>();
+        if (normalized instanceof Resume) {
+            files.addAll(((Resume) normalized).files);
+        } else {
+            Progress progress = (Progress) normalized;
+            for (ResumeFile file : previous.files) {
+                files.add(file.path.equals(progress.path)
+                    ? new ResumeFile(file.path, file.size, progress.committedOffset)
+                    : file);
+            }
+        }
+        return new ControlCheckpoint(
+            controlTaskId(normalized),
+            controlSender(normalized),
+            controlReceiver(normalized),
+            controlManifestHash(normalized),
+            files,
+            controlNextSequence(normalized),
+            controlTotalTransferred(normalized),
+            normalized.issuedAt
+        );
+    }
+
+    private static Map<String, ResumeFile> controlOffsets(Message message) {
+        Map<String, ResumeFile> offsets = new HashMap<>();
+        if (message instanceof Resume) {
+            for (ResumeFile file : ((Resume) message).files) offsets.put(file.path, file);
+        } else {
+            Progress progress = (Progress) message;
+            offsets.put(progress.path, new ResumeFile(progress.path, progress.fileSize, progress.committedOffset));
+        }
+        return offsets;
+    }
+
+    private static String controlTaskId(Message message) { return message instanceof Resume ? ((Resume) message).taskId : ((Progress) message).taskId; }
+    private static String controlSender(Message message) { return message instanceof Resume ? ((Resume) message).senderDeviceId : ((Progress) message).senderDeviceId; }
+    private static String controlReceiver(Message message) { return message instanceof Resume ? ((Resume) message).receiverDeviceId : ((Progress) message).receiverDeviceId; }
+    private static String controlManifestHash(Message message) { return message instanceof Resume ? ((Resume) message).manifestHash : ((Progress) message).manifestHash; }
+    private static long controlNextSequence(Message message) { return message instanceof Resume ? ((Resume) message).nextSequence : ((Progress) message).nextSequence; }
+    private static long controlTotalTransferred(Message message) { return message instanceof Resume ? ((Resume) message).totalTransferred : ((Progress) message).totalTransferred; }
+
+    private static void assertManifestHash(String value) {
+        if (value == null || !SHA256.matcher(value).matches()) {
+            throw new IllegalArgumentException("Transfer manifest hash must be 64 lowercase hexadecimal characters");
+        }
     }
 
     private static JSONObject normalizeManifest(JSONObject manifest) throws Exception {
@@ -577,6 +941,14 @@ final class V2TransferMessage {
         return result;
     }
 
+    private static long requiredSequence(JSONObject json, String key, String label) {
+        long value = requiredNonNegativeSafeLong(json, key, label);
+        if (value > V2TransferCrypto.MAX_SEQUENCE) {
+            throw new IllegalArgumentException(label + " exceeds the transfer crypto maximum sequence");
+        }
+        return value;
+    }
+
     private static void assertPositiveSafeInteger(long value, String label) {
         if (value <= 0 || value > MAX_SAFE_INTEGER) {
             throw new IllegalArgumentException(label + " must be a positive safe integer");
@@ -612,14 +984,18 @@ final class V2TransferMessage {
         }
     }
 
-    private static void assertPayloadBounds(byte[] payload) {
-        if (payload == null || payload.length == 0 || payload.length > MAX_MESSAGE_BYTES) {
+    private static void assertPayloadBounds(String type, byte[] payload) {
+        int maximum = TYPE_RESUME.equals(type) || TYPE_PROGRESS.equals(type)
+            ? MAX_CONTROL_MESSAGE_BYTES
+            : MAX_MESSAGE_BYTES;
+        if (payload == null || payload.length == 0 || payload.length > maximum) {
             throw new IllegalArgumentException("Transfer message payload exceeds the accepted bounds");
         }
     }
 
     private static void assertType(String type) {
-        if (!TYPE_MANIFEST.equals(type) && !TYPE_DECISION.equals(type) && !TYPE_COMPLETE.equals(type)) {
+        if (!TYPE_MANIFEST.equals(type) && !TYPE_DECISION.equals(type) && !TYPE_COMPLETE.equals(type)
+            && !TYPE_RESUME.equals(type) && !TYPE_PROGRESS.equals(type)) {
             throw new IllegalArgumentException("Unsupported transfer message type");
         }
     }

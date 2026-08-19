@@ -31,6 +31,20 @@ public class V2WireFrameTest {
     }
 
     @Test
+    public void acceptsEveryTransferControlMessageType() throws Exception {
+        for (String type : Arrays.asList(
+            "transfer-manifest", "transfer-decision", "transfer-resume", "transfer-progress", "transfer-complete"
+        )) {
+            JSONObject header = validHeader();
+            header.put("type", type);
+            byte[] payload = type.getBytes(StandardCharsets.UTF_8);
+            V2WireFrame.Frame decoded = V2WireFrame.decode(V2WireFrame.encode(new V2WireFrame.Frame(header, payload)));
+            assertEquals(type, decoded.header.getString("type"));
+            assertArrayEquals(payload, decoded.payload);
+        }
+    }
+
+    @Test
     public void decoderAcceptsSplitPacketsAndConsecutiveFrames() throws Exception {
         byte[] encoded = hex(loadVector().getJSONObject("wireFrame").getString("encodedHex"));
         V2WireFrame.Decoder decoder = new V2WireFrame.Decoder();

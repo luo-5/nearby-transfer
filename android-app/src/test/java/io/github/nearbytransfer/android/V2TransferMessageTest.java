@@ -211,6 +211,150 @@ public class V2TransferMessageTest {
         ));
     }
 
+
+    @Test
+    public void enforcesResumeAndProgressControlsAndMonotonicity() throws Exception {
+        JSONObject fixture = loadFixture();
+        JSONObject vectors = fixture.getJSONObject("vectors");
+        JSONObject sequence = fixture.getJSONObject("monotonicity");
+        long now = fixture.getLong("validationNow");
+        JSONObject resumeJson = copy(vectors.getJSONObject("transferResume").getJSONObject("message"));
+        JSONObject progressJson = copy(vectors.getJSONObject("transferProgress").getJSONObject("message"));
+
+        V2TransferMessage.Message progress = V2TransferMessage.fromJson(
+            V2TransferMessage.TYPE_PROGRESS, progressJson, now
+        );
+        assertEquals(
+            vectors.getJSONObject("transferProgress").getString("canonicalJson"),
+            new String(V2TransferMessage.encode(progress, now), StandardCharsets.UTF_8)
+        );
+
+        JSONObject duplicate = copy(resumeJson);
+        duplicate.getJSONArray("files").put(copy(duplicate.getJSONArray("files").getJSONObject(0)));
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_RESUME, duplicate, now));
+
+        JSONObject windowsDuplicate = copy(resumeJson);
+        JSONArray duplicateFiles = new JSONArray();
+        duplicateFiles.put(new JSONObject().put("path", "Folder/File.txt").put("size", 5L).put("committedOffset", 0L));
+        duplicateFiles.put(new JSONObject().put("path", "folder/file.TXT").put("size", 5L).put("committedOffset", 0L));
+        windowsDuplicate.put("files", duplicateFiles);
+        windowsDuplicate.put("totalTransferred", 0L);
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_RESUME, windowsDuplicate, now));
+
+        JSONObject emptyFiles = copy(resumeJson);
+        emptyFiles.put("files", new JSONArray());
+        emptyFiles.put("totalTransferred", 0L);
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_RESUME, emptyFiles, now));
+
+        JSONObject overOffset = copy(resumeJson);
+        overOffset.getJSONArray("files").getJSONObject(0).put("committedOffset", 13L);
+        overOffset.put("totalTransferred", 13L);
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_RESUME, overOffset, now));
+
+        JSONObject wrongResumeTotal = copy(resumeJson);
+        wrongResumeTotal.put("totalTransferred", wrongResumeTotal.getLong("totalTransferred") + 1L);
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_RESUME, wrongResumeTotal, now));
+
+        JSONObject absolutePath = copy(resumeJson);
+        absolutePath.getJSONArray("files").getJSONObject(0).put("path", "C:/secret.txt");
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_RESUME, absolutePath, now));
+
+        JSONObject unknown = copy(progressJson);
+        unknown.put("sessionKey", "forbidden");
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_PROGRESS, unknown, now));
+
+        JSONObject badSignature = copy(progressJson);
+        badSignature.put("signature", Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[63]));
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_PROGRESS, badSignature, now));
+
+        JSONObject maxSequence = copy(progressJson);
+        maxSequence.put("nextSequence", V2TransferCrypto.MAX_SEQUENCE);
+        V2TransferMessage.fromJson(V2TransferMessage.TYPE_PROGRESS, maxSequence, now);
+        JSONObject beyondSequence = copy(progressJson);
+        beyondSequence.put("nextSequence", java.math.BigInteger.valueOf(V2TransferCrypto.MAX_SEQUENCE).add(java.math.BigInteger.ONE));
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_PROGRESS, beyondSequence, now));
+
+        V2TransferMessage.ControlCheckpoint checkpoint = V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_RESUME, copy(sequence.getJSONObject("initialResume")), now, null
+        );
+        checkpoint = V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, copy(sequence.getJSONObject("progressA")), now, checkpoint
+        );
+        checkpoint = V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, copy(sequence.getJSONObject("progressB")), now, checkpoint
+        );
+        assertEquals(40L, checkpoint.files.get(0).committedOffset);
+        assertEquals(30L, checkpoint.files.get(1).committedOffset);
+        final V2TransferMessage.ControlCheckpoint afterB = checkpoint;
+
+        assertFailure(() -> V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, copy(sequence.getJSONObject("regressedAAfterB")), now, afterB
+        ));
+
+        JSONObject changedSize = copy(sequence.getJSONObject("progressAAfterB"));
+        changedSize.put("fileSize", changedSize.getLong("fileSize") + 1L);
+        assertFailure(() -> V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, changedSize, now, afterB
+        ));
+
+        JSONObject wrongTotal = copy(sequence.getJSONObject("progressAAfterB"));
+        wrongTotal.put("totalTransferred", wrongTotal.getLong("totalTransferred") - 1L);
+        assertFailure(() -> V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, wrongTotal, now, afterB
+        ));
+
+        JSONObject insufficientSequence = copy(sequence.getJSONObject("progressAAfterB"));
+        insufficientSequence.put("nextSequence", afterB.nextSequence);
+        assertFailure(() -> V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, insufficientSequence, now, afterB
+        ));
+
+        checkpoint = V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, copy(sequence.getJSONObject("progressAAfterB")), now, afterB
+        );
+        assertEquals(50L, checkpoint.files.get(0).committedOffset);
+        assertEquals(30L, checkpoint.files.get(1).committedOffset);
+        assertEquals(80L, checkpoint.totalTransferred);
+        assertEquals(5L, checkpoint.nextSequence);
+        final V2TransferMessage.ControlCheckpoint afterA = checkpoint;
+
+        JSONObject changedHash = copy(sequence.getJSONObject("progressAAfterB"));
+        changedHash.put("manifestHash", repeat('f', 64));
+        assertFailure(() -> V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, changedHash, now, afterA
+        ));
+
+        JSONObject unknownProgress = copy(sequence.getJSONObject("progressAAfterB"));
+        unknownProgress.put("path", "资料/not-in-manifest.txt");
+        assertFailure(() -> V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, unknownProgress, now, afterA
+        ));
+
+        JSONObject olderProgress = copy(sequence.getJSONObject("progressAAfterB"));
+        olderProgress.put("issuedAt", afterA.issuedAt - 1L);
+        olderProgress.put("expiresAt", afterA.issuedAt - 1L + V2TransferMessage.MAX_MESSAGE_TTL_MS);
+        assertFailure(() -> V2TransferMessage.advanceCheckpoint(
+            V2TransferMessage.TYPE_PROGRESS, olderProgress, olderProgress.getLong("issuedAt"), afterA
+        ));
+
+        JSONObject lateProgress = copy(sequence.getJSONObject("progressAAfterB"));
+        long lateNow = sequence.getJSONObject("initialResume").getLong("expiresAt") + 10_000L;
+        lateProgress.put("committedOffset", 60L);
+        lateProgress.put("totalTransferred", 90L);
+        lateProgress.put("nextSequence", 6L);
+        lateProgress.put("issuedAt", lateNow);
+        lateProgress.put("expiresAt", lateNow + V2TransferMessage.MAX_MESSAGE_TTL_MS);
+        V2TransferMessage.advanceCheckpoint(V2TransferMessage.TYPE_PROGRESS, lateProgress, lateNow, afterA);
+
+        byte[] pretty = progressJson.toString(2).getBytes(StandardCharsets.UTF_8);
+        assertFailure(() -> V2TransferMessage.decode(V2TransferMessage.TYPE_PROGRESS, pretty, now));
+        assertFailure(() -> V2TransferMessage.decode(
+            V2TransferMessage.TYPE_PROGRESS,
+            new byte[V2TransferMessage.MAX_CONTROL_MESSAGE_BYTES + 1],
+            now
+        ));
+    }
+
     @Test
     public void signingPayloadIsStableAndExcludesOnlySignature() throws Exception {
         JSONObject fixture = loadFixture();
@@ -242,7 +386,8 @@ public class V2TransferMessageTest {
 
     private static String[] vectorNames() {
         return new String[] {
-            "transferManifest", "transferDecision", "transferCompleteSuccess", "transferCompleteFailure"
+            "transferManifest", "transferDecision", "transferCompleteSuccess", "transferCompleteFailure",
+            "transferResume", "transferProgress"
         };
     }
 
