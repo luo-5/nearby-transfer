@@ -40,7 +40,6 @@ import java.util.regex.Pattern;
 final class V2EncryptedChunkWriter implements AutoCloseable {
     private static final long MAX_SAFE_INTEGER = V2TransferCrypto.MAX_SAFE_INTEGER;
     private static final Pattern SHA256 = Pattern.compile("^[a-f0-9]{64}$");
-    private static final Pattern TASK_ID = Pattern.compile("^[A-Za-z0-9_-]{22}$");
 
     enum State { RECEIVING, SEALED, CANCELLED, FAILED, CLOSED }
 
@@ -746,8 +745,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
         return new Progress(sequence, files);
     }
 
-    private static String fileId(int index) { return String.format(Locale.ROOT, "%08d.part", index); }
-    private static String taskDirectory(String taskId) { return ".nearby-transfer-" + taskId + ".staging"; }
+    private static String fileId(int index) { return V2StagingLayout.fileId(index); }
 
     private static final class HashVerifyingInputStream extends FilterInputStream {
         private final long expectedSize;
@@ -903,10 +901,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
         @Override public void close() { closed = true; }
 
         private Path containedTask(String taskId) {
-            requireTaskId(taskId);
-            Path task = root.resolve(taskDirectory(taskId)).normalize();
-            assertContained(root, task);
-            return task;
+            return V2StagingLayout.resolveTaskDirectory(root, taskId);
         }
         private void requireOpen() { if (closed) throw new IllegalStateException("Staging store is closed"); }
         private static void validateFileIds(List<String> ids) {
@@ -918,9 +913,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
             }
         }
         private static void validateFileId(String id) {
-            if (id == null || !id.matches("^[0-9]{8}\\.part$")) {
-                throw new IllegalArgumentException("Invalid opaque staging file ID");
-            }
+            V2StagingLayout.requireFileId(id);
         }
     }
 
@@ -1031,10 +1024,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
     }
 
     private static void requireTaskId(String taskId) {
-        if (taskId == null || !TASK_ID.matcher(taskId).matches()) {
-            throw new IllegalArgumentException("Task ID must be a 22-character base64url value");
-        }
-        V2TransferCrypto.buildChunkAad(taskId, "validation", 0, 0, 0);
+        V2StagingLayout.requireTaskId(taskId);
     }
 
     private static void requireRelativePath(String path) {
