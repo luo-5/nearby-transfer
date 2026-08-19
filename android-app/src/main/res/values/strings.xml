@@ -1,0 +1,13 @@
+<resources>
+    <string name="compose_migration_activity_label">Nearby Transfer preview</string>
+    <string name="compose_migration_title">Compose migration preview</string>
+    <string name="compose_migration_notice">This preview is isolated from the production Java transfer flow.</string>
+    <string name="nav_devices">Devices</string>
+    <string name="nav_transfers">Transfers</string>
+    <string name="nav_libraries">Libraries</string>
+    <string name="nav_settings">Settings</string>
+    <string name="devices_placeholder">Trusted-device pairing and nearby discovery will appear here.</string>
+    <string name="transfers_placeholder">Recoverable multi-file transfer queues will appear here.</string>
+    <string name="libraries_placeholder">Paired-device file libraries will appear here.</string>
+    <string name="settings_placeholder">Identity, language, and local-network settings will appear here.</string>
+</resources>

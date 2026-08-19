@@ -1,0 +1,13 @@
+<resources>
+    <string name="compose_migration_activity_label">Nearby Transfer 预览</string>
+    <string name="compose_migration_title">Compose 迁移预览</string>
+    <string name="compose_migration_notice">此预览与正式 Java 传输流程隔离。</string>
+    <string name="nav_devices">设备</string>
+    <string name="nav_transfers">传输</string>
+    <string name="nav_libraries">文件库</string>
+    <string name="nav_settings">设置</string>
+    <string name="devices_placeholder">可信设备配对与附近设备发现将显示在这里。</string>
+    <string name="transfers_placeholder">可恢复的多文件传输队列将显示在这里。</string>
+    <string name="libraries_placeholder">已配对设备的文件库将显示在这里。</string>
+    <string name="settings_placeholder">身份、语言与局域网设置将显示在这里。</string>
+</resources>
