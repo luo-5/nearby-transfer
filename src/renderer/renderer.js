@@ -5,6 +5,14 @@ const state = {
   transfers: new Map()
 };
 
+const transferJobState = {
+  jobs: [],
+  loading: false,
+  busyTaskIds: new Set(),
+  message: '正在读取可恢复传输任务...',
+  messageIsError: false
+};
+
 const pairingState = {
   discoveredPeers: [],
   trustedPeers: [],
@@ -13,6 +21,7 @@ const pairingState = {
   refreshVersion: 0,
   startingPeerIds: new Set(),
   busySessionIds: new Set(),
+  busyTrustedPeerIds: new Set(),
   message: '正在准备实验性配对服务...',
   messageIsError: false
 };
@@ -42,11 +51,16 @@ const elements = {
   v2SessionCount: document.getElementById('v2SessionCount'),
   v2PairingSessions: document.getElementById('v2PairingSessions'),
   v2TrustedCount: document.getElementById('v2TrustedCount'),
-  v2TrustedPeers: document.getElementById('v2TrustedPeers')
+  v2TrustedPeers: document.getElementById('v2TrustedPeers'),
+  v2TransferJobSummary: document.getElementById('v2TransferJobSummary'),
+  v2TransferJobStatus: document.getElementById('v2TransferJobStatus'),
+  v2TransferJobs: document.getElementById('v2TransferJobs'),
+  v2TransferJobRefresh: document.getElementById('v2TransferJobRefresh')
 };
 
 window.lanTransfer.getState().then(applyState);
 initializeV2Pairing();
+initializeTransferJobs();
 
 window.lanTransfer.onState(applyState);
 window.lanTransfer.onPeers((peers) => {
@@ -349,6 +363,146 @@ function formatBytes(bytes) {
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function getTransferJobApi() {
+  const api = window.lanTransfer && window.lanTransfer.transferJobs;
+  if (!api || typeof api.list !== 'function' || typeof api.pause !== 'function' ||
+      typeof api.resume !== 'function' || typeof api.retry !== 'function' || typeof api.cancel !== 'function') {
+    return null;
+  }
+  return api;
+}
+
+function initializeTransferJobs() {
+  const api = getTransferJobApi();
+  if (!api) {
+    setTransferJobMessage('当前版本未提供持久化传输任务。', true);
+    renderTransferJobs();
+    return;
+  }
+  elements.v2TransferJobRefresh.addEventListener('click', () => refreshTransferJobs());
+  refreshTransferJobs({ silent: true });
+}
+
+async function refreshTransferJobs({ silent = false } = {}) {
+  const api = getTransferJobApi();
+  if (!api || transferJobState.loading) return;
+  transferJobState.loading = true;
+  if (!silent) setTransferJobMessage('正在刷新传输任务...');
+  renderTransferJobs();
+  try {
+    const jobs = await api.list();
+    transferJobState.jobs = (Array.isArray(jobs) ? jobs : [])
+      .filter((job) => job && typeof job.taskId === 'string' && typeof job.status === 'string')
+      .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0));
+    setTransferJobMessage(transferJobState.jobs.length > 0 ? '可在此恢复、暂停、重试或取消持久化任务。' : '暂无持久化传输任务。');
+  } catch (error) {
+    setTransferJobMessage(`读取传输任务失败：${errorMessage(error)}`, true);
+  } finally {
+    transferJobState.loading = false;
+    renderTransferJobs();
+  }
+}
+
+function renderTransferJobs() {
+  const api = getTransferJobApi();
+  const jobs = transferJobState.jobs;
+  elements.v2TransferJobSummary.textContent = String(jobs.length);
+  elements.v2TransferJobStatus.textContent = transferJobState.message;
+  elements.v2TransferJobStatus.className = transferJobState.messageIsError ? 'pairing-status failed' : 'pairing-status';
+  elements.v2TransferJobRefresh.disabled = !api || transferJobState.loading;
+  elements.v2TransferJobRefresh.textContent = transferJobState.loading ? '正在刷新...' : '刷新任务';
+  if (jobs.length === 0) {
+    elements.v2TransferJobs.className = 'transfers empty';
+    elements.v2TransferJobs.textContent = transferJobState.loading ? '正在读取传输任务...' : '暂无持久化传输任务。';
+    return;
+  }
+
+  elements.v2TransferJobs.className = 'transfers';
+  elements.v2TransferJobs.replaceChildren(...jobs.map((job) => {
+    const card = document.createElement('article');
+    card.className = 'transfer-card transfer-job-card';
+    const details = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = job.status === 'failed' ? 'transfer-name failed' : 'transfer-name';
+    const files = job.manifest && Array.isArray(job.manifest.entries) ? job.manifest.entries : [];
+    title.textContent = files.length === 1 ? files[0].relativePath : `${files.length || 0} 个文件`;
+    const meta = document.createElement('div');
+    meta.className = 'transfer-meta';
+    const progress = job.progress || {};
+    meta.textContent = `${job.direction === 'incoming' ? '接收' : '发送'} | ${translateJobStatus(job.status)} | ${formatBytes(progress.transferredBytes)} / ${formatBytes(progress.totalBytes)}`;
+    const diagnostic = document.createElement('div');
+    diagnostic.className = 'transfer-diagnostic';
+    diagnostic.textContent = job.errorMessage ? `${job.diagnosticCode || 'ERROR'}：${job.errorMessage}` : (job.diagnosticCode ? `诊断：${job.diagnosticCode}` : `设备：${shortDeviceId(job.peerDeviceId)}`);
+    const progressTrack = document.createElement('div');
+    progressTrack.className = 'progress';
+    const bar = document.createElement('span');
+    bar.style.width = `${jobProgressPercent(job)}%`;
+    progressTrack.append(bar);
+    details.append(title, meta, diagnostic, progressTrack);
+
+    const actions = document.createElement('div');
+    actions.className = 'transfer-job-actions';
+    const busy = transferJobState.busyTaskIds.has(job.taskId);
+    for (const action of transferJobActions(job)) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = action.kind === 'cancel' ? 'secondary pairing-button pairing-cancel' : 'secondary pairing-button';
+      button.disabled = !api || busy;
+      button.textContent = busy ? '正在处理...' : action.label;
+      button.addEventListener('click', () => runTransferJobAction(job, action.kind));
+      actions.append(button);
+    }
+    card.append(details, actions);
+    return card;
+  }));
+}
+
+function transferJobActions(job) {
+  const actions = [];
+  if (job.status === 'transferring') actions.push({ kind: 'pause', label: '暂停' });
+  if (job.status === 'paused') actions.push({ kind: 'resume', label: '继续' });
+  if (job.status === 'failed') actions.push({ kind: 'retry', label: '重试' });
+  if (!['completed', 'cancelled'].includes(job.status)) actions.push({ kind: 'cancel', label: '取消任务' });
+  return actions;
+}
+
+async function runTransferJobAction(job, action) {
+  const api = getTransferJobApi();
+  if (!api || transferJobState.busyTaskIds.has(job.taskId) || typeof api[action] !== 'function') return;
+  transferJobState.busyTaskIds.add(job.taskId);
+  setTransferJobMessage('正在更新传输任务...');
+  renderTransferJobs();
+  try {
+    await api[action](job.taskId);
+    await refreshTransferJobs({ silent: true });
+  } catch (error) {
+    setTransferJobMessage(`传输任务操作失败：${errorMessage(error)}`, true);
+  } finally {
+    transferJobState.busyTaskIds.delete(job.taskId);
+    renderTransferJobs();
+  }
+}
+
+function setTransferJobMessage(message, isError = false) {
+  transferJobState.message = message;
+  transferJobState.messageIsError = isError;
+}
+
+function translateJobStatus(status) {
+  return ({ queued: '排队中', 'awaiting-approval': '等待接收确认', transferring: '传输中', paused: '已暂停', failed: '失败', completed: '已完成', cancelled: '已取消' })[status] || status;
+}
+
+function jobProgressPercent(job) {
+  const progress = job.progress || {};
+  const total = Number(progress.totalBytes) || 0;
+  if (!total) return job.status === 'completed' ? 100 : 2;
+  return Math.max(2, Math.min(100, Math.round(((Number(progress.transferredBytes) || 0) / total) * 100)));
+}
+
+function shortDeviceId(deviceId) {
+  return typeof deviceId === 'string' && deviceId.length > 12 ? `${deviceId.slice(0, 8)}…${deviceId.slice(-4)}` : (deviceId || '未知');
+}
+
 function initializeV2Pairing() {
   const pairingApi = getPairingApi();
   if (!pairingApi) {
@@ -390,7 +544,7 @@ function initializeV2Pairing() {
 function getPairingApi() {
   const api = window.lanTransfer && window.lanTransfer.pairing;
   if (!api || typeof api.listDiscoveredPeers !== 'function' || typeof api.listTrustedPeers !== 'function' ||
-      typeof api.listSessions !== 'function' || typeof api.start !== 'function' ||
+      typeof api.revokeTrustedPeer !== 'function' || typeof api.listSessions !== 'function' || typeof api.start !== 'function' ||
       typeof api.confirm !== 'function' || typeof api.complete !== 'function' || typeof api.cancel !== 'function') {
     return null;
   }
@@ -614,6 +768,7 @@ function createPairingSessionCard(session, pairingApi) {
 }
 
 function renderV2TrustedPeers() {
+  const pairingApi = getPairingApi();
   const peers = pairingState.trustedPeers;
   elements.v2TrustedCount.textContent = String(peers.length);
   if (peers.length === 0) {
@@ -640,10 +795,45 @@ function renderV2TrustedPeers() {
     const permissions = document.createElement('span');
     permissions.className = 'pairing-permissions';
     permissions.textContent = describePairingPermissions(peer.permissions);
-    details.append(name, device, fingerprint, permissions);
-    card.append(details);
+    const lastSeen = document.createElement('span');
+    lastSeen.className = 'pairing-meta';
+    lastSeen.textContent = `最近活动：${formatLastSeen(peer.lastSeen)}`;
+    details.append(name, device, fingerprint, permissions, lastSeen);
+
+    const actions = document.createElement('div');
+    actions.className = 'pairing-button-row';
+    const revoke = document.createElement('button');
+    const isBusy = pairingState.busyTrustedPeerIds.has(peer.deviceId);
+    revoke.type = 'button';
+    revoke.className = 'secondary pairing-button pairing-cancel';
+    revoke.disabled = !pairingApi || isBusy;
+    revoke.textContent = isBusy ? '正在撤销...' : '撤销信任';
+    revoke.addEventListener('click', () => revokeV2TrustedPeer(peer));
+    actions.append(revoke);
+    card.append(details, actions);
     return card;
   }));
+}
+
+async function revokeV2TrustedPeer(peer) {
+  const pairingApi = getPairingApi();
+  if (!pairingApi || pairingState.busyTrustedPeerIds.has(peer.deviceId)) return;
+
+  pairingState.busyTrustedPeerIds.add(peer.deviceId);
+  setPairingMessage(`正在撤销“${peer.displayName || peerLabel(peer)}”的信任...`);
+  renderV2Pairing();
+  try {
+    const revoked = await pairingApi.revokeTrustedPeer(peer.deviceId);
+    if (!revoked) throw new Error('该设备已不在受信列表中');
+    pairingState.trustedPeers = pairingState.trustedPeers.filter((candidate) => candidate.deviceId !== peer.deviceId);
+    setPairingMessage('已撤销设备信任；后续传输前需要重新配对。');
+    await refreshV2Pairing({ silent: true });
+  } catch (error) {
+    setPairingMessage(`撤销信任失败：${errorMessage(error)}`, true);
+  } finally {
+    pairingState.busyTrustedPeerIds.delete(peer.deviceId);
+    renderV2Pairing();
+  }
 }
 
 async function startV2Pairing(peer) {

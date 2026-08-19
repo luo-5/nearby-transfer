@@ -23,7 +23,7 @@ function createDesktopTransferJobApi({ transferJobStore }) {
     recordFileProgress: (taskId, relativePath, transferredBytes) =>
       transferJobStore.recordFileProgress(taskId, relativePath, transferredBytes),
     complete: (taskId) => transferJobStore.complete(taskId),
-    fail: (taskId, diagnosticCode) => transferJobStore.fail(taskId, diagnosticCode)
+    fail: (taskId, diagnosticCode, errorMessage) => transferJobStore.fail(taskId, diagnosticCode, Date.now(), errorMessage)
   });
 }
 
@@ -59,6 +59,9 @@ function toPublicTransferJob(job) {
     },
     progress: job.progress,
     diagnosticCode: job.diagnosticCode,
+    errorMessage: job.errorMessage,
+    retryCount: job.retryCount,
+    startedAt: job.startedAt,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
   };

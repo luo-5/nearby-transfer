@@ -36,6 +36,8 @@ const DIAGNOSTIC_CODE = Object.freeze({
   USER_CANCELLED: 'USER_CANCELLED'
 });
 
+const MAX_ERROR_MESSAGE_LENGTH = 1024;
+const RESTART_ERROR_MESSAGE = 'Transfer was interrupted because the application restarted';
 const ALLOWED_DIAGNOSTIC_CODES = new Set(Object.values(DIAGNOSTIC_CODE));
 const TRANSITIONS = Object.freeze({
   [JOB_STATUS.QUEUED]: new Set([JOB_STATUS.TRANSFERRING, JOB_STATUS.CANCELLED, JOB_STATUS.FAILED]),
@@ -60,8 +62,15 @@ class TransferJobStore {
     this.trustedPeerStore = trustedPeerStore;
     this.databasePath = path.join(userDataDir, DATABASE_FILE);
     this.database = new DatabaseSync(this.databasePath, { enableForeignKeyConstraints: true });
-    this._migrate();
-    this._recoverInterruptedJobs();
+    try {
+      this._assertDatabaseIntegrity();
+      this._migrate();
+      this._recoverInterruptedJobs();
+      this._recoverPersistedJobs();
+    } catch (error) {
+      this.database.close();
+      throw error;
+    }
   }
 
   queueOutgoing({ peerDeviceId, manifest, now = Date.now() }) {
@@ -85,28 +94,56 @@ class TransferJobStore {
   }
 
   approveIncoming(taskId, now = Date.now()) {
-    return this._transition(taskId, JOB_STATUS.QUEUED, { now, requireTrustedPeer: true });
+    return this._transition(taskId, JOB_STATUS.QUEUED, {
+      now,
+      requireTrustedPeer: true,
+      allowedFrom: [JOB_STATUS.AWAITING_APPROVAL]
+    });
   }
 
   start(taskId, now = Date.now()) {
-    return this._transition(taskId, JOB_STATUS.TRANSFERRING, { now, requireTrustedPeer: true });
+    return this._transition(taskId, JOB_STATUS.TRANSFERRING, {
+      now,
+      requireTrustedPeer: true,
+      allowedFrom: [JOB_STATUS.QUEUED]
+    });
   }
 
   pause(taskId, now = Date.now()) {
-    return this._transition(taskId, JOB_STATUS.PAUSED, { now, requireTrustedPeer: true });
+    return this._transition(taskId, JOB_STATUS.PAUSED, {
+      now,
+      requireTrustedPeer: true,
+      allowedFrom: [JOB_STATUS.TRANSFERRING]
+    });
   }
 
   resume(taskId, now = Date.now()) {
-    return this._transition(taskId, JOB_STATUS.QUEUED, { now, requireTrustedPeer: true });
+    return this._transition(taskId, JOB_STATUS.QUEUED, {
+      now,
+      requireTrustedPeer: true,
+      clearDiagnostic: true,
+      allowedFrom: [JOB_STATUS.PAUSED]
+    });
   }
 
   retry(taskId, now = Date.now()) {
-    return this._transition(taskId, JOB_STATUS.QUEUED, { now, requireTrustedPeer: true, clearDiagnostic: true });
+    return this._transition(taskId, JOB_STATUS.QUEUED, {
+      now,
+      requireTrustedPeer: true,
+      clearDiagnostic: true,
+      incrementRetry: true,
+      allowedFrom: [JOB_STATUS.FAILED]
+    });
   }
 
-  fail(taskId, diagnosticCode, now = Date.now()) {
+  fail(taskId, diagnosticCode, now = Date.now(), errorMessage = null) {
     assertDiagnosticCode(diagnosticCode);
-    return this._transition(taskId, JOB_STATUS.FAILED, { now, diagnosticCode, requireTrustedPeer: false });
+    return this._transition(taskId, JOB_STATUS.FAILED, {
+      now,
+      diagnosticCode,
+      errorMessage,
+      requireTrustedPeer: false
+    });
   }
 
   cancel(taskId, now = Date.now()) {
@@ -131,34 +168,36 @@ class TransferJobStore {
       throw new TypeError('Transferred bytes must be a non-negative safe integer');
     }
 
-    const job = this._requireJob(taskId);
-    if (job.status !== JOB_STATUS.TRANSFERRING) {
-      throw new Error('File progress can only be recorded while transferring');
-    }
-    this._requireActiveTransferPeer(job.peerDeviceId);
+    this._withImmediateTransaction(() => {
+      const job = this._requireJob(taskId);
+      if (job.status !== JOB_STATUS.TRANSFERRING) {
+        throw new Error('File progress can only be recorded while transferring');
+      }
+      assertJobTimestamp(now, job.createdAt, 'Progress time');
+      this._requireActiveTransferPeer(job.peerDeviceId);
 
-    const file = this.database.prepare(`
-      SELECT expected_bytes, transferred_bytes FROM transfer_job_files
-      WHERE task_id = ? AND relative_path = ?
-    `).get(taskId, relativePath);
-    if (!file) {
-      throw new Error('File progress path is not declared by the transfer manifest');
-    }
-    if (transferredBytes < file.transferred_bytes) {
-      throw new Error('File progress must be monotonic');
-    }
-    if (transferredBytes > file.expected_bytes) {
-      throw new RangeError('File progress exceeds the manifest file size');
-    }
+      const file = this.database.prepare(`
+        SELECT expected_bytes, transferred_bytes FROM transfer_job_files
+        WHERE task_id = ? AND relative_path = ?
+      `).get(taskId, relativePath);
+      if (!file) {
+        throw new Error('File progress path is not declared by the transfer manifest');
+      }
+      if (transferredBytes < file.transferred_bytes) {
+        throw new Error('File progress must be monotonic');
+      }
+      if (transferredBytes > file.expected_bytes) {
+        throw new RangeError('File progress exceeds the manifest file size');
+      }
 
-    const complete = transferredBytes === file.expected_bytes ? 1 : 0;
-    const update = this.database.prepare(`
-      UPDATE transfer_job_files
-      SET transferred_bytes = ?, completed = ?, updated_at = ?
-      WHERE task_id = ? AND relative_path = ?
-    `);
-    update.run(transferredBytes, complete, now, taskId, relativePath);
-    this._refreshProgress(taskId, now);
+      const complete = transferredBytes === file.expected_bytes ? 1 : 0;
+      this.database.prepare(`
+        UPDATE transfer_job_files
+        SET transferred_bytes = ?, completed = ?, updated_at = ?
+        WHERE task_id = ? AND relative_path = ?
+      `).run(transferredBytes, complete, now, taskId, relativePath);
+      this._refreshProgress(taskId, now);
+    });
     return this._requireJob(taskId);
   }
 
@@ -175,7 +214,11 @@ class TransferJobStore {
     if (remaining !== 0) {
       throw new Error('All manifest files must be fully transferred before completion');
     }
-    return this._transition(taskId, JOB_STATUS.COMPLETED, { now, requireTrustedPeer: true });
+    return this._transition(taskId, JOB_STATUS.COMPLETED, {
+      now,
+      requireTrustedPeer: true,
+      allowedFrom: [JOB_STATUS.TRANSFERRING]
+    });
   }
 
   get(taskId) {
@@ -235,9 +278,9 @@ class TransferJobStore {
     const insertJob = this.database.prepare(`
       INSERT INTO transfer_jobs (
         task_id, peer_device_id, direction, status, manifest_json, total_files, total_bytes,
-        transferred_bytes, completed_files, diagnostic_code, created_at, updated_at,
-        started_at, completed_at, cancelled_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, ?, ?, NULL, NULL, NULL)
+        transferred_bytes, completed_files, diagnostic_code, error_message, retry_count,
+        created_at, updated_at, started_at, completed_at, cancelled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, 0, ?, ?, NULL, NULL, NULL)
     `);
     const insertFile = this.database.prepare(`
       INSERT INTO transfer_job_files (
@@ -245,8 +288,7 @@ class TransferJobStore {
       ) VALUES (?, ?, ?, 0, ?, ?, ?)
     `);
 
-    this.database.exec('BEGIN IMMEDIATE');
-    try {
+    this._withImmediateTransaction(() => {
       insertJob.run(
         normalizedManifest.taskId,
         peer.identity.deviceId,
@@ -269,45 +311,63 @@ class TransferJobStore {
         );
       }
       this._refreshProgress(normalizedManifest.taskId, now);
-      this.database.exec('COMMIT');
-    } catch (error) {
-      this.database.exec('ROLLBACK');
-      throw error;
-    }
+    });
     return this._requireJob(normalizedManifest.taskId);
   }
 
-  _transition(taskId, nextStatus, { now, diagnosticCode = null, requireTrustedPeer, clearDiagnostic = false }) {
+  _transition(taskId, nextStatus, {
+    now,
+    diagnosticCode = null,
+    errorMessage = null,
+    requireTrustedPeer,
+    clearDiagnostic = false,
+    incrementRetry = false,
+    allowedFrom = null
+  }) {
     assertValidTaskId(taskId);
     assertTimestamp(now, 'Transition time');
     assertStatus(nextStatus);
-    const job = this._requireJob(taskId);
-    if (!TRANSITIONS[job.status].has(nextStatus)) {
-      throw new Error(`Illegal transfer job transition: ${job.status} -> ${nextStatus}`);
-    }
-    if (requireTrustedPeer) {
-      this._requireActiveTransferPeer(job.peerDeviceId);
-    }
     if (diagnosticCode !== null) {
       assertDiagnosticCode(diagnosticCode);
     }
+    const normalizedError = normalizeErrorMessage(errorMessage);
 
-    const startedAt = nextStatus === JOB_STATUS.TRANSFERRING && job.startedAt === null ? now : job.startedAt;
-    const completedAt = nextStatus === JOB_STATUS.COMPLETED ? now : job.completedAt;
-    const cancelledAt = nextStatus === JOB_STATUS.CANCELLED ? now : job.cancelledAt;
-    this.database.prepare(`
-      UPDATE transfer_jobs
-      SET status = ?, diagnostic_code = ?, updated_at = ?, started_at = ?, completed_at = ?, cancelled_at = ?
-      WHERE task_id = ?
-    `).run(
-      nextStatus,
-      clearDiagnostic ? null : diagnosticCode,
-      now,
-      startedAt,
-      completedAt,
-      cancelledAt,
-      taskId
-    );
+    this._withImmediateTransaction(() => {
+      const job = this._requireJob(taskId);
+      const legalTargets = TRANSITIONS[job.status];
+      if (!legalTargets || !legalTargets.has(nextStatus) || (allowedFrom && !allowedFrom.includes(job.status))) {
+        throw new Error(`Illegal transfer job transition: ${job.status} -> ${nextStatus}`);
+      }
+      assertJobTimestamp(now, job.createdAt, 'Transition time');
+      if (requireTrustedPeer) {
+        this._requireActiveTransferPeer(job.peerDeviceId);
+      }
+      if (incrementRetry && job.retryCount >= Number.MAX_SAFE_INTEGER) {
+        throw new RangeError('Transfer job retry count exceeds the safe integer range');
+      }
+
+      const startedAt = nextStatus === JOB_STATUS.TRANSFERRING && job.startedAt === null ? now : job.startedAt;
+      const completedAt = nextStatus === JOB_STATUS.COMPLETED ? now : job.completedAt;
+      const cancelledAt = nextStatus === JOB_STATUS.CANCELLED ? now : job.cancelledAt;
+      const nextDiagnostic = clearDiagnostic ? null : diagnosticCode;
+      const nextError = clearDiagnostic ? null : normalizedError;
+      this.database.prepare(`
+        UPDATE transfer_jobs
+        SET status = ?, diagnostic_code = ?, error_message = ?, retry_count = retry_count + ?,
+            updated_at = ?, started_at = ?, completed_at = ?, cancelled_at = ?
+        WHERE task_id = ?
+      `).run(
+        nextStatus,
+        nextDiagnostic,
+        nextError,
+        incrementRetry ? 1 : 0,
+        now,
+        startedAt,
+        completedAt,
+        cancelledAt,
+        taskId
+      );
+    });
     return this._requireJob(taskId);
   }
 
@@ -317,6 +377,9 @@ class TransferJobStore {
              COALESCE(SUM(completed), 0) AS completed_files
       FROM transfer_job_files WHERE task_id = ?
     `).get(taskId);
+    if (!Number.isSafeInteger(progress.transferred_bytes) || !Number.isSafeInteger(progress.completed_files)) {
+      throw new RangeError('Transfer progress exceeds the safe integer range');
+    }
     this.database.prepare(`
       UPDATE transfer_jobs SET transferred_bytes = ?, completed_files = ?, updated_at = ? WHERE task_id = ?
     `).run(progress.transferred_bytes, progress.completed_files, now, taskId);
@@ -339,60 +402,178 @@ class TransferJobStore {
     return peer;
   }
 
+  _withImmediateTransaction(callback) {
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const result = callback();
+      this.database.exec('COMMIT');
+      return result;
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  _assertDatabaseIntegrity() {
+    let rows;
+    try {
+      rows = this.database.prepare('PRAGMA quick_check').all();
+    } catch (error) {
+      throw new Error(`Transfer database is corrupt; the original file was preserved at ${this.databasePath}`, { cause: error });
+    }
+    if (rows.length !== 1 || rows[0].quick_check !== 'ok') {
+      throw new Error(`Transfer database integrity check failed; the original file was preserved at ${this.databasePath}`);
+    }
+  }
+
   _recoverInterruptedJobs() {
-    this.database.prepare(`
-      UPDATE transfer_jobs
-      SET status = ?, diagnostic_code = ?, updated_at = ?
-      WHERE status = ?
-    `).run(JOB_STATUS.PAUSED, DIAGNOSTIC_CODE.APP_RESTARTED, Date.now(), JOB_STATUS.TRANSFERRING);
+    const now = Date.now();
+    this._withImmediateTransaction(() => {
+      this.database.prepare(`
+        UPDATE transfer_jobs
+        SET status = ?, diagnostic_code = ?, error_message = ?, updated_at = MAX(updated_at, ?)
+        WHERE LOWER(status) IN ('transferring', 'running')
+      `).run(JOB_STATUS.PAUSED, DIAGNOSTIC_CODE.APP_RESTARTED, RESTART_ERROR_MESSAGE, now);
+    });
+  }
+
+  _recoverPersistedJobs() {
+    const quarantinedAt = Date.now();
+    this._withImmediateTransaction(() => {
+      const rows = this.database.prepare('SELECT * FROM transfer_jobs ORDER BY task_id ASC').all();
+      for (const row of rows) {
+        const files = this.database.prepare(`
+          SELECT * FROM transfer_job_files WHERE task_id = ? ORDER BY relative_path ASC
+        `).all(row.task_id);
+        try {
+          const job = this._rowToJob(row);
+          const repaired = validatePersistedFiles(job, files);
+          if (job.progress.transferredBytes !== repaired.transferredBytes ||
+              job.progress.completedFiles !== repaired.completedFiles) {
+            const updatedAt = Math.max(job.updatedAt, repaired.updatedAt);
+            this.database.prepare(`
+              UPDATE transfer_jobs
+              SET transferred_bytes = ?, completed_files = ?, updated_at = ?
+              WHERE task_id = ?
+            `).run(repaired.transferredBytes, repaired.completedFiles, updatedAt, job.taskId);
+          }
+        } catch (error) {
+          const reason = String(error && error.message ? error.message : error).slice(0, 2048);
+          const snapshot = JSON.stringify({ job: row, files });
+          this.database.prepare(`
+            INSERT INTO transfer_job_corruptions(task_id, snapshot_json, reason, quarantined_at)
+            VALUES (?, ?, ?, ?)
+          `).run(typeof row.task_id === 'string' ? row.task_id : null, snapshot, reason, quarantinedAt);
+          this.database.prepare('DELETE FROM transfer_jobs WHERE task_id = ?').run(row.task_id);
+        }
+      }
+    });
   }
 
   _migrate() {
     this.database.exec(`
       PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = FULL;
       PRAGMA foreign_keys = ON;
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        version INTEGER PRIMARY KEY,
-        applied_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS transfer_jobs (
-        task_id TEXT PRIMARY KEY,
-        peer_device_id TEXT NOT NULL,
-        direction TEXT NOT NULL CHECK(direction IN ('outgoing', 'incoming')),
-        status TEXT NOT NULL CHECK(status IN ('queued', 'awaiting-approval', 'transferring', 'paused', 'failed', 'completed', 'cancelled')),
-        manifest_json TEXT NOT NULL,
-        total_files INTEGER NOT NULL CHECK(total_files >= 0),
-        total_bytes INTEGER NOT NULL CHECK(total_bytes >= 0),
-        transferred_bytes INTEGER NOT NULL CHECK(transferred_bytes >= 0 AND transferred_bytes <= total_bytes),
-        completed_files INTEGER NOT NULL CHECK(completed_files >= 0 AND completed_files <= total_files),
-        diagnostic_code TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        started_at INTEGER,
-        completed_at INTEGER,
-        cancelled_at INTEGER
-      );
-      CREATE TABLE IF NOT EXISTS transfer_job_files (
-        task_id TEXT NOT NULL REFERENCES transfer_jobs(task_id) ON DELETE CASCADE,
-        relative_path TEXT NOT NULL,
-        expected_bytes INTEGER NOT NULL CHECK(expected_bytes >= 0),
-        transferred_bytes INTEGER NOT NULL CHECK(transferred_bytes >= 0 AND transferred_bytes <= expected_bytes),
-        sha256 TEXT NOT NULL,
-        completed INTEGER NOT NULL CHECK(completed IN (0, 1)),
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY(task_id, relative_path)
-      );
-      CREATE INDEX IF NOT EXISTS transfer_jobs_recovery
-        ON transfer_jobs(status, updated_at, task_id);
-      CREATE INDEX IF NOT EXISTS transfer_jobs_peer
-        ON transfer_jobs(peer_device_id, status, created_at);
     `);
-    this.database.prepare(`
-      INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)
-    `).run(Date.now());
+    this._withImmediateTransaction(() => {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version INTEGER PRIMARY KEY,
+          applied_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS transfer_jobs (
+          task_id TEXT PRIMARY KEY,
+          peer_device_id TEXT NOT NULL,
+          direction TEXT NOT NULL CHECK(direction IN ('outgoing', 'incoming')),
+          status TEXT NOT NULL CHECK(status IN ('queued', 'awaiting-approval', 'transferring', 'paused', 'failed', 'completed', 'cancelled')),
+          manifest_json TEXT NOT NULL,
+          total_files INTEGER NOT NULL CHECK(total_files >= 0),
+          total_bytes INTEGER NOT NULL CHECK(total_bytes >= 0),
+          transferred_bytes INTEGER NOT NULL CHECK(transferred_bytes >= 0 AND transferred_bytes <= total_bytes),
+          completed_files INTEGER NOT NULL CHECK(completed_files >= 0 AND completed_files <= total_files),
+          diagnostic_code TEXT,
+          error_message TEXT,
+          retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count >= 0),
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          started_at INTEGER,
+          completed_at INTEGER,
+          cancelled_at INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS transfer_job_files (
+          task_id TEXT NOT NULL REFERENCES transfer_jobs(task_id) ON DELETE CASCADE,
+          relative_path TEXT NOT NULL,
+          expected_bytes INTEGER NOT NULL CHECK(expected_bytes >= 0),
+          transferred_bytes INTEGER NOT NULL CHECK(transferred_bytes >= 0 AND transferred_bytes <= expected_bytes),
+          sha256 TEXT NOT NULL,
+          completed INTEGER NOT NULL CHECK(completed IN (0, 1)),
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY(task_id, relative_path)
+        );
+        CREATE TABLE IF NOT EXISTS transfer_job_corruptions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id TEXT,
+          snapshot_json TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          quarantined_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS transfer_jobs_recovery
+          ON transfer_jobs(status, updated_at, task_id);
+        CREATE INDEX IF NOT EXISTS transfer_jobs_peer
+          ON transfer_jobs(peer_device_id, status, created_at);
+      `);
+
+      const columns = new Set(this.database.prepare('PRAGMA table_info(transfer_jobs)').all().map((column) => column.name));
+      if (!columns.has('error_message')) {
+        this.database.exec('ALTER TABLE transfer_jobs ADD COLUMN error_message TEXT');
+      }
+      if (!columns.has('retry_count')) {
+        this.database.exec('ALTER TABLE transfer_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count >= 0)');
+      }
+      this.database.prepare(`
+        INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)
+      `).run(Date.now());
+      this.database.prepare(`
+        INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, ?)
+      `).run(Date.now());
+    });
   }
 
   _rowToJob(row) {
+    assertValidTaskId(row.task_id);
+    assertDeviceId(row.peer_device_id);
+    assertDirection(row.direction);
+    assertStatus(row.status);
+    assertProgressValue(row.total_files, 'Total file count');
+    assertProgressValue(row.completed_files, 'Completed file count');
+    assertProgressValue(row.total_bytes, 'Total byte count');
+    assertProgressValue(row.transferred_bytes, 'Transferred byte count');
+    if (row.completed_files > row.total_files || row.transferred_bytes > row.total_bytes) {
+      throw new RangeError('Persisted transfer progress exceeds its declared total');
+    }
+    if (!Number.isSafeInteger(row.retry_count) || row.retry_count < 0) {
+      throw new RangeError('Persisted transfer retry count is invalid');
+    }
+    if (row.diagnostic_code !== null) {
+      assertDiagnosticCode(row.diagnostic_code);
+    }
+    const errorMessage = normalizeErrorMessage(row.error_message);
+    assertTimestamp(row.created_at, 'Creation time');
+    assertTimestamp(row.updated_at, 'Update time');
+    if (row.updated_at < row.created_at) {
+      throw new RangeError('Persisted transfer update time precedes creation time');
+    }
+    assertOptionalTimestamp(row.started_at, 'Start time', row.created_at, row.updated_at);
+    assertOptionalTimestamp(row.completed_at, 'Completion time', row.created_at, row.updated_at);
+    assertOptionalTimestamp(row.cancelled_at, 'Cancellation time', row.created_at, row.updated_at);
+    if ((row.status === JOB_STATUS.COMPLETED) !== (row.completed_at !== null)) {
+      throw new Error('Persisted completed transfer has inconsistent completion metadata');
+    }
+    if ((row.status === JOB_STATUS.CANCELLED) !== (row.cancelled_at !== null)) {
+      throw new Error('Persisted cancelled transfer has inconsistent cancellation metadata');
+    }
+
     const manifest = parsePersistedTransferManifest(row.manifest_json);
     if (manifest.taskId !== row.task_id || manifest.totalFiles !== row.total_files || manifest.totalBytes !== row.total_bytes) {
       throw new Error('Persisted transfer job manifest does not match its indexed metadata');
@@ -410,6 +591,8 @@ class TransferJobStore {
         transferredBytes: row.transferred_bytes
       },
       diagnosticCode: row.diagnostic_code,
+      errorMessage,
+      retryCount: row.retry_count,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       startedAt: row.started_at,
@@ -424,6 +607,42 @@ function normalizeManifest(manifest) {
     return parsePersistedTransferManifest(manifest);
   }
   return normalizeTransferManifest(manifest);
+}
+
+function validatePersistedFiles(job, rows) {
+  const expectedFiles = job.manifest.entries.filter((entry) => entry.kind === 'file');
+  if (rows.length !== expectedFiles.length) {
+    throw new Error('Persisted transfer file list does not match its manifest');
+  }
+  const expectedByPath = new Map(expectedFiles.map((file) => [file.path, file]));
+  let transferredBytes = 0;
+  let completedFiles = 0;
+  let updatedAt = job.updatedAt;
+  for (const row of rows) {
+    const expected = expectedByPath.get(row.relative_path);
+    if (!expected || row.expected_bytes !== expected.size || row.sha256 !== expected.sha256) {
+      throw new Error('Persisted transfer file metadata does not match its manifest');
+    }
+    assertProgressValue(row.transferred_bytes, 'Persisted file byte count');
+    if (row.transferred_bytes > row.expected_bytes || ![0, 1].includes(row.completed)) {
+      throw new RangeError('Persisted transfer file progress is invalid');
+    }
+    const completed = row.transferred_bytes === row.expected_bytes;
+    if (completed !== (row.completed === 1)) {
+      throw new Error('Persisted transfer file completion marker is inconsistent');
+    }
+    assertTimestamp(row.updated_at, 'Persisted file update time');
+    if (row.updated_at < job.createdAt) {
+      throw new RangeError('Persisted file update time precedes job creation time');
+    }
+    transferredBytes += row.transferred_bytes;
+    completedFiles += row.completed;
+    updatedAt = Math.max(updatedAt, row.updated_at);
+    if (!Number.isSafeInteger(transferredBytes) || !Number.isSafeInteger(completedFiles)) {
+      throw new RangeError('Persisted transfer progress exceeds the safe integer range');
+    }
+  }
+  return { transferredBytes, completedFiles, updatedAt };
 }
 
 function assertStatus(status) {
@@ -444,9 +663,46 @@ function assertDiagnosticCode(code) {
   }
 }
 
+function normalizeErrorMessage(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new TypeError('Transfer job error message must be a string');
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized.length > MAX_ERROR_MESSAGE_LENGTH) {
+    throw new TypeError(`Transfer job error message must contain 1-${MAX_ERROR_MESSAGE_LENGTH} characters`);
+  }
+  return normalized;
+}
+
 function assertTimestamp(value, label) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new TypeError(`${label} must be a positive safe integer`);
+  }
+}
+
+function assertJobTimestamp(value, createdAt, label) {
+  assertTimestamp(value, label);
+  if (value < createdAt) {
+    throw new RangeError(`${label} cannot precede the transfer creation time`);
+  }
+}
+
+function assertOptionalTimestamp(value, label, minimum, maximum) {
+  if (value === null) {
+    return;
+  }
+  assertTimestamp(value, label);
+  if (value < minimum || value > maximum) {
+    throw new RangeError(`${label} is outside the transfer job lifetime`);
+  }
+}
+
+function assertProgressValue(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${label} must be a non-negative safe integer`);
   }
 }
 

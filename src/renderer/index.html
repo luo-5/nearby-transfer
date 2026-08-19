@@ -92,6 +92,19 @@
         </div>
       </section>
 
+      <section class="panel transfers-panel" aria-labelledby="v2TransferJobsTitle">
+        <div class="panel-title-row">
+          <div>
+            <h2 id="v2TransferJobsTitle">可恢复传输任务</h2>
+            <p class="pairing-intro">任务状态会持久化；应用重启或网络中断后可在这里重试。</p>
+          </div>
+          <span id="v2TransferJobSummary" class="badge">0</span>
+        </div>
+        <p id="v2TransferJobStatus" class="pairing-status" role="status" aria-live="polite">正在读取可恢复传输任务...</p>
+        <div id="v2TransferJobs" class="transfers empty">暂无持久化传输任务。</div>
+        <button id="v2TransferJobRefresh" class="secondary pairing-action" type="button">刷新任务</button>
+      </section>
+
       <section class="panel transfers-panel">
         <div class="panel-title-row">
           <h2>传输记录</h2>

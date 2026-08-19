@@ -280,6 +280,24 @@ dd {
   margin-bottom: 8px;
 }
 
+.transfer-job-card {
+  align-items: start;
+}
+
+.transfer-job-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 9.6rem;
+}
+
+.transfer-diagnostic {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.76rem;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
 .progress {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
@@ -416,7 +434,7 @@ dd {
 }
 
 .trusted-peer-card {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .pairing-details {

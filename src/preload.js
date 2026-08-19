@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('lanTransfer', {
   pairing: Object.freeze({
     listDiscoveredPeers: () => ipcRenderer.invoke('v2:list-discovered-peers'),
     listTrustedPeers: () => ipcRenderer.invoke('v2:list-trusted-peers'),
+    revokeTrustedPeer: (deviceId) => ipcRenderer.invoke('v2:revoke-trusted-peer', deviceId),
     listSessions: () => ipcRenderer.invoke('v2:list-pairing-sessions'),
     start: (request) => ipcRenderer.invoke('v2:start-network-pairing', request),
     confirm: (pairingId) => ipcRenderer.invoke('v2:confirm-network-pairing', pairingId),

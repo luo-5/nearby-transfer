@@ -38,12 +38,15 @@ try {
   registerPairingIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, api);
   assert.deepStrictEqual(Array.from(handlers.keys()).sort(), [
     'v2:list-pairing-sessions',
-    'v2:list-trusted-peers'
+    'v2:list-trusted-peers',
+    'v2:revoke-trusted-peer'
   ]);
 
   const visiblePeers = handlers.get('v2:list-trusted-peers')();
   assert.strictEqual(visiblePeers.length, 1);
   assert.strictEqual(Object.hasOwn(visiblePeers[0], 'signingPublicKey'), false);
+  assert.strictEqual(handlers.get('v2:revoke-trusted-peer')(null, visiblePeers[0].deviceId), true);
+  assert.deepStrictEqual(handlers.get('v2:list-trusted-peers')(), []);
 
   assert.strictEqual(handlers.has('v2:start-pairing'), false);
   assert.strictEqual(handlers.has('v2:confirm-pairing'), false);

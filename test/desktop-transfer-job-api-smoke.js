@@ -54,6 +54,9 @@ try {
   const listed = handlers.get('v2:list-transfer-jobs')();
   assert.strictEqual(listed.length, 1);
   assert.strictEqual(listed[0].manifest.entries[0].path, 'report.txt');
+  assert.strictEqual(listed[0].retryCount, 0);
+  assert.strictEqual(listed[0].errorMessage, null);
+  assert.strictEqual(Number.isSafeInteger(listed[0].updatedAt), true);
   assert.strictEqual(Object.hasOwn(listed[0], 'databasePath'), false);
   assert.throws(() => handlers.get('v2:pause-transfer-job')(null, manifest.taskId), /Illegal transfer job transition/);
   assert.strictEqual(handlers.get('v2:cancel-transfer-job')(null, manifest.taskId).status, 'cancelled');

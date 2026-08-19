@@ -15,6 +15,7 @@ function createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore
 
   return Object.freeze({
     listTrustedPeers: () => trustedPeerStore.listTrustedPeers().map(toPublicPeer),
+    revokeTrustedPeer: (deviceId) => trustedPeerStore.revokeTrustedPeer(deviceId),
     listPairingSessions: () => pairingSessionStore.listActive().map(toPublicSession),
     startPairing: ({ capabilities = [] } = {}) => {
       const started = pairingSessionStore.startOutgoing({
@@ -70,8 +71,8 @@ function registerPairingIpcHandlers(ipcMain, api) {
     throw new TypeError('A desktop pairing API is required');
   }
   ipcMain.handle('v2:list-trusted-peers', () => api.listTrustedPeers());
+  ipcMain.handle('v2:revoke-trusted-peer', (_event, deviceId) => api.revokeTrustedPeer(deviceId));
   ipcMain.handle('v2:list-pairing-sessions', () => api.listPairingSessions());
-
 }
 
 function toPublicPeer(peer) {
@@ -82,6 +83,7 @@ function toPublicPeer(peer) {
     fingerprint: peer.identity.fingerprint,
     permissions: peer.permissions,
     pairedAt: peer.pairedAt,
+    lastSeen: peer.lastSeen,
     revokedAt: peer.revokedAt,
     updatedAt: peer.updatedAt
   };
