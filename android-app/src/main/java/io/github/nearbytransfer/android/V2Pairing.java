@@ -18,7 +18,7 @@ import java.util.regex.Pattern;
 /** Protocol v2 pairing messages, validation, and Ed25519 signing primitives. */
 final class V2Pairing {
     static final long MAX_CLOCK_SKEW_MS = 30_000L;
-    static final long PAIRING_SESSION_TTL_MS = 120_000L;
+    static final long PAIRING_SESSION_TTL_MS = 300_000L;
     static final int MAX_SIGNATURE_LENGTH = 512;
 
     static final String TYPE_OFFER = "pairing-offer";

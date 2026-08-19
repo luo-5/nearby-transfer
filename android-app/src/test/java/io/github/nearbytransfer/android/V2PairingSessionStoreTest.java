@@ -95,8 +95,74 @@ public class V2PairingSessionStoreTest {
             initiatorStore.get(initiatorOffer.offer.pairingId, true, NOW + 6L).status);
     }
 
+
     @Test
-    public void expiresSessionsAtExactlyOneHundredTwentySeconds() throws Exception {
+    public void initiatorExpiresAtTtlAfterValidResponderOfferAndCannotConfirmLocally() throws Exception {
+        Peer initiator = createPeer("Initiator");
+        Peer responder = createPeer("Responder");
+        V2PairingSessionStore initiatorStore = initiator.newStore();
+        V2PairingSessionStore responderStore = responder.newStore();
+        V2PairingSessionStore.SignedOffer initiatorOffer = initiatorStore.startOutgoing(Arrays.asList("pairing"), NOW);
+
+        responderStore.receiveIncomingOffer(initiatorOffer.offer, initiatorOffer.signature, NOW + 1L);
+        V2PairingSessionStore.SignedOffer responderOffer = responderStore.respondToIncomingOffer(
+            initiatorOffer.offer.pairingId, Arrays.asList("pairing"), NOW + 2L
+        );
+        V2PairingSessionStore.Session awaitingConfirmation = initiatorStore.receiveRemoteOffer(
+            initiatorOffer.offer.pairingId, responderOffer.offer, responderOffer.signature, NOW + 3L
+        );
+        assertEquals(V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION, awaitingConfirmation.status);
+
+        long expiresAt = NOW + V2PairingSessionStore.PAIRING_SESSION_TTL_MS;
+        try {
+            initiatorStore.createLocalConfirmation(initiatorOffer.offer.pairingId, expiresAt);
+            fail("Expected local confirmation to fail after the pairing TTL");
+        } catch (IllegalStateException expected) {
+            assertEquals("Pairing session is not active", expected.getMessage());
+        }
+
+        V2PairingSessionStore.Session expired = initiatorStore.get(
+            initiatorOffer.offer.pairingId, true, expiresAt
+        );
+        assertNotNull(expired);
+        assertEquals(V2PairingSessionStore.Status.EXPIRED, expired.status);
+    }
+
+    @Test
+    public void reachesReadyToTrustWhenBothConfirmationsArriveBeforeExpiry() throws Exception {
+        Peer initiator = createPeer("Initiator");
+        Peer responder = createPeer("Responder");
+        V2PairingSessionStore initiatorStore = initiator.newStore();
+        V2PairingSessionStore responderStore = responder.newStore();
+        V2PairingSessionStore.SignedOffer initiatorOffer = initiatorStore.startOutgoing(Arrays.asList("pairing"), NOW);
+        long expiresAt = NOW + V2PairingSessionStore.PAIRING_SESSION_TTL_MS;
+
+        responderStore.receiveIncomingOffer(initiatorOffer.offer, initiatorOffer.signature, expiresAt - 7L);
+        V2PairingSessionStore.SignedOffer responderOffer = responderStore.respondToIncomingOffer(
+            initiatorOffer.offer.pairingId, Arrays.asList("pairing"), expiresAt - 6L
+        );
+        initiatorStore.receiveRemoteOffer(
+            initiatorOffer.offer.pairingId, responderOffer.offer, responderOffer.signature, expiresAt - 5L
+        );
+        V2PairingSessionStore.SignedConfirmation initiatorConfirmation = initiatorStore.createLocalConfirmation(
+            initiatorOffer.offer.pairingId, expiresAt - 4L
+        );
+        V2PairingSessionStore.SignedConfirmation responderConfirmation = responderStore.createLocalConfirmation(
+            initiatorOffer.offer.pairingId, expiresAt - 3L
+        );
+
+        V2PairingSessionStore.Session initiatorReady = initiatorStore.receiveRemoteConfirmation(
+            initiatorOffer.offer.pairingId, responderConfirmation.confirmation, responderConfirmation.signature, expiresAt - 2L
+        );
+        V2PairingSessionStore.Session responderReady = responderStore.receiveRemoteConfirmation(
+            initiatorOffer.offer.pairingId, initiatorConfirmation.confirmation, initiatorConfirmation.signature, expiresAt - 1L
+        );
+        assertEquals(V2PairingSessionStore.Status.READY_TO_TRUST, initiatorReady.status);
+        assertEquals(V2PairingSessionStore.Status.READY_TO_TRUST, responderReady.status);
+    }
+    @Test
+    public void expiresSessionsAtPairingTtlBoundary() throws Exception {
+
         Peer initiator = createPeer("Initiator");
         V2PairingSessionStore store = initiator.newStore();
         V2PairingSessionStore.SignedOffer offer = store.startOutgoing(Arrays.asList("pairing"), NOW);

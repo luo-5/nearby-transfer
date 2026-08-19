@@ -8,6 +8,7 @@ const { encodeWireFrame, WireFrameDecoder } = require('./wire-frame');
 const { encodeControlMessage } = require('./message-codec');
 const { createPairingCancel, signPairingCancel } = require('./pairing');
 const { PairingRouter } = require('./pairing-router');
+const { PAIRING_SESSION_TTL_MS } = require('./pairing-session-store');
 
 const DEFAULT_MAX_CONNECTIONS = 16;
 const DEFAULT_MAX_CONNECTIONS_PER_IP = 4;
@@ -30,7 +31,7 @@ class LanService extends EventEmitter {
     super();
     if (!device || typeof device.signingPrivateKey !== 'string') throw new TypeError('A signing-capable local device is required');
     if (!pairingApi || typeof pairingApi.startPairing !== 'function' || typeof pairingApi.createLocalConfirmation !== 'function' ||
-        typeof pairingApi.createResponderOffer !== 'function' || typeof pairingApi.complete !== 'function') {
+        typeof pairingApi.createResponderOffer !== 'function' || typeof pairingApi.getPairingSession !== 'function' || typeof pairingApi.complete !== 'function') {
       throw new TypeError('A complete pairing API is required');
     }
     this.device = device;
@@ -98,7 +99,8 @@ class LanService extends EventEmitter {
     connection.binding.pairingId = started.session.pairingId;
     this.connectionsByPairingId.set(started.session.pairingId, connection);
     this._sendControl(connection, MESSAGE_TYPES.PAIRING_OFFER, started.outboundOffer);
-    return started.session;
+    this._activatePairingDeadline(connection);
+    return this._requireSession(started.session.pairingId);
   }
 
   confirmPairing(pairingId, { capabilities = this.capabilities } = {}) {
@@ -107,6 +109,7 @@ class LanService extends EventEmitter {
     if (session.role === 'responder') {
       const responderOffer = this.pairingApi.createResponderOffer(pairingId, { capabilities });
       this._sendControl(connection, MESSAGE_TYPES.PAIRING_OFFER, { offer: responderOffer.offer, signature: responderOffer.signature });
+      this._activatePairingDeadline(connection);
     }
     const confirmation = this.pairingApi.createLocalConfirmation(pairingId);
     this._sendControl(connection, MESSAGE_TYPES.PAIRING_CONFIRM, { confirmation: confirmation.confirmation, signature: confirmation.signature });
@@ -172,7 +175,8 @@ class LanService extends EventEmitter {
       decoder: new WireFrameDecoder(),
       inputBytes: 0,
       frameCount: 0,
-      binding: { expectedDeviceId, pairingId: null, remoteDeviceId: null }
+      binding: { expectedDeviceId, pairingId: null, remoteDeviceId: null },
+      pairingDeadlineActive: false
     };
     this.connections.add(connection);
     this.connectionsPerIp.set(remoteAddress, count + 1);
@@ -193,6 +197,7 @@ class LanService extends EventEmitter {
         connection.frameCount += 1;
         if (connection.frameCount > this.maxBootstrapFrames) throw new RangeError('Pairing bootstrap frame count exceeds the accepted limit');
         const result = this.router.receiveFrame(frame, connection.binding);
+        if (result.kind === 'offer') this._activatePairingDeadline(connection);
         if (connection.binding.pairingId) this.connectionsByPairingId.set(connection.binding.pairingId, connection);
         if (result.kind === 'cancellation') connection.socket.end();
         this._emitSession(connection.binding.pairingId);
@@ -201,6 +206,15 @@ class LanService extends EventEmitter {
       this.emit('protocol-error', { remoteAddress: connection.remoteAddress, error });
       connection.socket.destroy();
     }
+  }
+
+  _activatePairingDeadline(connection) {
+    if (!connection || connection.pairingDeadlineActive || connection.socket.destroyed) return;
+    // Before a verified offer, short idle timeouts constrain unauthenticated sockets. Once
+    // either side accepts an offer, keep the same connection for the full SAS comparison
+    // window so a human can safely verify the code without racing a 10-second timeout.
+    connection.socket.setTimeout(PAIRING_SESSION_TTL_MS);
+    connection.pairingDeadlineActive = true;
   }
 
   _sendControl(connection, type, message) {
@@ -220,7 +234,10 @@ class LanService extends EventEmitter {
   }
 
   _requireSession(pairingId) {
-    const session = this.pairingApi.listPairingSessions().find((item) => item.pairingId === pairingId);
+    // LAN service methods are consumed by the Electron IPC adapter, which owns
+    // the public/redacted representation. Keep the service on the internal
+    // session shape so its return values can be safely converted exactly once.
+    const session = this.pairingApi.getPairingSession(pairingId);
     if (!session) throw new Error('Pairing session is not active');
     return session;
   }

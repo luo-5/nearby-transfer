@@ -15,6 +15,7 @@ const peer = {
 const calls = [];
 const service = {
   listPeers: () => [peer],
+  getPairingSession: (id) => session(id),
   startPairing: async (selected, options) => { calls.push(['start', selected, options]); return session('AQIDBAUGBwgJCgsMDQ4PEA'); },
   confirmPairing: (id) => { calls.push(['confirm', id]); return session(id); },
   completePairing: (id, options) => { calls.push(['complete', id, options]); return trustedPeer(); },

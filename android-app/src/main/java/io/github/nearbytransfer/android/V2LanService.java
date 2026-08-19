@@ -61,6 +61,7 @@ final class V2LanService implements Closeable {
         private int inputBytes;
         private int frameCount;
         private boolean closed;
+        private boolean readLoopStarted;
 
         private Connection(Socket socket, String expectedDeviceId) {
             this.socket = socket;
@@ -72,8 +73,11 @@ final class V2LanService implements Closeable {
         String remoteAddress() { return remoteAddress; }
 
         void sendOffer(V2Pairing.Offer offer, String signature) throws Exception {
-            send(V2Pairing.TYPE_OFFER, V2ControlMessage.encodeOffer(offer, signature));
+            // register() intentionally delays the outgoing read loop. Set the longer
+            // authenticated-session timeout before the first blocking read can begin.
             activatePairingDeadline();
+            send(V2Pairing.TYPE_OFFER, V2ControlMessage.encodeOffer(offer, signature));
+            startReadLoop();
         }
         void sendConfirmation(V2Pairing.Confirmation confirmation, String signature) throws Exception {
             send(V2Pairing.TYPE_CONFIRM, V2ControlMessage.encodeConfirmation(confirmation, signature));
@@ -101,6 +105,14 @@ final class V2LanService implements Closeable {
             // Ten seconds is only the pre-offer bootstrap limit. Once an authenticated offer
             // is sent or received, users need the full protocol pairing window to compare SAS.
             socket.setSoTimeout((int) V2Pairing.PAIRING_SESSION_TTL_MS);
+        }
+
+        private void startReadLoop() {
+            synchronized (this) {
+                if (closed || readLoopStarted) return;
+                readLoopStarted = true;
+            }
+            io.execute(this::readLoop);
         }
 
         private void readLoop() {
@@ -209,7 +221,10 @@ final class V2LanService implements Closeable {
                 ServerSocket listenerSocket = serverSocket;
                 if (listenerSocket == null) return;
                 Socket socket = listenerSocket.accept();
-                try { register(socket, null); }
+                try {
+                    Connection connection = register(socket, null);
+                    connection.startReadLoop();
+                }
                 catch (IOException | RuntimeException error) {
                     String remote = socket.getInetAddress() == null ? "unknown" : socket.getInetAddress().getHostAddress();
                     try { socket.close(); } catch (IOException ignored) { }
@@ -232,7 +247,6 @@ final class V2LanService implements Closeable {
             connections.add(connection);
             connectionsPerIp.put(connection.remoteAddress, count + 1);
         }
-        io.execute(connection::readLoop);
         return connection;
     }
 

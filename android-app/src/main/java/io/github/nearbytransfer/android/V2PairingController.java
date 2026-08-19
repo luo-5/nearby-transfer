@@ -1,6 +1,7 @@
 package io.github.nearbytransfer.android;
 
 import android.content.Context;
+import android.util.Log;
 
 import java.io.Closeable;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.concurrent.Executors;
  * This is intentionally separate from the legacy HTTP/discovery stack.
  */
 final class V2PairingController implements Closeable {
+    private static final String TAG = "NearbyTransferV2";
     private static final List<String> PAIRING_CAPABILITIES = Collections.singletonList("pairing");
 
     interface Listener {
@@ -118,8 +120,13 @@ final class V2PairingController implements Closeable {
     void confirmPairing(String pairingId) {
         workExecutor.execute(() -> {
             try {
-                V2LanService.Connection connection = requireConnection(pairingId);
                 V2PairingSessionStore.Session current = requireSession(pairingId);
+                if (isTerminalStatus(current.status)) {
+                    notifySession(current);
+                    throw pairingUnavailableError(current.status);
+                }
+                debugSession("confirm requested", current);
+                V2LanService.Connection connection = requireConnection(pairingId);
                 if (current.role == V2PairingSessionStore.Role.RESPONDER) {
                     V2PairingSessionStore.SignedOffer responderOffer = sessions.respondToIncomingOffer(pairingId, PAIRING_CAPABILITIES, System.currentTimeMillis());
                     connection.sendOffer(responderOffer.offer, responderOffer.signature);
@@ -127,8 +134,12 @@ final class V2PairingController implements Closeable {
                 V2PairingSessionStore.SignedConfirmation confirmation = sessions.createLocalConfirmation(pairingId, System.currentTimeMillis());
                 connection.sendConfirmation(confirmation.confirmation, confirmation.signature);
                 notifySession(confirmation.session);
+                debugSession("local confirmation sent", confirmation.session);
                 notifyStatus("已确认配对码，正在等待对端确认。");
             } catch (Exception error) {
+                V2PairingSessionStore.Session latest = sessions.get(pairingId, true, System.currentTimeMillis());
+                if (latest != null && isTerminalStatus(latest.status)) notifySession(latest);
+                Log.w(TAG, "confirm pairing failed", error);
                 notifyError(error);
             }
         });
@@ -229,9 +240,13 @@ final class V2PairingController implements Closeable {
             String pairingId = binding.pairingId();
             if (pairingId == null) return;
             synchronized (lock) { connectionsByPairingId.remove(pairingId); }
-            if (sessions.cancel(pairingId, "connection-closed", System.currentTimeMillis())) {
-                notifySession(sessions.get(pairingId, true, System.currentTimeMillis()));
+            boolean cancelled = sessions.cancel(pairingId, "connection-closed", System.currentTimeMillis());
+            V2PairingSessionStore.Session session = sessions.get(pairingId, true, System.currentTimeMillis());
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "pairing connection closed: " + pairingId + ", cancelled=" + cancelled
+                    + ", status=" + (session == null ? "missing" : session.status));
             }
+            if (cancelled) notifySession(session);
         }
     }
 
@@ -261,6 +276,28 @@ final class V2PairingController implements Closeable {
             || !session.peerOffer.identity.deviceId.equals(binding.remoteDeviceId())) {
             throw new IllegalStateException("Pairing session does not match the connection binding");
         }
+    }
+
+    private static boolean isTerminalStatus(V2PairingSessionStore.Status status) {
+        return status == V2PairingSessionStore.Status.CANCELLED
+            || status == V2PairingSessionStore.Status.EXPIRED
+            || status == V2PairingSessionStore.Status.COMPLETED;
+    }
+
+    private static IllegalStateException pairingUnavailableError(V2PairingSessionStore.Status status) {
+        if (status == V2PairingSessionStore.Status.EXPIRED) {
+            return new IllegalStateException("配对已过期，请重新发起配对");
+        }
+        if (status == V2PairingSessionStore.Status.CANCELLED) {
+            return new IllegalStateException("配对连接已关闭，请重新发起配对");
+        }
+        return new IllegalStateException("配对已完成，无法再次确认");
+    }
+
+    private static void debugSession(String event, V2PairingSessionStore.Session session) {
+        if (!BuildConfig.DEBUG || session == null) return;
+        Log.d(TAG, event + ": " + session.pairingId + ", status=" + session.status
+            + ", expiresAt=" + session.expiresAt);
     }
 
     private void notifySession(V2PairingSessionStore.Session session) {

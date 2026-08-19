@@ -20,7 +20,7 @@ const {
 const { DATABASE_FILE } = require('./trusted-peer-store');
 
 // Keep this on-wire handshake deadline aligned with Android V2Pairing.
-const PAIRING_SESSION_TTL_MS = 2 * 60 * 1000;
+const PAIRING_SESSION_TTL_MS = 5 * 60 * 1000;
 const MAX_CLOCK_SKEW_MS = 30 * 1000;
 const MAX_ACTIVE_SESSIONS = 32;
 

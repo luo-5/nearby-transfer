@@ -28,12 +28,16 @@ function createDevice(name) {
   };
 }
 
-function createRuntime(dir, device) {
+function createRuntime(dir, device, bootstrapTimeoutMs = 3000) {
   const peers = new TrustedPeerStore(dir);
   const sessions = new PairingSessionStore(dir);
   const api = createDesktopPairingApi({ device, trustedPeerStore: peers, pairingSessionStore: sessions });
-  const service = new LanService({ device, pairingApi: api, enableDiscovery: false, bootstrapTimeoutMs: 3000 });
+  const service = new LanService({ device, pairingApi: api, enableDiscovery: false, bootstrapTimeoutMs });
   return { peers, sessions, api, service };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function waitFor(condition, timeoutMs = 3000) {
@@ -58,8 +62,10 @@ async function main() {
   try {
     const leftDevice = createDevice('Left desktop');
     const rightDevice = createDevice('Right phone');
-    left = createRuntime(path.join(root, 'left'), leftDevice);
-    right = createRuntime(path.join(root, 'right'), rightDevice);
+    // Keep the unauthenticated bootstrap window short, then wait past it before
+    // either user confirms. The pairing connection must survive for the SAS window.
+    left = createRuntime(path.join(root, 'left'), leftDevice, 1000);
+    right = createRuntime(path.join(root, 'right'), rightDevice, 1000);
     const leftPort = await left.service.start();
     const rightPort = await right.service.start();
 
@@ -72,7 +78,9 @@ async function main() {
     assert.strictEqual(leftSession.role, 'responder');
     assert.strictEqual(leftSession.peer.deviceId, rightDevice.deviceId);
 
-    left.service.confirmPairing(leftSession.pairingId, { capabilities: ['pairing', 'transfer'] });
+    await delay(1250);
+    assert.doesNotThrow(() => left.service.confirmPairing(leftSession.pairingId, { capabilities: ['pairing', 'transfer'] }),
+      'an authenticated pairing socket must outlive the short bootstrap timeout');
     const rightSession = await waitFor(() => right.api.listPairingSessions().find((session) => session.pairingId === started.pairingId && session.peer));
     assert.strictEqual(left.api.listPairingSessions()[0].pairingCode, rightSession.pairingCode);
     assert.strictEqual(rightSession.status, 'awaiting-local-confirmation');
