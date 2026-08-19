@@ -551,7 +551,20 @@ final class V2DiscoveryService implements Closeable {
                 throw new SocketException("Protocol v2 discovery socket is closed");
             }
             DatagramPacket packet = new DatagramPacket(data, data.length, group, DISCOVERY_PORT);
-            socket.send(packet);
+            try {
+                socket.send(packet);
+            } catch (SocketException primaryError) {
+                // Some Android Wi-Fi stacks refuse multicast sends from a socket that is also
+                // bound to a shared discovery port (EPERM), while allowing a short-lived
+                // outbound multicast socket. Keep the receive socket alive and retry once.
+                try (MulticastSocket outbound = new MulticastSocket()) {
+                    outbound.setTimeToLive(1);
+                    outbound.send(packet);
+                } catch (IOException fallbackError) {
+                    fallbackError.addSuppressed(primaryError);
+                    throw fallbackError;
+                }
+            }
         }
 
         @Override
