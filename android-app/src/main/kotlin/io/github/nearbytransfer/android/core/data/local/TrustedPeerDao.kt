@@ -12,6 +12,9 @@ interface TrustedPeerDao {
     @Query("SELECT * FROM trusted_peers ORDER BY display_name COLLATE NOCASE ASC, device_id ASC")
     fun observeAll(): Flow<List<TrustedPeerEntity>>
 
+    @Query("SELECT * FROM trusted_peers ORDER BY display_name COLLATE NOCASE ASC, device_id ASC")
+    suspend fun listAll(): List<TrustedPeerEntity>
+
     @Query("SELECT * FROM trusted_peers WHERE device_id = :deviceId LIMIT 1")
     suspend fun findByDeviceId(deviceId: String): TrustedPeerEntity?
 
@@ -19,23 +22,39 @@ interface TrustedPeerDao {
     suspend fun insertOrReplace(peer: TrustedPeerEntity)
 
     /**
-     * Revocation is terminal for this row. Callers must delete and establish a
-     * fresh pairing before a previously revoked identity can become trusted.
+     * Serializes the read-before-write identity check with the replacement.
+     * Identity material is immutable for an existing device ID, and a revoked
+     * row is terminal until it is explicitly deleted.
      */
     @Transaction
-    suspend fun insertUnlessPreviouslyRevoked(peer: TrustedPeerEntity): Boolean {
+    suspend fun insertUnlessIdentityConflict(peer: TrustedPeerEntity) {
         val existing = findByDeviceId(peer.deviceId)
-        if (existing?.trustStatus == "REVOKED" && peer.trustStatus == "TRUSTED") {
-            return false
+        if (existing != null) {
+            require(
+                existing.fingerprint == peer.fingerprint &&
+                    existing.signingPublicKey == peer.signingPublicKey &&
+                    existing.encryptionPublicKey == peer.encryptionPublicKey,
+            ) {
+                "Trusted identity material cannot change for an existing deviceId."
+            }
+            check(existing.trustStatus != "REVOKED" || peer.trustStatus != "TRUSTED") {
+                "A revoked peer must be deleted and paired again before it can be trusted."
+            }
+            require(peer.pairedAtEpochMillis >= existing.pairedAtEpochMillis) {
+                "pairedAtEpochMillis cannot move backwards for an existing deviceId."
+            }
+            require(peer.updatedAtEpochMillis >= existing.updatedAtEpochMillis) {
+                "updatedAtEpochMillis cannot move backwards for an existing deviceId."
+            }
         }
         insertOrReplace(peer)
-        return true
     }
 
     @Query(
         "UPDATE trusted_peers " +
-            "SET trust_status = 'REVOKED', permissions = '', updated_at_epoch_millis = :updatedAtEpochMillis " +
-            "WHERE device_id = :deviceId",
+            "SET trust_status = 'REVOKED', permissions = '', " +
+            "updated_at_epoch_millis = MAX(updated_at_epoch_millis, paired_at_epoch_millis, :updatedAtEpochMillis) " +
+            "WHERE device_id = :deviceId AND trust_status != 'REVOKED'",
     )
     suspend fun revoke(deviceId: String, updatedAtEpochMillis: Long): Int
 

@@ -9,18 +9,23 @@ import io.github.nearbytransfer.android.core.data.local.NearbyTransferDatabase
 import io.github.nearbytransfer.android.core.model.PeerPermission
 import io.github.nearbytransfer.android.core.model.TrustStatus
 import io.github.nearbytransfer.android.core.model.TrustedPeer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 /**
- * Java-callable persistence boundary for a completed protocol-v2 pairing.
- * Only public identity material is accepted and stored; callers must run it off the main thread.
+ * Java-callable boundary over the app's single Room trusted-peer data source.
+ * Only public identity material is persisted; public summaries intentionally do
+ * not expose signing or encryption public keys.
  */
 object V2TrustedPeerPersistence {
     data class TrustedPeerSummary(
         val deviceId: String,
         val displayName: String,
         val fingerprint: String,
+        val trustStatus: TrustStatus,
+        val canTransfer: Boolean,
         val pairedAtEpochMillis: Long,
+        val updatedAtEpochMillis: Long,
     )
 
     @JvmStatic
@@ -37,21 +42,10 @@ object V2TrustedPeerPersistence {
         completedPairingIdentity: Any,
         nowEpochMillis: Long,
     ): TrustedPeerSummary {
-        check(Looper.getMainLooper().thread !== Thread.currentThread()) {
-            "V2 trusted-peer persistence must run on a background thread."
-        }
         require(nowEpochMillis >= 0L) { "nowEpochMillis must be non-negative." }
         val identity = completedPairingIdentity as? V2Identity
             ?: throw IllegalArgumentException("completedPairingIdentity must be a V2Identity.")
-        val applicationContext = context.applicationContext
-            ?: throw IllegalArgumentException("An application Context is required.")
-        val database = Room.databaseBuilder(
-            applicationContext,
-            NearbyTransferDatabase::class.java,
-            NearbyTransferDatabase.DATABASE_NAME,
-        ).addMigrations(NearbyTransferDatabase.MIGRATION_1_2).build()
-        try {
-            val repository = RoomTrustedPeerRepository(database.trustedPeerDao())
+        return withRepository(context) { repository ->
             val peer = TrustedPeer(
                 deviceId = identity.deviceId,
                 displayName = identity.deviceName,
@@ -63,10 +57,66 @@ object V2TrustedPeerPersistence {
                 pairedAtEpochMillis = nowEpochMillis,
                 updatedAtEpochMillis = nowEpochMillis,
             )
-            runBlocking { repository.upsert(peer) }
-            return TrustedPeerSummary(peer.deviceId, peer.displayName, peer.fingerprint, peer.pairedAtEpochMillis)
-        } finally {
-            database.close()
+            repository.upsert(peer)
+            peer.toPublicSummary()
+        }
+    }
+
+    @JvmStatic
+    fun listTrustedPeers(context: Context): List<TrustedPeerSummary> =
+        withRepository(context) { repository ->
+            repository.listPeers().map { it.toPublicSummary() }
+        }
+
+    @JvmStatic
+    fun findTrustedPeer(context: Context, deviceId: String): TrustedPeerSummary? =
+        withRepository(context) { repository ->
+            repository.findByDeviceId(deviceId)?.toPublicSummary()
+        }
+
+    @JvmStatic
+    fun revokeTrustedPeer(context: Context, deviceId: String): Boolean =
+        revokeTrustedPeer(context, deviceId, System.currentTimeMillis())
+
+    @JvmStatic
+    fun revokeTrustedPeer(context: Context, deviceId: String, nowEpochMillis: Long): Boolean {
+        require(nowEpochMillis >= 0L) { "nowEpochMillis must be non-negative." }
+        return withRepository(context, nowEpochMillis = { nowEpochMillis }) { repository ->
+            repository.setTrustStatus(deviceId, TrustStatus.REVOKED)
+        }
+    }
+
+    private fun TrustedPeer.toPublicSummary() = TrustedPeerSummary(
+        deviceId = deviceId,
+        displayName = displayName,
+        fingerprint = fingerprint,
+        trustStatus = trustStatus,
+        canTransfer = canTransfer(),
+        pairedAtEpochMillis = pairedAtEpochMillis,
+        updatedAtEpochMillis = updatedAtEpochMillis,
+    )
+
+    private fun <T> withRepository(
+        context: Context,
+        nowEpochMillis: () -> Long = System::currentTimeMillis,
+        operation: suspend (TrustedPeerRepository) -> T,
+    ): T {
+        check(Looper.getMainLooper().thread !== Thread.currentThread()) {
+            "V2 trusted-peer persistence must run on a background thread."
+        }
+        val applicationContext = context.applicationContext
+            ?: throw IllegalArgumentException("An application Context is required.")
+        return runBlocking(Dispatchers.IO) {
+            val database = Room.databaseBuilder(
+                applicationContext,
+                NearbyTransferDatabase::class.java,
+                NearbyTransferDatabase.DATABASE_NAME,
+            ).addMigrations(NearbyTransferDatabase.MIGRATION_1_2).build()
+            try {
+                operation(RoomTrustedPeerRepository(database.trustedPeerDao(), nowEpochMillis))
+            } finally {
+                database.close()
+            }
         }
     }
 }

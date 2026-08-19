@@ -7,18 +7,20 @@ import kotlinx.coroutines.flow.Flow
 /**
  * Domain-facing trusted-peer boundary.
  *
- * The first production implementation will be Room-backed in core/data/local. Keeping
- * the rest of the app behind this contract prevents UI and transfer code from coupling
- * to SQL, DAO annotations, or Android storage details.
+ * Room is the single production source of truth for trusted-peer state. UI,
+ * pairing, and transfer code depend on this contract instead of SQL or DAO
+ * details.
  */
 interface TrustedPeerRepository {
     fun observePeers(): Flow<List<TrustedPeer>>
+
+    suspend fun listPeers(): List<TrustedPeer>
 
     suspend fun findByDeviceId(deviceId: String): TrustedPeer?
 
     suspend fun upsert(peer: TrustedPeer)
 
-    suspend fun setTrustStatus(deviceId: String, status: TrustStatus)
+    suspend fun setTrustStatus(deviceId: String, status: TrustStatus): Boolean
 
     suspend fun delete(deviceId: String)
 }

@@ -9,6 +9,10 @@ import io.github.nearbytransfer.android.core.data.local.PeerPermissionCodec
 import io.github.nearbytransfer.android.core.model.PeerPermission
 import io.github.nearbytransfer.android.core.model.TrustStatus
 import io.github.nearbytransfer.android.core.model.TrustedPeer
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -62,16 +66,19 @@ class RoomTrustedPeerRepositoryTest {
     }
 
     @Test
-    fun upsertObserveFindAndDeleteRoundTrip() = runBlocking {
-        repository.upsert(trustedPeer())
+    fun upsertObserveListFindAndDeleteRoundTrip() = runBlocking {
+        val zulu = trustedPeer(deviceId = "peer-z", displayName = "Zulu phone")
+        val alpha = trustedPeer(deviceId = "peer-a", displayName = "Alpha phone")
+        repository.upsert(zulu)
+        repository.upsert(alpha)
 
-        val observed = repository.observePeers().first()
-        assertEquals(listOf(trustedPeer()), observed)
-        assertEquals(trustedPeer(), repository.findByDeviceId("peer-1"))
+        assertEquals(listOf(alpha, zulu), repository.observePeers().first())
+        assertEquals(listOf(alpha, zulu), repository.listPeers())
+        assertEquals(alpha, repository.findByDeviceId("peer-a"))
 
-        repository.delete("peer-1")
-        assertNull(repository.findByDeviceId("peer-1"))
-        assertTrue(repository.observePeers().first().isEmpty())
+        repository.delete("peer-a")
+        assertNull(repository.findByDeviceId("peer-a"))
+        assertEquals(listOf(zulu), repository.listPeers())
     }
 
     @Test
@@ -98,6 +105,80 @@ class RoomTrustedPeerRepositoryTest {
             runBlocking { repository.upsert(trustedPeer(encryptionPublicKey = "")) }
         }
         Unit
+    }
+
+    @Test
+    fun identityMaterialCannotChangeForAnExistingDeviceId() = runBlocking {
+        val original = trustedPeer()
+        repository.upsert(original)
+
+        val conflicts = listOf(
+            original.copy(fingerprint = "ed25519:changed", updatedAtEpochMillis = 11L),
+            original.copy(signingPublicKey = "changed-signing-key", updatedAtEpochMillis = 11L),
+            original.copy(encryptionPublicKey = "changed-encryption-key", updatedAtEpochMillis = 11L),
+        )
+        conflicts.forEach { conflict ->
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking { repository.upsert(conflict) }
+            }
+            assertEquals(original, repository.findByDeviceId(original.deviceId))
+        }
+
+        val timestampRegressions = listOf(
+            original.copy(pairedAtEpochMillis = 9L, updatedAtEpochMillis = 11L),
+            original.copy(updatedAtEpochMillis = 9L),
+        )
+        timestampRegressions.forEach { regression ->
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking { repository.upsert(regression) }
+            }
+            assertEquals(original, repository.findByDeviceId(original.deviceId))
+        }
+
+        val renamed = original.copy(displayName = "Renamed phone", updatedAtEpochMillis = 12L)
+        repository.upsert(renamed)
+        assertEquals(renamed, repository.findByDeviceId(original.deviceId))
+    }
+
+    @Test
+    fun concurrentFirstWritesAtomicallyRejectOneConflictingIdentity() = runBlocking {
+        val first = trustedPeer(signingPublicKey = "first-signing", encryptionPublicKey = "first-encryption")
+        val second = trustedPeer(signingPublicKey = "second-signing", encryptionPublicKey = "second-encryption")
+        val start = CompletableDeferred<Unit>()
+        val outcomes = listOf(first, second).map { candidate ->
+            async(Dispatchers.Default) {
+                start.await()
+                runCatching { repository.upsert(candidate) }
+            }
+        }
+        start.complete(Unit)
+
+        val completed = outcomes.awaitAll()
+        assertEquals(1, completed.count { it.isSuccess })
+        assertEquals(1, completed.count { it.exceptionOrNull() is IllegalArgumentException })
+        val stored = requireNotNull(repository.findByDeviceId(first.deviceId))
+        assertTrue(stored == first || stored == second)
+    }
+
+    @Test
+    fun revocationIsIdempotentAndNeverMovesUpdatedTimeBackwards() = runBlocking {
+        val original = trustedPeer()
+        repository.upsert(original)
+
+        val negativeClockRepository = RoomTrustedPeerRepository(database.trustedPeerDao()) { -1L }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { negativeClockRepository.setTrustStatus(original.deviceId, TrustStatus.REVOKED) }
+        }
+        assertEquals(original, repository.findByDeviceId(original.deviceId))
+
+        val staleClockRepository = RoomTrustedPeerRepository(database.trustedPeerDao()) { 5L }
+        assertTrue(staleClockRepository.setTrustStatus(original.deviceId, TrustStatus.REVOKED))
+        val revoked = requireNotNull(repository.findByDeviceId(original.deviceId))
+        assertEquals(TrustStatus.REVOKED, revoked.trustStatus)
+        assertEquals(original.updatedAtEpochMillis, revoked.updatedAtEpochMillis)
+
+        assertFalse(repository.setTrustStatus(original.deviceId, TrustStatus.REVOKED))
+        assertEquals(revoked, repository.findByDeviceId(original.deviceId))
     }
 
     @Test
@@ -134,9 +215,12 @@ class RoomTrustedPeerRepositoryTest {
     }
 
     @Test
-    fun revokedPeerLosesPermissionsAndCannotBeRegrantedInPlace() = runBlocking {
-        repository.upsert(trustedPeer())
-        repository.setTrustStatus("peer-1", TrustStatus.REVOKED)
+    fun revokedPeerLosesPermissionsAndRequiresDeletionBeforePairingAgain() = runBlocking {
+        val original = trustedPeer()
+        repository.upsert(original)
+        assertTrue(repository.setTrustStatus("peer-1", TrustStatus.REVOKED))
+        assertFalse(repository.setTrustStatus("peer-1", TrustStatus.REVOKED))
+        assertFalse(repository.setTrustStatus("missing-peer", TrustStatus.REVOKED))
 
         val revoked = requireNotNull(repository.findByDeviceId("peer-1"))
         assertEquals(TrustStatus.REVOKED, revoked.trustStatus)
@@ -150,8 +234,14 @@ class RoomTrustedPeerRepositoryTest {
             runBlocking { repository.setTrustStatus("peer-1", TrustStatus.TRUSTED) }
         }
         assertThrows(IllegalStateException::class.java) {
-            runBlocking { repository.upsert(trustedPeer(updatedAtEpochMillis = 100L)) }
+            runBlocking { repository.upsert(original.copy(updatedAtEpochMillis = 100L)) }
         }
+        assertEquals(revoked, repository.findByDeviceId("peer-1"))
+
+        repository.delete("peer-1")
+        val repaired = original.copy(pairedAtEpochMillis = 101L, updatedAtEpochMillis = 101L)
+        repository.upsert(repaired)
+        assertEquals(repaired, repository.findByDeviceId("peer-1"))
         Unit
     }
 
@@ -182,12 +272,14 @@ class RoomTrustedPeerRepositoryTest {
     }
 
     private fun trustedPeer(
+        deviceId: String = "peer-1",
+        displayName: String = "Alice phone",
         updatedAtEpochMillis: Long = 10L,
         signingPublicKey: String = "ed25519-public-key",
         encryptionPublicKey: String = "x25519-public-key",
     ) = TrustedPeer(
-        deviceId = "peer-1",
-        displayName = "Alice phone",
+        deviceId = deviceId,
+        displayName = displayName,
         fingerprint = "ed25519:example",
         signingPublicKey = signingPublicKey,
         encryptionPublicKey = encryptionPublicKey,
