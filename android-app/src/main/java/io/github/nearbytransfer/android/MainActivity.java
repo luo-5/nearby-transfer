@@ -25,8 +25,10 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
+import java.text.DateFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -57,6 +59,7 @@ public class MainActivity extends Activity {
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final ArrayDeque<String> logs = new ArrayDeque<>();
+    private volatile boolean activityDestroyed;
 
     private DeviceConfig device;
     private HttpTransferServer transferServer;
@@ -64,6 +67,7 @@ public class MainActivity extends Activity {
     private DiscoveryService discoveryService;
     private V2PairingController v2PairingController;
     private List<V2DiscoveryService.Peer> v2Peers = new ArrayList<>();
+    private List<V2TrustedPeerPersistence.TrustedPeerSummary> trustedPeers = new ArrayList<>();
     private SelectedFile selectedFile;
     private PeerDevice selectedPeer;
     private List<PeerDevice> peers = new ArrayList<>();
@@ -77,7 +81,9 @@ public class MainActivity extends Activity {
     private LinearLayout peersLayout;
     private LinearLayout v2PeersLayout;
     private LinearLayout v2SessionsLayout;
+    private LinearLayout trustedPeersLayout;
     private TextView v2StatusText;
+    private TextView trustedPeersStatusText;
     private Button sendButton;
     private ProgressBar transferProgress;
     private TextView progressTitleText;
@@ -96,6 +102,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
+        refreshTrustedPeers();
         requestPermissionsThenStart();
     }
 
@@ -123,6 +130,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        activityDestroyed = true;
         if (discoveryService != null) {
             discoveryService.stop();
         }
@@ -327,6 +335,26 @@ public class MainActivity extends Activity {
         v2SessionsLayout.setOrientation(LinearLayout.VERTICAL);
         v2SessionsLayout.setPadding(0, dp(8), 0, 0);
         v2Card.addView(v2SessionsLayout, matchWrap());
+
+        TextView trustedPeersTitle = text("可信设备", 15, COLOR_TEXT, Typeface.BOLD);
+        LinearLayout.LayoutParams trustedPeersTitleParams = matchWrap();
+        trustedPeersTitleParams.setMargins(0, dp(14), 0, 0);
+        v2Card.addView(trustedPeersTitle, trustedPeersTitleParams);
+        trustedPeersStatusText = text("正在读取可信设备…", 13, COLOR_MUTED, Typeface.NORMAL);
+        trustedPeersStatusText.setPadding(0, dp(6), 0, 0);
+        v2Card.addView(trustedPeersStatusText, matchWrap());
+        Button trustedPeersRefreshButton = new Button(this);
+        trustedPeersRefreshButton.setText("刷新可信设备");
+        trustedPeersRefreshButton.setAllCaps(false);
+        styleButton(trustedPeersRefreshButton, false);
+        trustedPeersRefreshButton.setOnClickListener(v -> refreshTrustedPeers());
+        LinearLayout.LayoutParams trustedPeersRefreshParams = matchWrap();
+        trustedPeersRefreshParams.setMargins(0, dp(8), 0, 0);
+        v2Card.addView(trustedPeersRefreshButton, trustedPeersRefreshParams);
+        trustedPeersLayout = new LinearLayout(this);
+        trustedPeersLayout.setOrientation(LinearLayout.VERTICAL);
+        trustedPeersLayout.setPadding(0, dp(8), 0, 0);
+        v2Card.addView(trustedPeersLayout, matchWrap());
         root.addView(v2Card, cardParams());
 
         LinearLayout localCard = card(COLOR_SURFACE);
@@ -401,12 +429,12 @@ public class MainActivity extends Activity {
                 );
                 int port = transferServer.start(0);
 
-                discoveryService = new DiscoveryService(this, device, port, updatedPeers -> runOnUiThread(() -> {
+                discoveryService = new DiscoveryService(this, device, port, updatedPeers -> runOnUiThreadIfAlive(() -> {
                     peers = updatedPeers;
                     keepSelectedPeerOnline();
                     renderPeers();
                     renderSendState();
-                }), error -> runOnUiThread(() -> appendLog("发现失败：" + error.getMessage())), message -> runOnUiThread(() -> appendLog(message)));
+                }), error -> runOnUiThreadIfAlive(() -> appendLog("发现失败：" + error.getMessage())), message -> runOnUiThreadIfAlive(() -> appendLog(message)));
                 discoveryService.start();
 
                 try {
@@ -421,6 +449,8 @@ public class MainActivity extends Activity {
                             appendLog("协议 v2 配对状态：" + pairingStatusLabel(session.status));
                             if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
                                 v2StatusText.setText("双方已确认配对码；请点击“保存信任”。");
+                            } else if (session.status == V2PairingSessionStore.Status.COMPLETED) {
+                                refreshTrustedPeers();
                             }
                         }
 
@@ -433,20 +463,20 @@ public class MainActivity extends Activity {
                             v2StatusText.setText("协议 v2 配对错误：" + error.getMessage());
                             appendLog("协议 v2 配对错误：" + error);
                         }
-                    }, command -> runOnUiThread(command));
+                    }, this::runOnUiThreadIfAlive);
                     v2PairingController.start();
                 } catch (Exception v2Error) {
                     appendLog("协议 v2 安全配对未启动：" + v2Error);
                 }
 
-                runOnUiThread(() -> {
+                runOnUiThreadIfAlive(() -> {
                     deviceText.setText("名称：" + device.deviceName + "\n指纹：" + device.fingerprint + "\n端口：" + port);
                     renderSaveTarget();
                     statusText.setText("已启动，正在搜索附近设备。");
                     appendLog("Android 客户端已启动，端口 " + port);
                 });
             } catch (Exception error) {
-                runOnUiThread(() -> {
+                runOnUiThreadIfAlive(() -> {
                     statusText.setText("启动失败：" + error.getMessage());
                     appendLog("启动失败：" + error);
                     new AlertDialog.Builder(this)
@@ -464,7 +494,7 @@ public class MainActivity extends Activity {
         final boolean[] decision = new boolean[] { false };
         final boolean[] answered = new boolean[] { false };
 
-        runOnUiThread(() -> new AlertDialog.Builder(this)
+        runOnUiThreadIfAlive(() -> new AlertDialog.Builder(this)
             .setTitle("接收这个文件吗？")
             .setMessage("发送方：" + incoming.sender.deviceName
                 + "\n指纹：" + incoming.sender.fingerprint
@@ -584,7 +614,7 @@ public class MainActivity extends Activity {
     }
 
     private void onTransferEvent(TransferEvent event) {
-        runOnUiThread(() -> {
+        runOnUiThreadIfAlive(() -> {
             updateTransferProgress(event);
             appendLog(event.toDisplayText());
         });
@@ -655,7 +685,7 @@ public class MainActivity extends Activity {
                 String errorMessage = error.getMessage();
                 String failureStatus = "发送失败：" + errorMessage;
                 finalStatus = failureStatus;
-                runOnUiThread(() -> {
+                runOnUiThreadIfAlive(() -> {
                     setProgressColor(COLOR_DANGER);
                     progressTitleText.setText("发送失败");
                     progressSpeedText.setText(errorMessage);
@@ -663,12 +693,198 @@ public class MainActivity extends Activity {
                 });
             } finally {
                 String statusAfterTransfer = finalStatus;
-                runOnUiThread(() -> {
+                runOnUiThreadIfAlive(() -> {
                     transferActive = false;
                     renderSendState();
                     statusText.setText(statusAfterTransfer);
                 });
             }
+        });
+    }
+
+    private void refreshTrustedPeers() {
+        refreshTrustedPeers(null);
+    }
+
+    private void refreshTrustedPeers(String successMessage) {
+        if (activityDestroyed || trustedPeersStatusText == null) return;
+        trustedPeersStatusText.setText("正在刷新可信设备…");
+        try {
+            executor.execute(() -> {
+                try {
+                    List<V2TrustedPeerPersistence.TrustedPeerSummary> loaded = new ArrayList<>(
+                        V2TrustedPeerPersistence.listTrustedPeers(getApplicationContext())
+                    );
+                    loaded.sort((left, right) -> {
+                        boolean leftTrusted = "TRUSTED".equals(left.getTrustStatus().name());
+                        boolean rightTrusted = "TRUSTED".equals(right.getTrustStatus().name());
+                        int byTrust = Boolean.compare(rightTrusted, leftTrusted);
+                        if (byTrust != 0) return byTrust;
+                        int byUpdated = Long.compare(right.getUpdatedAtEpochMillis(), left.getUpdatedAtEpochMillis());
+                        if (byUpdated != 0) return byUpdated;
+                        return left.getDisplayName().compareToIgnoreCase(right.getDisplayName());
+                    });
+                    runOnUiThreadIfAlive(() -> {
+                        trustedPeers = loaded;
+                        renderTrustedPeers();
+                        trustedPeersStatusText.setText(successMessage == null
+                            ? trustedPeerCountText(loaded) : successMessage + " " + trustedPeerCountText(loaded));
+                    });
+                } catch (Exception error) {
+                    runOnUiThreadIfAlive(() -> {
+                        trustedPeersStatusText.setText("读取可信设备失败，请稍后重试。");
+                        appendLog("读取可信设备失败（" + error.getClass().getSimpleName() + "）。");
+                    });
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // Activity destruction can race with a user-triggered refresh. No UI callback is needed then.
+        }
+    }
+
+    private void renderTrustedPeers() {
+        if (trustedPeersLayout == null || activityDestroyed) return;
+        trustedPeersLayout.removeAllViews();
+        if (trustedPeers.isEmpty()) {
+            TextView empty = text("暂无可信设备。完成协议 v2 安全配对后，设备会显示在这里。", 13, COLOR_MUTED, Typeface.NORMAL);
+            empty.setPadding(dp(14), dp(14), dp(14), dp(14));
+            empty.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+            trustedPeersLayout.addView(empty, matchWrap());
+            return;
+        }
+
+        for (V2TrustedPeerPersistence.TrustedPeerSummary peer : trustedPeers) {
+            boolean trusted = "TRUSTED".equals(peer.getTrustStatus().name());
+            LinearLayout item = new LinearLayout(this);
+            item.setOrientation(LinearLayout.VERTICAL);
+            item.setPadding(dp(14), dp(14), dp(14), dp(14));
+            item.setBackground(roundedStroke(
+                trusted ? COLOR_PRIMARY_SOFT : COLOR_SURFACE_TINT,
+                dp(18),
+                trusted ? Color.rgb(153, 246, 228) : COLOR_BORDER,
+                1
+            ));
+
+            String name = displayNameOrFallback(peer.getDisplayName());
+            String state = trusted ? "已信任" : "信任已移除";
+            item.addView(text(name + "  ·  " + state, 15, trusted ? COLOR_TEXT : COLOR_MUTED, Typeface.BOLD), matchWrap());
+            TextView details = text(
+                "指纹：" + shortFingerprint(peer.getFingerprint())
+                    + "\n配对时间：" + formatTrustedPeerTime(peer.getPairedAtEpochMillis())
+                    + "\n最近变更：" + formatTrustedPeerTime(peer.getUpdatedAtEpochMillis())
+                    + (trusted && peer.getCanTransfer() ? "\n权限：可传输文件" : ""),
+                12,
+                COLOR_MUTED,
+                Typeface.NORMAL
+            );
+            details.setPadding(0, dp(6), 0, dp(10));
+            item.addView(details, matchWrap());
+
+            Button revokeButton = new Button(this);
+            revokeButton.setText(trusted ? "移除信任" : "信任已移除");
+            revokeButton.setAllCaps(false);
+            revokeButton.setEnabled(trusted);
+            styleButton(revokeButton, false);
+            if (trusted) {
+                revokeButton.setTextColor(COLOR_DANGER);
+                revokeButton.setOnClickListener(v -> confirmRevokeTrustedPeer(peer, revokeButton));
+            }
+            item.addView(revokeButton, matchWrap());
+
+            LinearLayout.LayoutParams params = matchWrap();
+            params.setMargins(0, 0, 0, dp(10));
+            trustedPeersLayout.addView(item, params);
+        }
+    }
+
+    private void confirmRevokeTrustedPeer(
+        V2TrustedPeerPersistence.TrustedPeerSummary peer,
+        Button revokeButton
+    ) {
+        if (activityDestroyed) return;
+        String name = displayNameOrFallback(peer.getDisplayName());
+        new AlertDialog.Builder(this)
+            .setTitle("移除设备信任？")
+            .setMessage("移除对“" + name + "”的信任后，必须重新完成安全配对才能恢复。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("移除信任", (dialog, which) -> revokeTrustedPeer(peer, revokeButton))
+            .show();
+    }
+
+    private void revokeTrustedPeer(
+        V2TrustedPeerPersistence.TrustedPeerSummary peer,
+        Button revokeButton
+    ) {
+        if (activityDestroyed) return;
+        revokeButton.setEnabled(false);
+        revokeButton.setText("正在移除…");
+        String name = displayNameOrFallback(peer.getDisplayName());
+        try {
+            executor.execute(() -> {
+                try {
+                    boolean revoked = V2TrustedPeerPersistence.revokeTrustedPeer(
+                        getApplicationContext(),
+                        peer.getDeviceId()
+                    );
+                    runOnUiThreadIfAlive(() -> {
+                        String result = revoked
+                            ? "已移除对“" + name + "”的信任。"
+                            : "该设备的信任状态已更新。";
+                        appendLog(result);
+                        refreshTrustedPeers(result);
+                    });
+                } catch (Exception error) {
+                    runOnUiThreadIfAlive(() -> {
+                        revokeButton.setEnabled(true);
+                        revokeButton.setText("移除信任");
+                        trustedPeersStatusText.setText("移除信任失败，请稍后重试。");
+                        appendLog("移除可信设备失败（" + error.getClass().getSimpleName() + "）。");
+                    });
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // Activity is already shutting down.
+        }
+    }
+
+    private static String trustedPeerCountText(
+        List<V2TrustedPeerPersistence.TrustedPeerSummary> peers
+    ) {
+        int trustedCount = 0;
+        for (V2TrustedPeerPersistence.TrustedPeerSummary peer : peers) {
+            if ("TRUSTED".equals(peer.getTrustStatus().name())) trustedCount += 1;
+        }
+        int revokedCount = peers.size() - trustedCount;
+        return revokedCount == 0
+            ? "共 " + trustedCount + " 台可信设备。"
+            : "可信 " + trustedCount + " 台，已移除 " + revokedCount + " 台。";
+    }
+
+    private static String displayNameOrFallback(String displayName) {
+        if (displayName == null || displayName.trim().isEmpty()) return "未命名设备";
+        return displayName.trim();
+    }
+
+    private static String shortFingerprint(String fingerprint) {
+        if (fingerprint == null || fingerprint.trim().isEmpty()) return "未知";
+        String value = fingerprint.trim();
+        if (value.length() <= 18) return value;
+        return value.substring(0, 8) + "…" + value.substring(value.length() - 8);
+    }
+
+    private static String formatTrustedPeerTime(long epochMillis) {
+        if (epochMillis <= 0L) return "未知";
+        return DateFormat.getDateTimeInstance(
+            DateFormat.MEDIUM,
+            DateFormat.SHORT,
+            Locale.getDefault()
+        ).format(new Date(epochMillis));
+    }
+
+    private void runOnUiThreadIfAlive(Runnable command) {
+        if (command == null || activityDestroyed) return;
+        runOnUiThread(() -> {
+            if (!activityDestroyed) command.run();
         });
     }
 
