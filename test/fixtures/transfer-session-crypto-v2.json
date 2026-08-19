@@ -1,0 +1,23 @@
+{
+  "context": "nearby-transfer/v2/file-content",
+  "senderDeviceId": "0123456789abcdef",
+  "receiverDeviceId": "fedcba9876543210",
+  "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+  "manifestSha256": "edd67730807ba7c58d7a924ea19ed7674f3911624e60a704f0665a6e5e788563",
+  "senderPrivateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VuBCIEIFhSqwUJxoupGjYUvwwDN52N9b0tFaSBY1G6TD7S+59x\n-----END PRIVATE KEY-----\n",
+  "senderPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEASYJd2LcTr3DTxEEiLQRRwcUszZ8ypRN7c1Cta0ovj1c=\n-----END PUBLIC KEY-----\n",
+  "receiverPrivateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VuBCIEIEAPj5h+pA5I6vWoWspGFFVkvfGBSQnxSvn+s/qBejBX\n-----END PRIVATE KEY-----\n",
+  "receiverPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAk18SBrp/tevxN7uOTj0j6i76WVP6RWOx4t/I2NioIQ4=\n-----END PUBLIC KEY-----\n",
+  "derivedKeyHex": "21c237f9d1a560044245f8fd85fa97bc890105cb4d4c7d76e50cc2c76860eeba",
+  "chunk": {
+    "path": "docs/跨平台-vector.txt",
+    "offset": 1048576,
+    "sequence": 7,
+    "plaintextUtf8": "Nearby Transfer v2 encrypted chunk — Node ↔ Android",
+    "nonceHex": "000102030405060708090a0b",
+    "plainLength": 55,
+    "aadHex": "0000001f6e65617262792d7472616e736665722f76322f66696c652d636f6e74656e74000000096368756e6b2d6161640000001641514944424155474277674a4367734d44513450454100000019646f63732fe8b7a8e5b9b3e58fb02d766563746f722e7478740000000000100000000000000000000700000037",
+    "ciphertextHex": "8d57b57a2dfaa248db4d145b4de4c47374d9b63d5eb22436502fca9c680b4c1387320f7b18c0ab71ef85ea3f6ed0797ca6099c79148916",
+    "authTagHex": "b7c6d7812427b8cfb33484cca5389b7c"
+  }
+}

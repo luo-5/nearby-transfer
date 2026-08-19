@@ -1,0 +1,102 @@
+{
+  "fixtureVersion": 1,
+  "validationNow": 1760000001000,
+  "vectors": {
+    "transferManifest": {
+      "type": "transfer-manifest",
+      "message": {
+        "app": "nearby-transfer",
+        "protocolVersion": 2,
+        "type": "transfer-manifest",
+        "manifest": {
+          "app": "nearby-transfer",
+          "protocolVersion": 2,
+          "type": "transfer-manifest",
+          "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "conflictStrategy": "auto-rename",
+          "entries": [
+            {
+              "kind": "directory",
+              "path": "资料"
+            },
+            {
+              "kind": "file",
+              "path": "资料/hello.txt",
+              "size": 12,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "totalFiles": 1,
+          "totalBytes": 12
+        },
+        "senderDeviceId": "8fa1d28f6686c3eb",
+        "receiverDeviceId": "b4153ead60ea8430",
+        "senderEphemeralPublicKey": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+        "issuedAt": 1760000000000,
+        "expiresAt": 1760000300000,
+        "signature": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-Pw"
+      },
+      "canonicalJson": "{\"app\":\"nearby-transfer\",\"expiresAt\":1760000300000,\"issuedAt\":1760000000000,\"manifest\":{\"app\":\"nearby-transfer\",\"conflictStrategy\":\"auto-rename\",\"entries\":[{\"kind\":\"directory\",\"path\":\"资料\"},{\"kind\":\"file\",\"path\":\"资料/hello.txt\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":12}],\"protocolVersion\":2,\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"totalBytes\":12,\"totalFiles\":1,\"type\":\"transfer-manifest\"},\"protocolVersion\":2,\"receiverDeviceId\":\"b4153ead60ea8430\",\"senderDeviceId\":\"8fa1d28f6686c3eb\",\"senderEphemeralPublicKey\":\"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\",\"signature\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-Pw\",\"type\":\"transfer-manifest\"}",
+      "signingPayload": "{\"app\":\"nearby-transfer\",\"expiresAt\":1760000300000,\"issuedAt\":1760000000000,\"manifest\":{\"app\":\"nearby-transfer\",\"conflictStrategy\":\"auto-rename\",\"entries\":[{\"kind\":\"directory\",\"path\":\"资料\"},{\"kind\":\"file\",\"path\":\"资料/hello.txt\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":12}],\"protocolVersion\":2,\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"totalBytes\":12,\"totalFiles\":1,\"type\":\"transfer-manifest\"},\"protocolVersion\":2,\"receiverDeviceId\":\"b4153ead60ea8430\",\"senderDeviceId\":\"8fa1d28f6686c3eb\",\"senderEphemeralPublicKey\":\"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\",\"type\":\"transfer-manifest\"}"
+    },
+    "transferDecision": {
+      "type": "transfer-decision",
+      "message": {
+        "app": "nearby-transfer",
+        "protocolVersion": 2,
+        "type": "transfer-decision",
+        "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "senderDeviceId": "b4153ead60ea8430",
+        "receiverDeviceId": "8fa1d28f6686c3eb",
+        "decision": "accepted",
+        "issuedAt": 1760000000100,
+        "expiresAt": 1760000300100,
+        "signature": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-fw"
+      },
+      "canonicalJson": "{\"app\":\"nearby-transfer\",\"decision\":\"accepted\",\"expiresAt\":1760000300100,\"issuedAt\":1760000000100,\"protocolVersion\":2,\"receiverDeviceId\":\"8fa1d28f6686c3eb\",\"senderDeviceId\":\"b4153ead60ea8430\",\"signature\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-fw\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-decision\"}",
+      "signingPayload": "{\"app\":\"nearby-transfer\",\"decision\":\"accepted\",\"expiresAt\":1760000300100,\"issuedAt\":1760000000100,\"protocolVersion\":2,\"receiverDeviceId\":\"8fa1d28f6686c3eb\",\"senderDeviceId\":\"b4153ead60ea8430\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-decision\"}"
+    },
+    "transferCompleteSuccess": {
+      "type": "transfer-complete",
+      "message": {
+        "app": "nearby-transfer",
+        "protocolVersion": 2,
+        "type": "transfer-complete",
+        "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "senderDeviceId": "8fa1d28f6686c3eb",
+        "receiverDeviceId": "b4153ead60ea8430",
+        "status": "success",
+        "diagnostic": "success",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bytes": 12,
+        "sequence": 1,
+        "issuedAt": 1760000000200,
+        "expiresAt": 1760000300200,
+        "signature": "gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp-goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2-vw"
+      },
+      "canonicalJson": "{\"app\":\"nearby-transfer\",\"bytes\":12,\"diagnostic\":\"success\",\"expiresAt\":1760000300200,\"issuedAt\":1760000000200,\"protocolVersion\":2,\"receiverDeviceId\":\"b4153ead60ea8430\",\"senderDeviceId\":\"8fa1d28f6686c3eb\",\"sequence\":1,\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"signature\":\"gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp-goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2-vw\",\"status\":\"success\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-complete\"}",
+      "signingPayload": "{\"app\":\"nearby-transfer\",\"bytes\":12,\"diagnostic\":\"success\",\"expiresAt\":1760000300200,\"issuedAt\":1760000000200,\"protocolVersion\":2,\"receiverDeviceId\":\"b4153ead60ea8430\",\"senderDeviceId\":\"8fa1d28f6686c3eb\",\"sequence\":1,\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"status\":\"success\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-complete\"}"
+    },
+    "transferCompleteFailure": {
+      "type": "transfer-complete",
+      "message": {
+        "app": "nearby-transfer",
+        "protocolVersion": 2,
+        "type": "transfer-complete",
+        "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+        "senderDeviceId": "8fa1d28f6686c3eb",
+        "receiverDeviceId": "b4153ead60ea8430",
+        "status": "failed",
+        "diagnostic": "hash-mismatch",
+        "sha256": null,
+        "bytes": 12,
+        "sequence": 1,
+        "issuedAt": 1760000000300,
+        "expiresAt": 1760000300300,
+        "signature": "wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t_g4eLj5OXm5-jp6uvs7e7v8PHy8_T19vf4-fr7_P3-_w"
+      },
+      "canonicalJson": "{\"app\":\"nearby-transfer\",\"bytes\":12,\"diagnostic\":\"hash-mismatch\",\"expiresAt\":1760000300300,\"issuedAt\":1760000000300,\"protocolVersion\":2,\"receiverDeviceId\":\"b4153ead60ea8430\",\"senderDeviceId\":\"8fa1d28f6686c3eb\",\"sequence\":1,\"sha256\":null,\"signature\":\"wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t_g4eLj5OXm5-jp6uvs7e7v8PHy8_T19vf4-fr7_P3-_w\",\"status\":\"failed\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-complete\"}",
+      "signingPayload": "{\"app\":\"nearby-transfer\",\"bytes\":12,\"diagnostic\":\"hash-mismatch\",\"expiresAt\":1760000300300,\"issuedAt\":1760000000300,\"protocolVersion\":2,\"receiverDeviceId\":\"b4153ead60ea8430\",\"senderDeviceId\":\"8fa1d28f6686c3eb\",\"sequence\":1,\"sha256\":null,\"status\":\"failed\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-complete\"}"
+    }
+  }
+}
