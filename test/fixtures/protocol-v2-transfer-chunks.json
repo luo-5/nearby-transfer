@@ -1,0 +1,20 @@
+{
+  "format": {
+    "magicAscii": "NTV2CHNK",
+    "version": 1,
+    "headerBytes": 48,
+    "maxFrameBytes": 1052770,
+    "byteOrder": "big-endian"
+  },
+  "vector": {
+    "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "relativePath": "docs/跨平台-vector.txt",
+    "offset": 1048576,
+    "sequence": 7,
+    "plainLength": 55,
+    "nonceHex": "000102030405060708090a0b",
+    "authTagHex": "b7c6d7812427b8cfb33484cca5389b7c",
+    "ciphertextHex": "8d57b57a2dfaa248db4d145b4de4c47374d9b63d5eb22436502fca9c680b4c1387320f7b18c0ab71ef85ea3f6ed0797ca6099c79148916",
+    "frameHex": "4e54563243484e4b01000030000000b2001600190000000000100000000000000000000700000037000000370c10000041514944424155474277674a4367734d445134504541646f63732fe8b7a8e5b9b3e58fb02d766563746f722e747874000102030405060708090a0bb7c6d7812427b8cfb33484cca5389b7c8d57b57a2dfaa248db4d145b4de4c47374d9b63d5eb22436502fca9c680b4c1387320f7b18c0ab71ef85ea3f6ed0797ca6099c79148916"
+  }
+}
