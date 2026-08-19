@@ -5,11 +5,16 @@ const { loadOrCreateDevice, updateDeviceConfig, toPublicDevice } = require('./co
 const { Discovery } = require('./core/discovery');
 const { TransferServer } = require('./core/server');
 const { sendFile } = require('./core/transfer');
+const { TrustedPeerStore } = require('./v2/trusted-peer-store');
+const { PairingSessionStore } = require('./v2/pairing-session-store');
+const { createDesktopPairingApi, registerPairingIpcHandlers } = require('./v2/desktop-pairing-api');
 
 let mainWindow = null;
 let device = null;
 let discovery = null;
 let transferServer = null;
+let trustedPeerStore = null;
+let pairingSessionStore = null;
 let saveDirectory = null;
 let selectedFilePath = null;
 
@@ -41,6 +46,14 @@ app.on('before-quit', () => {
   }
   if (transferServer) {
     transferServer.stop();
+  }
+  if (pairingSessionStore) {
+    pairingSessionStore.close();
+    pairingSessionStore = null;
+  }
+  if (trustedPeerStore) {
+    trustedPeerStore.close();
+    trustedPeerStore = null;
   }
 });
 
@@ -233,7 +246,14 @@ async function sendFileToPeer(deviceId, filePath) {
 }
 
 async function startCore() {
-  device = loadOrCreateDevice(app.getPath('userData'));
+  const userDataDir = app.getPath('userData');
+  device = loadOrCreateDevice(userDataDir);
+  trustedPeerStore = new TrustedPeerStore(userDataDir);
+  pairingSessionStore = new PairingSessionStore(userDataDir);
+  registerPairingIpcHandlers(
+    ipcMain,
+    createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore })
+  );
   setSaveDirectory(device.saveDirectory || app.getPath('downloads'), false);
   transferServer = new TransferServer({
     device,

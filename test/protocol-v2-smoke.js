@@ -7,11 +7,15 @@ const path = require('path');
 const { canonicalJson } = require('../src/v2/canonical-json');
 const {
   assertValidPairingOffer,
+  assertValidPairingConfirmation,
   createPairingOffer,
+  createPairingConfirmation,
   derivePairingCode,
   pairingCodeTranscript,
   signPairingOffer,
-  verifyPairingOffer
+  signPairingConfirmation,
+  verifyPairingOffer,
+  verifyPairingConfirmation
 } = require('../src/v2/pairing');
 const { createKeyPair, createX25519KeyPair, fingerprintFor } = require('../src/core/crypto');
 
@@ -52,7 +56,7 @@ function testPairingVector() {
   assert.match(vector.expectedCode, /^\d{6}$/);
 }
 
-function testSignedPairingOffer() {
+function testSignedPairingOfferAndConfirmation() {
   const sender = createDevice('Windows workstation');
   const offer = createPairingOffer({
     device: sender,
@@ -67,9 +71,24 @@ function testSignedPairingOffer() {
   assert.strictEqual(verifyPairingOffer(altered, signature), false);
   assert.throws(() => assertValidPairingOffer(Object.assign({}, offer, { pairingId: 'short' })), /Pairing ID/);
   assert.throws(() => createPairingOffer({ device: sender, capabilities: ['transfer', 'transfer'] }), /duplicates/);
+
+  const confirmation = createPairingConfirmation({
+    pairingId: offer.pairingId,
+    device: sender,
+    pairingCode: '042069',
+    issuedAt: offer.issuedAt + 1
+  });
+  const confirmationSignature = signPairingConfirmation(confirmation, sender.signingPrivateKey);
+  assert.strictEqual(verifyPairingConfirmation(confirmation, confirmationSignature, sender.signingPublicKey), true);
+  assert.strictEqual(verifyPairingConfirmation(
+    Object.assign({}, confirmation, { pairingCode: '042070' }),
+    confirmationSignature,
+    sender.signingPublicKey
+  ), false);
+  assert.throws(() => assertValidPairingConfirmation(Object.assign({}, confirmation, { pairingCode: '42069' })), /code/);
 }
 
 testCanonicalJson();
 testPairingVector();
-testSignedPairingOffer();
+testSignedPairingOfferAndConfirmation();
 console.log('protocol v2 smoke tests passed');

@@ -18,6 +18,7 @@ const { fingerprintFor } = require('../core/crypto');
 const DEVICE_ID_PATTERN = /^[a-f0-9]{16}$/;
 const PAIRING_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const CAPABILITY_PATTERN = /^[a-z][a-z0-9-]*$/;
+const PAIRING_CODE_PATTERN = /^[0-9]{6}$/;
 const PAIRING_CODE_DOMAIN = 'nearby-transfer/v2/pairing-code\0';
 
 function publicIdentity(device) {
@@ -86,6 +87,20 @@ function createPairingOffer({ device, capabilities = [], pairingId = createPairi
   return offer;
 }
 
+function createPairingConfirmation({ pairingId, device, pairingCode, issuedAt = Date.now() }) {
+  const confirmation = {
+    app: APP_ID,
+    protocolVersion: PROTOCOL_VERSION,
+    type: MESSAGE_TYPES.PAIRING_CONFIRM,
+    pairingId,
+    issuedAt,
+    deviceId: publicIdentity(device).deviceId,
+    pairingCode
+  };
+  assertValidPairingConfirmation(confirmation);
+  return confirmation;
+}
+
 function signPairingOffer(offer, privateKeyPem) {
   assertValidPairingOffer(offer);
   return crypto.sign(
@@ -98,15 +113,25 @@ function signPairingOffer(offer, privateKeyPem) {
 function verifyPairingOffer(offer, signature) {
   try {
     assertValidPairingOffer(offer);
-    if (typeof signature !== 'string' || signature.length === 0 || signature.length > 512) {
-      return false;
-    }
-    return crypto.verify(
-      null,
-      Buffer.from(pairingOfferSigningPayload(offer), 'utf8'),
-      crypto.createPublicKey(offer.identity.signingPublicKey),
-      Buffer.from(signature, 'base64')
-    );
+    return verifySignedPayload(pairingOfferSigningPayload(offer), signature, offer.identity.signingPublicKey);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function signPairingConfirmation(confirmation, privateKeyPem) {
+  assertValidPairingConfirmation(confirmation);
+  return crypto.sign(
+    null,
+    Buffer.from(pairingConfirmationSigningPayload(confirmation), 'utf8'),
+    crypto.createPrivateKey(privateKeyPem)
+  ).toString('base64');
+}
+
+function verifyPairingConfirmation(confirmation, signature, signingPublicKey) {
+  try {
+    assertValidPairingConfirmation(confirmation);
+    return verifySignedPayload(pairingConfirmationSigningPayload(confirmation), signature, signingPublicKey);
   } catch (_error) {
     return false;
   }
@@ -130,6 +155,28 @@ function assertValidPairingOffer(offer) {
   return offer;
 }
 
+function assertValidPairingConfirmation(confirmation) {
+  if (!confirmation || typeof confirmation !== 'object' || Array.isArray(confirmation)) {
+    throw new TypeError('Pairing confirmation must be an object');
+  }
+  if (confirmation.app !== APP_ID || confirmation.protocolVersion !== PROTOCOL_VERSION || confirmation.type !== MESSAGE_TYPES.PAIRING_CONFIRM) {
+    throw new TypeError('Pairing confirmation has an unsupported protocol envelope');
+  }
+  if (!PAIRING_ID_PATTERN.test(confirmation.pairingId || '')) {
+    throw new TypeError('Pairing ID must be a 16-byte base64url value');
+  }
+  if (!Number.isSafeInteger(confirmation.issuedAt) || confirmation.issuedAt <= 0) {
+    throw new TypeError('Pairing confirmation issue time must be a positive safe integer');
+  }
+  if (!DEVICE_ID_PATTERN.test(confirmation.deviceId || '')) {
+    throw new TypeError('Pairing confirmation device ID is invalid');
+  }
+  if (typeof confirmation.pairingCode !== 'string' || confirmation.pairingCode.length !== PAIRING_CODE_DIGITS || !PAIRING_CODE_PATTERN.test(confirmation.pairingCode)) {
+    throw new TypeError('Pairing confirmation code is invalid');
+  }
+  return confirmation;
+}
+
 function pairingOfferSigningPayload(offer) {
   assertValidPairingOffer(offer);
   return canonicalJson({
@@ -140,6 +187,19 @@ function pairingOfferSigningPayload(offer) {
     issuedAt: offer.issuedAt,
     identity: publicIdentity(offer.identity),
     capabilities: normalizeCapabilities(offer.capabilities)
+  });
+}
+
+function pairingConfirmationSigningPayload(confirmation) {
+  assertValidPairingConfirmation(confirmation);
+  return canonicalJson({
+    app: confirmation.app,
+    protocolVersion: confirmation.protocolVersion,
+    type: confirmation.type,
+    pairingId: confirmation.pairingId,
+    issuedAt: confirmation.issuedAt,
+    deviceId: confirmation.deviceId,
+    pairingCode: confirmation.pairingCode
   });
 }
 
@@ -186,6 +246,18 @@ function normalizeCapabilities(capabilities) {
   return normalized.slice().sort();
 }
 
+function verifySignedPayload(payload, signature, signingPublicKey) {
+  if (typeof signature !== 'string' || signature.length === 0 || signature.length > 512 ||
+      typeof signingPublicKey !== 'string' || signingPublicKey.length === 0 || signingPublicKey.length > MAX_PUBLIC_KEY_LENGTH) {
+    return false;
+  }
+  const key = crypto.createPublicKey(signingPublicKey);
+  if (key.asymmetricKeyType !== 'ed25519') {
+    return false;
+  }
+  return crypto.verify(null, Buffer.from(payload, 'utf8'), key, Buffer.from(signature, 'base64'));
+}
+
 function isBoundedText(value, maxLength) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength;
 }
@@ -193,12 +265,17 @@ function isBoundedText(value, maxLength) {
 module.exports = {
   assertValidPublicIdentity,
   assertValidPairingOffer,
+  assertValidPairingConfirmation,
   createPairingId,
   createPairingOffer,
+  createPairingConfirmation,
   derivePairingCode,
   pairingCodeTranscript,
   pairingOfferSigningPayload,
+  pairingConfirmationSigningPayload,
   publicIdentity,
   signPairingOffer,
-  verifyPairingOffer
+  signPairingConfirmation,
+  verifyPairingOffer,
+  verifyPairingConfirmation
 };

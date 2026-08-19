@@ -42,9 +42,13 @@ schema. The first schemas are:
 - `shared_libraries` and `library_grants`: desktop-only directory configuration
   and per-peer permissions.
 
-The initial trusted-peer schema is implemented in `src/v2/trusted-peer-store.js`; it stores public peer identities and grants only. Private identity keys remain in platform-appropriate protected storage where
-possible; database rows contain references or encrypted material, never UI
-exports.
+The initial trusted-peer and pairing-session schemas are implemented in
+`src/v2/trusted-peer-store.js` and `src/v2/pairing-session-store.js`. The
+pairing service limits active sessions, expires them after five minutes, and
+accepts remote confirmation only after signature, identity, code, and freshness
+validation. Private identity keys remain in platform-appropriate protected
+storage where possible; database rows contain references or encrypted material,
+never UI exports.
 
 ## Compatibility and rollout
 
