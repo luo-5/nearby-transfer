@@ -8,6 +8,8 @@ const { sendFile } = require('./core/transfer');
 const { TrustedPeerStore } = require('./v2/trusted-peer-store');
 const { PairingSessionStore } = require('./v2/pairing-session-store');
 const { createDesktopPairingApi, registerPairingIpcHandlers } = require('./v2/desktop-pairing-api');
+const { TransferJobStore } = require('./v2/transfer-job-store');
+const { createDesktopTransferJobApi, registerTransferJobIpcHandlers } = require('./v2/desktop-transfer-job-api');
 
 let mainWindow = null;
 let device = null;
@@ -15,6 +17,7 @@ let discovery = null;
 let transferServer = null;
 let trustedPeerStore = null;
 let pairingSessionStore = null;
+let transferJobStore = null;
 let saveDirectory = null;
 let selectedFilePath = null;
 
@@ -50,6 +53,10 @@ app.on('before-quit', () => {
   if (pairingSessionStore) {
     pairingSessionStore.close();
     pairingSessionStore = null;
+  }
+  if (transferJobStore) {
+    transferJobStore.close();
+    transferJobStore = null;
   }
   if (trustedPeerStore) {
     trustedPeerStore.close();
@@ -250,9 +257,14 @@ async function startCore() {
   device = loadOrCreateDevice(userDataDir);
   trustedPeerStore = new TrustedPeerStore(userDataDir);
   pairingSessionStore = new PairingSessionStore(userDataDir);
+  transferJobStore = new TransferJobStore(userDataDir, trustedPeerStore);
   registerPairingIpcHandlers(
     ipcMain,
     createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore })
+  );
+  registerTransferJobIpcHandlers(
+    ipcMain,
+    createDesktopTransferJobApi({ transferJobStore })
   );
   setSaveDirectory(device.saveDirectory || app.getPath('downloads'), false);
   transferServer = new TransferServer({

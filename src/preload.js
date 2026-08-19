@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld('lanTransfer', {
     confirm: (pairingId) => ipcRenderer.invoke('v2:confirm-pairing', pairingId),
     cancel: (pairingId) => ipcRenderer.invoke('v2:cancel-pairing', pairingId)
   }),
+  transferJobs: Object.freeze({
+    list: () => ipcRenderer.invoke('v2:list-transfer-jobs'),
+    pause: (taskId) => ipcRenderer.invoke('v2:pause-transfer-job', taskId),
+    resume: (taskId) => ipcRenderer.invoke('v2:resume-transfer-job', taskId),
+    retry: (taskId) => ipcRenderer.invoke('v2:retry-transfer-job', taskId),
+    cancel: (taskId) => ipcRenderer.invoke('v2:cancel-transfer-job', taskId)
+  }),
   onState: (callback) => ipcRenderer.on('state', (_event, state) => callback(state)),
   onPeers: (callback) => ipcRenderer.on('peers', (_event, peers) => callback(peers)),
   onTransferEvent: (callback) => ipcRenderer.on('transfer-event', (_event, transfer) => callback(transfer))
