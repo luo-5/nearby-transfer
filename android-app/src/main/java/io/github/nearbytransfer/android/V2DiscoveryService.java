@@ -8,13 +8,16 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Inet4Address;
 import java.net.MulticastSocket;
+import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -519,6 +522,7 @@ final class V2DiscoveryService implements Closeable {
         private MulticastSocket socket;
         private WifiManager.MulticastLock multicastLock;
         private InetAddress group;
+        private NetworkInterface wifiInterface;
 
         AndroidMulticastTransport(Context context) {
             this.context = context;
@@ -538,7 +542,13 @@ final class V2DiscoveryService implements Closeable {
                 socket.setReuseAddress(true);
                 socket.bind(new InetSocketAddress(DISCOVERY_PORT));
                 socket.setTimeToLive(1);
-                socket.joinGroup(group);
+                wifiInterface = findWifiInterface();
+                if (wifiInterface != null) {
+                    socket.setNetworkInterface(wifiInterface);
+                    socket.joinGroup(new InetSocketAddress(group, DISCOVERY_PORT), wifiInterface);
+                } else {
+                    socket.joinGroup(group);
+                }
             } catch (Exception error) {
                 close();
                 throw error;
@@ -559,6 +569,9 @@ final class V2DiscoveryService implements Closeable {
                 // outbound multicast socket. Keep the receive socket alive and retry once.
                 try (MulticastSocket outbound = new MulticastSocket()) {
                     outbound.setTimeToLive(1);
+                    if (wifiInterface != null) {
+                        outbound.setNetworkInterface(wifiInterface);
+                    }
                     outbound.send(packet);
                 } catch (IOException fallbackError) {
                     fallbackError.addSuppressed(primaryError);
@@ -590,6 +603,32 @@ final class V2DiscoveryService implements Closeable {
                 multicastLock.release();
             }
             multicastLock = null;
+            wifiInterface = null;
+        }
+
+        private static NetworkInterface findWifiInterface() throws SocketException {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            if (interfaces == null) {
+                return null;
+            }
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface candidate = interfaces.nextElement();
+                String name = candidate.getName();
+                if (name == null || !(name.startsWith("wlan") || name.startsWith("wifi"))) {
+                    continue;
+                }
+                if (!candidate.isUp() || candidate.isLoopback()) {
+                    continue;
+                }
+                Enumeration<InetAddress> addresses = candidate.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress address = addresses.nextElement();
+                    if (address instanceof Inet4Address && !address.isLoopbackAddress() && !address.isLinkLocalAddress()) {
+                        return candidate;
+                    }
+                }
+            }
+            return null;
         }
     }
 }
