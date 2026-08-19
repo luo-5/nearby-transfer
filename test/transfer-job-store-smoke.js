@@ -22,6 +22,9 @@ const TASK_D = Buffer.alloc(16, 4).toString('base64url');
 const TASK_E = Buffer.alloc(16, 5).toString('base64url');
 const TASK_F = Buffer.alloc(16, 6).toString('base64url');
 const TASK_G = Buffer.alloc(16, 7).toString('base64url');
+const TASK_H = Buffer.alloc(16, 8).toString('base64url');
+const TASK_I = Buffer.alloc(16, 9).toString('base64url');
+const TASK_J = Buffer.alloc(16, 10).toString('base64url');
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
 
@@ -259,6 +262,28 @@ try {
     UPDATE transfer_job_sources SET sha256 = 'corrupt' WHERE task_id = ? AND relative_path = 'photos/one.jpg'
   `).run(TASK_E);
 
+  jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_H), sources: sourceMappings(), now: 1760000000027 });
+  jobs.database.prepare(`
+    DELETE FROM transfer_job_sources
+    WHERE task_id = ? AND relative_path = 'photos/two.jpg'
+  `).run(TASK_H);
+
+  const incomingWithUnexpectedSources = jobs.receivePending({
+    peerDeviceId: peer.deviceId,
+    manifest: manifest(TASK_I),
+    now: 1760000000028
+  });
+  assert.strictEqual(incomingWithUnexpectedSources.sourceMappingStatus, SOURCE_MAPPING_STATUS.NOT_APPLICABLE);
+  jobs.database.prepare(`
+    INSERT INTO transfer_job_sources (task_id, relative_path, source_path, expected_bytes, sha256)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(TASK_I, 'photos/one.jpg', path.join(tempDir, 'unexpected', 'one.jpg'), 5, HASH_A);
+
+  jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_J), sources: sourceMappings(), now: 1760000000029 });
+  jobs.database.prepare(`
+    UPDATE transfer_jobs SET manifest_json = ? WHERE task_id = ?
+  `).run('{"manifest":"truncated"', TASK_J);
+
 
   jobs.close();
   jobs = null;
@@ -287,6 +312,26 @@ try {
   const quarantinedSnapshot = JSON.parse(quarantined.snapshot_json);
   assert.strictEqual(quarantinedSnapshot.sources.length, 3);
   assert.strictEqual(quarantinedSnapshot.sources.some((source) => source.sha256 === 'corrupt'), true);
+  assert.strictEqual(reopened.get(TASK_H), null);
+  const missingSourceQuarantine = reopened.database.prepare(`
+    SELECT snapshot_json, reason FROM transfer_job_corruptions WHERE task_id = ?
+  `).get(TASK_H);
+  assert.match(missingSourceQuarantine.reason, /source list does not match/);
+  assert.strictEqual(JSON.parse(missingSourceQuarantine.snapshot_json).sources.length, 2);
+
+  assert.strictEqual(reopened.get(TASK_I), null);
+  const incomingSourceQuarantine = reopened.database.prepare(`
+    SELECT snapshot_json, reason FROM transfer_job_corruptions WHERE task_id = ?
+  `).get(TASK_I);
+  assert.match(incomingSourceQuarantine.reason, /incoming transfer must not contain local source mappings/);
+  assert.strictEqual(JSON.parse(incomingSourceQuarantine.snapshot_json).job.direction, 'incoming');
+
+  assert.strictEqual(reopened.get(TASK_J), null);
+  const invalidManifestQuarantine = reopened.database.prepare(`
+    SELECT snapshot_json, reason FROM transfer_job_corruptions WHERE task_id = ?
+  `).get(TASK_J);
+  assert.match(invalidManifestQuarantine.reason, /Unexpected end|JSON|manifest/i);
+  assert.strictEqual(JSON.parse(invalidManifestQuarantine.snapshot_json).job.manifest_json, '{"manifest":"truncated"');
   assert.strictEqual(reopened.get(TASK_B).retryCount, 1);
 
   const legacyOutgoing = reopened.get(TASK_F);
