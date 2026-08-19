@@ -14,7 +14,9 @@ import java.net.URLDecoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,61 +35,174 @@ final class HttpTransferServer {
     private static final long PROGRESS_MIN_MS = 250;
 
     private final DeviceConfig device;
-    private SaveTarget saveTarget;
+    private volatile SaveTarget saveTarget;
     private final IncomingDecision incomingDecision;
     private final TransferEventSink eventSink;
     private final Map<String, PendingTransfer> pending = new ConcurrentHashMap<>();
-    private final ExecutorService workers = Executors.newCachedThreadPool();
-    private final ScheduledExecutorService cleanup = Executors.newSingleThreadScheduledExecutor();
+    private final RuntimeFactory runtimeFactory;
+    private final Object lifecycleLock = new Object();
 
     private volatile boolean running;
-    private ServerSocket serverSocket;
-    private int port;
+    private volatile ServerSocket serverSocket;
+    private volatile ExecutorService workers;
+    private volatile ScheduledExecutorService cleanup;
+    private volatile int port;
 
     HttpTransferServer(DeviceConfig device, SaveTarget saveTarget, IncomingDecision incomingDecision, TransferEventSink eventSink) {
+        this(device, saveTarget, incomingDecision, eventSink, RuntimeFactory.DEFAULT);
+    }
+
+    HttpTransferServer(
+        DeviceConfig device,
+        SaveTarget saveTarget,
+        IncomingDecision incomingDecision,
+        TransferEventSink eventSink,
+        RuntimeFactory runtimeFactory
+    ) {
         this.device = device;
         this.saveTarget = saveTarget;
         this.incomingDecision = incomingDecision;
         this.eventSink = eventSink;
+        this.runtimeFactory = runtimeFactory;
     }
 
     int start(int requestedPort) throws IOException {
-        serverSocket = new ServerSocket(requestedPort);
-        port = serverSocket.getLocalPort();
-        running = true;
-        workers.execute(this::acceptLoop);
-        cleanup.scheduleAtFixedRate(this::cleanupPending, 30, 30, TimeUnit.SECONDS);
-        return port;
+        synchronized (lifecycleLock) {
+            if (running) {
+                return port;
+            }
+
+            ServerSocket createdSocket = null;
+            ExecutorService createdWorkers = null;
+            ScheduledExecutorService createdCleanup = null;
+            try {
+                createdSocket = runtimeFactory.openServerSocket(requestedPort);
+                createdWorkers = runtimeFactory.newWorkerExecutor();
+                createdCleanup = runtimeFactory.newCleanupExecutor();
+
+                serverSocket = createdSocket;
+                workers = createdWorkers;
+                cleanup = createdCleanup;
+                port = createdSocket.getLocalPort();
+                running = true;
+
+                ServerSocket acceptSocket = createdSocket;
+                ExecutorService acceptWorkers = createdWorkers;
+                createdWorkers.execute(() -> acceptLoop(acceptSocket, acceptWorkers));
+                createdCleanup.scheduleAtFixedRate(this::cleanupPending, 30, 30, TimeUnit.SECONDS);
+                return port;
+            } catch (Throwable error) {
+                running = false;
+                port = 0;
+                serverSocket = null;
+                workers = null;
+                cleanup = null;
+                closeQuietly(createdSocket);
+                shutdownNowQuietly(createdCleanup);
+                shutdownNowQuietly(createdWorkers);
+                if (error instanceof IOException) {
+                    throw (IOException) error;
+                }
+                if (error instanceof RuntimeException) {
+                    throw (RuntimeException) error;
+                }
+                if (error instanceof Error) {
+                    throw (Error) error;
+                }
+                throw new IOException("Unable to start HTTP transfer server", error);
+            }
+        }
     }
 
     void stop() {
-        running = false;
+        List<PendingTransfer> transfersToAbort;
+        synchronized (lifecycleLock) {
+            running = false;
+            port = 0;
+
+            ServerSocket socketToClose = serverSocket;
+            ExecutorService workersToStop = workers;
+            ScheduledExecutorService cleanupToStop = cleanup;
+            serverSocket = null;
+            workers = null;
+            cleanup = null;
+
+            closeQuietly(socketToClose);
+            shutdownNowQuietly(cleanupToStop);
+            shutdownNowQuietly(workersToStop);
+            transfersToAbort = removeAllPending();
+        }
+
+        for (PendingTransfer transfer : transfersToAbort) {
+            abortQuietly(transfer);
+        }
+    }
+
+    private static void closeQuietly(ServerSocket socket) {
+        if (socket == null) {
+            return;
+        }
         try {
-            if (serverSocket != null) {
-                serverSocket.close();
-            }
+            socket.close();
         } catch (IOException ignored) {
         }
-        workers.shutdownNow();
-        cleanup.shutdownNow();
+    }
+
+    private static void closeQuietly(Socket socket) {
+        if (socket == null) {
+            return;
+        }
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void shutdownNowQuietly(ExecutorService executor) {
+        if (executor == null) {
+            return;
+        }
+        try {
+            executor.shutdownNow();
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private List<PendingTransfer> removeAllPending() {
+        List<PendingTransfer> removed = new ArrayList<>();
+        for (Map.Entry<String, PendingTransfer> entry : pending.entrySet()) {
+            PendingTransfer transfer = entry.getValue();
+            if (pending.remove(entry.getKey(), transfer)) {
+                removed.add(transfer);
+            }
+        }
+        return removed;
     }
 
     void setSaveTarget(SaveTarget saveTarget) {
         this.saveTarget = saveTarget;
     }
 
-    private void acceptLoop() {
-        while (running) {
+    private void acceptLoop(ServerSocket acceptSocket, ExecutorService acceptWorkers) {
+        while (isActiveRuntime(acceptSocket, acceptWorkers)) {
+            Socket socket = null;
             try {
-                Socket socket = serverSocket.accept();
+                socket = acceptSocket.accept();
                 socket.setSoTimeout(SOCKET_IDLE_TIMEOUT_MS);
-                workers.execute(() -> handleSocket(socket));
-            } catch (IOException error) {
-                if (running) {
+                Socket acceptedSocket = socket;
+                acceptWorkers.execute(() -> handleSocket(acceptedSocket));
+                socket = null;
+            } catch (IOException | RuntimeException error) {
+                closeQuietly(socket);
+                if (isActiveRuntime(acceptSocket, acceptWorkers)) {
                     eventSink.onTransferEvent(new TransferEvent("system", "system", "failed", "HTTP", 0, 0, error.getMessage()));
                 }
             }
         }
+    }
+
+    private boolean isActiveRuntime(ServerSocket expectedSocket, ExecutorService expectedWorkers) {
+        return running && serverSocket == expectedSocket && workers == expectedWorkers;
     }
 
     private void handleSocket(Socket socket) {
@@ -157,13 +272,14 @@ final class HttpTransferServer {
             senderJson.getString("fingerprint"),
             System.currentTimeMillis()
         );
+        SaveTarget requestSaveTarget = saveTarget;
         IncomingTransfer incoming = new IncomingTransfer(
             transferId,
             sender,
             safeName,
             fileJson.getLong("size"),
             fileJson.getString("sha256"),
-            saveTarget.displayPathFor(safeName)
+            requestSaveTarget.displayPathFor(safeName)
         );
 
         byte[] key = CryptoUtil.deriveTransferKey(device.encryptionPrivateKey, payload.getString("senderEphemeralPublicKey"), transferId);
@@ -174,8 +290,19 @@ final class HttpTransferServer {
             return;
         }
 
-        SaveTarget.PendingSave pendingSave = saveTarget.prepare(safeName);
-        pending.put(transferId, new PendingTransfer(System.currentTimeMillis(), key, sender, safeName, incoming.size, incoming.sha256, pendingSave));
+        SaveTarget.PendingSave pendingSave = requestSaveTarget.prepare(safeName);
+        PendingTransfer transfer = new PendingTransfer(System.currentTimeMillis(), key, sender, safeName, incoming.size, incoming.sha256, pendingSave);
+        boolean registered;
+        synchronized (lifecycleLock) {
+            registered = running && pending.putIfAbsent(transferId, transfer) == null;
+        }
+        if (!registered) {
+            abortQuietly(transfer);
+            String error = running ? "Transfer ID is already pending" : "Transfer server is stopping";
+            eventSink.onTransferEvent(new TransferEvent(transferId, "receive", "failed", safeName, 0, incoming.size, error));
+            respondJson(output, 409, jsonObject("accepted", false, "error", error));
+            return;
+        }
         eventSink.onTransferEvent(new TransferEvent(transferId, "receive", "accepted", safeName, 0, incoming.size, null));
         respondJson(output, 200, jsonObject("accepted", true, "transferId", transferId));
     }
@@ -320,14 +447,49 @@ final class HttpTransferServer {
     }
 
     private void cleanupPending() {
+        if (!running) {
+            return;
+        }
         long now = System.currentTimeMillis();
         for (Map.Entry<String, PendingTransfer> entry : pending.entrySet()) {
             PendingTransfer transfer = entry.getValue();
             if (now - transfer.createdAt > PENDING_TTL_MS && pending.remove(entry.getKey(), transfer)) {
-                transfer.pendingSave.abort();
-                eventSink.onTransferEvent(new TransferEvent(entry.getKey(), "receive", "failed", transfer.fileName, 0, transfer.size, "传输请求已过期"));
+                abortQuietly(transfer);
+                if (running) {
+                    eventSink.onTransferEvent(new TransferEvent(entry.getKey(), "receive", "failed", transfer.fileName, 0, transfer.size, "传输请求已过期"));
+                }
             }
         }
+    }
+
+    private static void abortQuietly(PendingTransfer transfer) {
+        try {
+            transfer.pendingSave.abort();
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    interface RuntimeFactory {
+        RuntimeFactory DEFAULT = new RuntimeFactory() {
+            @Override
+            public ServerSocket openServerSocket(int requestedPort) throws IOException {
+                return new ServerSocket(requestedPort);
+            }
+
+            @Override
+            public ExecutorService newWorkerExecutor() {
+                return Executors.newCachedThreadPool();
+            }
+
+            @Override
+            public ScheduledExecutorService newCleanupExecutor() {
+                return Executors.newSingleThreadScheduledExecutor();
+            }
+        };
+
+        ServerSocket openServerSocket(int requestedPort) throws IOException;
+        ExecutorService newWorkerExecutor();
+        ScheduledExecutorService newCleanupExecutor();
     }
 
     private static final class PendingTransfer {
