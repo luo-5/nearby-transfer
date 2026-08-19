@@ -25,6 +25,7 @@ async function main() {
     await testTraversalReservedNamesAndCaseCollisions(sandbox);
     await testSymlinkAndNonDirectoryRejection(sandbox);
     await testConcurrentPlanning(sandbox);
+    await testConcurrentCleanupToleratesDisappearingReservations(sandbox);
     await testCleanupBoundariesAndInjection(sandbox);
     console.log('receive target planner smoke test passed');
   } finally {
@@ -196,6 +197,31 @@ async function testConcurrentPlanning(sandbox) {
     cleanupReceiveStaging({ receiveRoot, taskId: TASK_B }),
     cleanupReceiveStaging({ receiveRoot, taskId: TASK_C })
   ]);
+}
+
+async function testConcurrentCleanupToleratesDisappearingReservations(sandbox) {
+  const receiveRoot = freshDirectory(sandbox, 'cleanup-race');
+  const reservationRoot = path.join(receiveRoot, RESERVATION_ROOT_NAME);
+  const reservationDirectory = path.join(reservationRoot, 'a'.repeat(64));
+  fs.mkdirSync(path.join(reservationDirectory, TASK_A), { recursive: true });
+
+  let removedAfterStat = false;
+  const injectedFs = {};
+  for (const method of ['mkdir', 'readdir', 'rename', 'rm', 'rmdir']) {
+    injectedFs[method] = (...args) => fs.promises[method](...args);
+  }
+  injectedFs.lstat = async (target) => {
+    const stat = await fs.promises.lstat(target);
+    if (!removedAfterStat && path.resolve(target) === path.resolve(reservationDirectory)) {
+      removedAfterStat = true;
+      await fs.promises.rm(reservationDirectory, { recursive: true, force: true });
+    }
+    return stat;
+  };
+
+  const cleanup = await cleanupReceiveStaging({ receiveRoot, taskId: TASK_A, fsPromises: injectedFs });
+  assert.strictEqual(removedAfterStat, true);
+  assert.deepStrictEqual(cleanup, { stagingRemoved: false, reservationsReleased: 0 });
 }
 
 async function testCleanupBoundariesAndInjection(sandbox) {

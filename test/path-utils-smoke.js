@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { safeFilename, uniqueDestinationPath } = require('../src/core/path-utils');
+const { ensureSafeDirectory, safeFilename, uniqueDestinationPath } = require('../src/core/path-utils');
 
 function main() {
   assert.strictEqual(safeFilename('../../secret.txt'), 'secret.txt');
@@ -34,6 +34,7 @@ function main() {
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-transfer-path-'));
   try {
+    assert.strictEqual(ensureSafeDirectory(directory), path.resolve(directory));
     fs.writeFileSync(path.join(directory, 'photo.jpg'), 'existing');
     fs.writeFileSync(path.join(directory, 'photo (1).jpg'), 'existing');
 
@@ -47,6 +48,17 @@ function main() {
     );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+
+  assert.throws(() => ensureSafeDirectory('relative/path'), /absolute/i);
+
+  const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-transfer-path-file-'));
+  try {
+    const file = path.join(tempParent, 'not-a-directory');
+    fs.writeFileSync(file, 'content');
+    assert.throws(() => ensureSafeDirectory(file), /directory/i);
+  } finally {
+    fs.rmSync(tempParent, { recursive: true, force: true });
   }
 }
 

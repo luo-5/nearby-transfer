@@ -301,15 +301,29 @@ async function releaseTaskReservations(receiveRoot, taskId, fsPromises) {
 async function removeOwnedReservation(reservationDirectory, taskId, fsPromises) {
   const stat = await lstatIfExists(reservationDirectory, fsPromises);
   if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) return false;
-  const names = await fsPromises.readdir(reservationDirectory);
-  if (names.length !== 1 || names[0] !== taskId) return false;
+  const names = await readdirIfExists(reservationDirectory, fsPromises);
+  if (!names || names.length !== 1 || names[0] !== taskId) return false;
   const owner = path.join(reservationDirectory, taskId);
   const ownerStat = await lstatIfExists(owner, fsPromises);
   if (!ownerStat || ownerStat.isSymbolicLink() || !ownerStat.isDirectory()) return false;
-  const ownerEntries = await fsPromises.readdir(owner);
-  if (ownerEntries.length !== 0) return false;
-  await fsPromises.rm(reservationDirectory, { recursive: true, force: false });
-  return true;
+  const ownerEntries = await readdirIfExists(owner, fsPromises);
+  if (!ownerEntries || ownerEntries.length !== 0) return false;
+  try {
+    await fsPromises.rm(reservationDirectory, { recursive: true, force: false });
+    return true;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function readdirIfExists(directory, fsPromises) {
+  try {
+    return await fsPromises.readdir(directory);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 async function hasWindowsEntry(directory, candidate, fsPromises) {

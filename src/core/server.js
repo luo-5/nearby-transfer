@@ -5,7 +5,7 @@ const path = require('path');
 const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const { DecryptFrameStream, deriveTransferKey, fingerprintFor, verifyTransferRequest } = require('./crypto');
-const { safeFilename, uniqueDestinationPath } = require('./path-utils');
+const { ensureSafeDirectory, safeFilename, uniqueDestinationPath } = require('./path-utils');
 
 const REQUEST_BODY_LIMIT = 1024 * 1024;
 const PENDING_TTL_MS = 5 * 60 * 1000;
@@ -20,7 +20,7 @@ const MAX_PENDING_TRANSFERS = 32;
 class TransferServer {
   constructor(options) {
     this.device = options.device;
-    this.saveDirectory = options.saveDirectory || process.cwd();
+    this.saveDirectory = ensureSafeDirectory(options.saveDirectory || process.cwd());
     this.onIncomingRequest = options.onIncomingRequest || (async () => ({ accepted: false }));
     this.onTransferEvent = options.onTransferEvent || (() => {});
     this.server = null;
@@ -39,7 +39,7 @@ class TransferServer {
       return Promise.resolve(this.port);
     }
 
-    fs.mkdirSync(this.saveDirectory, { recursive: true });
+    this.saveDirectory = ensureSafeDirectory(this.saveDirectory);
     this.server = http.createServer((request, response) => {
       this._handleRequest(request, response).catch((error) => {
         respondJson(response, 500, { ok: false, error: error.message });
@@ -71,8 +71,7 @@ class TransferServer {
   }
 
   setSaveDirectory(saveDirectory) {
-    fs.mkdirSync(saveDirectory, { recursive: true });
-    this.saveDirectory = saveDirectory;
+    this.saveDirectory = ensureSafeDirectory(saveDirectory);
   }
 
   async _handleRequest(request, response) {
@@ -197,7 +196,7 @@ class TransferServer {
     this.pending.delete(transferId);
     request.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, () => request.destroy(new Error('Upload timed out')));
 
-    const tempPath = `${pending.savePath}.part-${process.pid}-${Date.now()}`;
+    const tempPath = `${pending.savePath}.part-${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
     const hash = crypto.createHash('sha256');
     let received = 0;
     const shouldEmitProgress = createProgressLimiter();
@@ -226,23 +225,23 @@ class TransferServer {
     });
 
     try {
-      await pipeline(
-        request,
-        new DecryptFrameStream(pending.key),
-        progress,
-        fs.createWriteStream(tempPath, { flags: 'wx', highWaterMark: FILE_STREAM_CHUNK_BYTES })
-      );
-
-      const actualSha256 = hash.digest('hex');
+      const decrypted = new DecryptFrameStream(pending.key, pending.file.sha256, pending.file.size);
+      await pipeline(request, decrypted, progress, fs.createWriteStream(tempPath, {
+        flags: 'wx',
+        highWaterMark: FILE_STREAM_CHUNK_BYTES
+      }));
       if (received !== pending.file.size) {
-        throw new Error('Received file size does not match metadata');
+        throw new Error('Received file size does not match declared size');
       }
-      if (actualSha256 !== pending.file.sha256) {
-        throw new Error('SHA-256 verification failed');
+      const receivedHash = hash.digest('hex');
+      if (receivedHash !== pending.file.sha256) {
+        throw new Error('Received file hash does not match declared hash');
       }
-
-      const finalPath = uniqueDestinationPath(path.dirname(pending.savePath), path.basename(pending.savePath));
-      fs.renameSync(tempPath, finalPath);
+      const finalPath = commitTempFileWithoutOverwrite(
+        tempPath,
+        path.dirname(pending.savePath),
+        path.basename(pending.savePath)
+      );
       this.onTransferEvent({
         transferId,
         direction: 'receive',
@@ -253,9 +252,9 @@ class TransferServer {
         total: pending.file.size,
         savePath: finalPath
       });
-      respondJson(response, 200, { ok: true, sha256: actualSha256, path: finalPath });
+      respondJson(response, 200, { ok: true, sha256: receivedHash, path: finalPath });
     } catch (error) {
-      safeUnlink(tempPath);
+      safeRemove(tempPath);
       this.onTransferEvent({
         transferId,
         direction: 'receive',
@@ -271,29 +270,23 @@ class TransferServer {
     }
   }
 
-  _consumeTransferRequest(remoteAddress) {
-    const now = Date.now();
-    let window = this.requestWindows.get(remoteAddress);
-    if (!window || now - window.startedAt >= this.transferRequestWindowMs) {
-      window = { startedAt: now, count: 0 };
-      this.requestWindows.set(remoteAddress, window);
-    }
-
-    if (window.count >= this.transferRequestLimit) {
-      const remainingMs = Math.max(1, this.transferRequestWindowMs - (now - window.startedAt));
-      return { allowed: false, retryAfterSeconds: Math.ceil(remainingMs / 1000) };
-    }
-
-    window.count += 1;
-    return { allowed: true, retryAfterSeconds: 0 };
-  }
-
   _cleanupPending() {
     const now = Date.now();
     for (const [transferId, pending] of this.pending.entries()) {
-      if (now - pending.createdAt > PENDING_TTL_MS) {
-        this.pending.delete(transferId);
+      if (now - pending.createdAt <= PENDING_TTL_MS) {
+        continue;
       }
+      this.pending.delete(transferId);
+      this.onTransferEvent({
+        transferId,
+        direction: 'receive',
+        status: 'expired',
+        sender: pending.sender,
+        file: pending.file,
+        bytes: 0,
+        total: pending.file.size,
+        savePath: pending.savePath
+      });
     }
     for (const [remoteAddress, window] of this.requestWindows.entries()) {
       if (now - window.startedAt >= this.transferRequestWindowMs) {
@@ -301,51 +294,25 @@ class TransferServer {
       }
     }
   }
+
+  _consumeTransferRequest(remoteAddress) {
+    const now = Date.now();
+    let window = this.requestWindows.get(remoteAddress);
+    if (!window || now - window.startedAt >= this.transferRequestWindowMs) {
+      window = { startedAt: now, count: 0 };
+      this.requestWindows.set(remoteAddress, window);
+    }
+    if (window.count >= this.transferRequestLimit) {
+      const remainingMs = Math.max(1, this.transferRequestWindowMs - (now - window.startedAt));
+      return { allowed: false, retryAfterSeconds: Math.ceil(remainingMs / 1000) };
+    }
+    window.count += 1;
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
 }
 
 function positiveIntegerOption(value, fallback) {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
-
-function validateTransferRequest(payload) {
-  if (!payload || typeof payload !== 'object') {
-    return 'Invalid request body';
-  }
-  if (!payload.transferId || typeof payload.transferId !== 'string') {
-    return 'Missing transfer ID';
-  }
-  if (payload.protocolVersion !== 1) {
-    return 'Unsupported protocol version';
-  }
-  if (!payload.sender || typeof payload.sender !== 'object') {
-    return 'Missing sender metadata';
-  }
-  if (!payload.sender.deviceId || !payload.sender.deviceName || !payload.sender.fingerprint || !payload.sender.signingPublicKey) {
-    return 'Incomplete sender metadata';
-  }
-  if (!payload.file || typeof payload.file !== 'object') {
-    return 'Missing file metadata';
-  }
-  if (!payload.file.name || typeof payload.file.name !== 'string') {
-    return 'Missing file name';
-  }
-  if (!Number.isSafeInteger(payload.file.size) || payload.file.size < 0) {
-    return 'Invalid file size';
-  }
-  if (!/^[a-f0-9]{64}$/i.test(payload.file.sha256 || '')) {
-    return 'Invalid file hash';
-  }
-  if (!payload.senderEphemeralPublicKey || typeof payload.senderEphemeralPublicKey !== 'string') {
-    return 'Missing sender ephemeral public key';
-  }
-  if (!payload.signature || typeof payload.signature !== 'string') {
-    return 'Missing transfer request signature';
-  }
-  return null;
-}
-
-function deviceIdForSigningKey(signingPublicKey) {
-  return crypto.createHash('sha256').update(signingPublicKey).digest('hex').slice(0, 16);
 }
 
 function readJsonBody(request, limit) {
@@ -361,53 +328,129 @@ function readJsonBody(request, limit) {
       }
       chunks.push(chunk);
     });
-    request.on('error', reject);
     request.on('end', () => {
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-      } catch (_error) {
-        reject(new Error('Invalid JSON body'));
+      } catch (error) {
+        reject(error);
       }
     });
+    request.on('error', reject);
   });
 }
 
-function respondJson(response, statusCode, payload) {
-  if (response.headersSent) {
-    return;
+function validateTransferRequest(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return 'Invalid transfer request body';
   }
-  const body = Buffer.from(JSON.stringify(payload));
-  response.writeHead(statusCode, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': body.length
-  });
-  response.end(body);
+  if (payload.protocolVersion !== 1) {
+    return 'Unsupported protocol version';
+  }
+  if (!payload.transferId || typeof payload.transferId !== 'string') {
+    return 'Invalid transfer ID';
+  }
+  if (!payload.sender || typeof payload.sender !== 'object') {
+    return 'Invalid sender';
+  }
+  if (!payload.file || typeof payload.file !== 'object') {
+    return 'Invalid file';
+  }
+  if (!payload.file.name || typeof payload.file.name !== 'string') {
+    return 'Invalid file name';
+  }
+  if (!Number.isSafeInteger(payload.file.size) || payload.file.size < 0) {
+    return 'Invalid file size';
+  }
+  if (typeof payload.file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(payload.file.sha256)) {
+    return 'Invalid file hash';
+  }
+  if (typeof payload.senderEphemeralPublicKey !== 'string' || !payload.senderEphemeralPublicKey) {
+    return 'Invalid sender ephemeral public key';
+  }
+  if (typeof payload.signature !== 'string' || !payload.signature) {
+    return 'Invalid signature';
+  }
+  if (!payload.sender.deviceId || typeof payload.sender.deviceId !== 'string') {
+    return 'Invalid sender device ID';
+  }
+  if (!payload.sender.deviceName || typeof payload.sender.deviceName !== 'string') {
+    return 'Invalid sender device name';
+  }
+  if (!payload.sender.fingerprint || typeof payload.sender.fingerprint !== 'string') {
+    return 'Invalid sender fingerprint';
+  }
+  if (!payload.sender.signingPublicKey || typeof payload.sender.signingPublicKey !== 'string') {
+    return 'Invalid sender signing public key';
+  }
+  return null;
+}
+
+function deviceIdForSigningKey(signingPublicKey) {
+  const hash = crypto.createHash('sha256').update(signingPublicKey).digest('hex');
+  return hash.slice(0, 16);
+}
+
+function safeRemove(target) {
+  try {
+    fs.rmSync(target, { force: true });
+  } catch (_) {
+    // ignore cleanup errors
+  }
+}
+
+function commitTempFileWithoutOverwrite(tempPath, directory, fileName) {
+  while (true) {
+    const candidate = uniqueDestinationPath(directory, fileName);
+    try {
+      fs.linkSync(tempPath, candidate);
+      safeRemove(tempPath);
+      return candidate;
+    } catch (error) {
+      if (error && error.code === 'EEXIST') {
+        continue;
+      }
+      if (!error || !['EACCES', 'ENOTSUP', 'EPERM', 'EXDEV'].includes(error.code)) {
+        throw error;
+      }
+    }
+
+    try {
+      fs.copyFileSync(tempPath, candidate, fs.constants.COPYFILE_EXCL);
+      safeRemove(tempPath);
+      return candidate;
+    } catch (error) {
+      if (error && error.code === 'EEXIST') {
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 function createProgressLimiter() {
-  let bytesSinceLastEvent = 0;
-  let lastEventAt = 0;
-  return (deltaBytes, currentBytes, totalBytes) => {
-    bytesSinceLastEvent += deltaBytes;
+  let lastBytes = 0;
+  let lastEmit = 0;
+  return (deltaBytes, totalBytes, fileSize) => {
     const now = Date.now();
-    const isComplete = totalBytes > 0 && currentBytes >= totalBytes;
-    if (isComplete || bytesSinceLastEvent >= PROGRESS_MIN_BYTES || now - lastEventAt >= PROGRESS_MIN_MS) {
-      bytesSinceLastEvent = 0;
-      lastEventAt = now;
+    if (totalBytes === fileSize) {
+      lastBytes = totalBytes;
+      lastEmit = now;
+      return true;
+    }
+    if (totalBytes - lastBytes >= PROGRESS_MIN_BYTES || now - lastEmit >= PROGRESS_MIN_MS) {
+      lastBytes = totalBytes;
+      lastEmit = now;
       return true;
     }
     return false;
   };
 }
 
-function safeUnlink(filePath) {
-  try {
-    fs.unlinkSync(filePath);
-  } catch (_error) {
-    // Ignore cleanup failures for temporary files.
-  }
+function respondJson(response, statusCode, payload) {
+  response.statusCode = statusCode;
+  response.setHeader('content-type', 'application/json; charset=utf-8');
+  response.end(JSON.stringify(payload));
 }
 
-module.exports = {
-  TransferServer
-};
+module.exports = TransferServer;
+module.exports.TransferServer = TransferServer;

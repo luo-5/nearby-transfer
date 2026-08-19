@@ -1,9 +1,9 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
-const fs = require('fs');
 const path = require('path');
 const { loadOrCreateDevice, updateDeviceConfig, toPublicDevice } = require('./core/config');
 const { Discovery } = require('./core/discovery');
 const { TransferServer } = require('./core/server');
+const { ensureSafeDirectory } = require('./core/path-utils');
 const { sendFile } = require('./core/transfer');
 const { TrustedPeerStore } = require('./v2/trusted-peer-store');
 const { PairingSessionStore } = require('./v2/pairing-session-store');
@@ -282,7 +282,7 @@ async function startCore() {
     ipcMain,
     createDesktopTransferJobApi({ transferJobStore })
   );
-  setSaveDirectory(device.saveDirectory || app.getPath('downloads'), false);
+  initializeSaveDirectory();
   transferServer = new TransferServer({
     device,
     saveDirectory,
@@ -314,12 +314,25 @@ function toPublicV2Peer(peer) {
   };
 }
 
-function setSaveDirectory(nextDirectory, persist) {
-  if (!nextDirectory || typeof nextDirectory !== 'string') {
-    throw new Error('Invalid save directory');
+function initializeSaveDirectory() {
+  const preferredDirectory = device.saveDirectory || getDefaultSaveDirectory();
+  try {
+    setSaveDirectory(preferredDirectory, false);
+  } catch (error) {
+    const fallbackDirectory = getDefaultSaveDirectory();
+    setSaveDirectory(fallbackDirectory, false);
+    emitTransferEvent({
+      transferId: 'save-directory-recovery',
+      direction: 'system',
+      status: 'failed',
+      error: '保存目录不可用，已临时切换到默认下载目录：' + toUserError(error.message)
+    });
   }
-  fs.mkdirSync(nextDirectory, { recursive: true });
-  saveDirectory = nextDirectory;
+}
+
+function setSaveDirectory(nextDirectory, persist) {
+  const resolvedDirectory = ensureSafeDirectory(nextDirectory);
+  saveDirectory = resolvedDirectory;
   if (transferServer) {
     transferServer.setSaveDirectory(saveDirectory);
   }
@@ -404,7 +417,12 @@ function toUserError(message) {
     ['Receiver rejected the transfer', '对方已拒绝接收'],
     ['Request timed out', '请求超时'],
     ['Upload timed out', '上传超时'],
-    ['Peer returned invalid JSON', '对方返回了无效响应']
+    ['Peer returned invalid JSON', '对方返回了无效响应'],
+    ['Invalid directory', '保存目录无效'],
+    ['Directory must be absolute', '保存目录必须是绝对路径'],
+    ['Directory path must point to a directory', '保存路径必须是目录'],
+    ['Directory path must not be a symbolic link', '保存目录不能是符号链接'],
+    ['Directory path must resolve to itself', '保存目录不能通过链接跳转']
   ]);
   return translations.get(message) || message || '操作失败';
 }

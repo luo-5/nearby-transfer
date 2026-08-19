@@ -32,6 +32,8 @@ async function main() {
   const source = Buffer.from('local encrypted transfer smoke test'.repeat(2048));
   fs.writeFileSync(sourcePath, source);
 
+  await assertSymlinkSendSourceRejected({ sender, receiver, sourcePath, tempRoot });
+
   const events = [];
   const server = new TransferServer({
     device: receiver,
@@ -61,12 +63,59 @@ async function main() {
     assert(events.some((event) => event.status === 'completed'));
 
     await assertSenderDeviceIdRejected({ sender, port });
+    await assertStrictTransferRequestValidation({ sender, port });
     await assertOversizedUploadRejected({ sender, receiver, port, saveDir, events });
+    await assertConcurrentSameNameTransfers({ sender, receiver, port, saveDir });
     await assertTransferRequestRateLimit({ sender, receiver, saveDir });
     await assertPendingTransferLimits({ sender, receiver, saveDir });
   } finally {
     server.stop();
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function assertSymlinkSendSourceRejected(options) {
+  const symlinkPath = path.join(options.tempRoot, 'sample-link.txt');
+  try {
+    fs.symlinkSync(options.sourcePath, symlinkPath, 'file');
+  } catch (error) {
+    if (['EACCES', 'EINVAL', 'ENOENT', 'ENOSYS', 'ENOTSUP', 'EPERM'].includes(error.code)) {
+      console.warn(`Skipping symlink send source assertion: ${error.code}`);
+      return;
+    }
+    throw error;
+  }
+
+  await assert.rejects(
+    () => sendFile({
+      device: options.sender,
+      filePath: symlinkPath,
+      peer: {
+        deviceId: options.receiver.deviceId,
+        deviceName: options.receiver.deviceName,
+        host: '127.0.0.1',
+        port: 9,
+        fingerprint: options.receiver.fingerprint,
+        encryptionPublicKey: options.receiver.encryptionPublicKey,
+        signingPublicKey: options.receiver.signingPublicKey
+      }
+    }),
+    /Symlinked files cannot be sent/
+  );
+}
+
+async function assertStrictTransferRequestValidation(options) {
+  for (const [transferId, mutate, expectedError] of [
+    ['unsupported-protocol-smoke-test', (payload) => { payload.protocolVersion = 2; }, 'Unsupported protocol version'],
+    ['fractional-size-smoke-test', (payload) => { payload.file.size = 0.5; }, 'Invalid file size'],
+    ['unsafe-size-smoke-test', (payload) => { payload.file.size = Number.MAX_SAFE_INTEGER + 1; }, 'Invalid file size']
+  ]) {
+    const payload = createSignedRequest(options.sender, transferId);
+    mutate(payload);
+    payload.signature = signTransferRequest(payload, options.sender.signingPrivateKey);
+    const result = await postJsonWithStatus(options.port, '/transfer/request', payload);
+    assert.strictEqual(result.statusCode, 400);
+    assert.strictEqual(result.body.error, expectedError);
   }
 }
 
@@ -130,6 +179,43 @@ async function assertOversizedUploadRejected(options) {
   assert(options.events.some((event) => event.transferId === transferId && event.status === 'failed'));
 }
 
+async function assertConcurrentSameNameTransfers(options) {
+  const first = createEncryptedTransfer(options, 'same-name-transfer-1', 'same-name.txt', Buffer.from('first'));
+  const second = createEncryptedTransfer(options, 'same-name-transfer-2', 'same-name.txt', Buffer.from('second'));
+  const decisions = await Promise.all([
+    postJson(options.port, '/transfer/request', first.requestPayload),
+    postJson(options.port, '/transfer/request', second.requestPayload)
+  ]);
+  assert(decisions.every((decision) => decision.accepted === true));
+
+  const results = await Promise.all([
+    postEncrypted(options.port, `/transfer/upload/${first.requestPayload.transferId}`, first.content, first.key),
+    postEncrypted(options.port, `/transfer/upload/${second.requestPayload.transferId}`, second.content, second.key)
+  ]);
+  assert(results.every((result) => result.statusCode === 200));
+  assert.strictEqual(new Set(results.map((result) => result.body.path)).size, 2);
+
+  const received = results.map((result) => fs.readFileSync(result.body.path).toString('utf8')).sort();
+  assert.deepStrictEqual(received, ['first', 'second']);
+}
+
+function createEncryptedTransfer(options, transferId, fileName, content) {
+  const ephemeral = createX25519KeyPair();
+  const requestPayload = createSignedRequest(options.sender, transferId);
+  requestPayload.file = {
+    name: fileName,
+    size: content.length,
+    sha256: crypto.createHash('sha256').update(content).digest('hex')
+  };
+  requestPayload.senderEphemeralPublicKey = ephemeral.publicKey;
+  requestPayload.signature = signTransferRequest(requestPayload, options.sender.signingPrivateKey);
+  return {
+    content,
+    requestPayload,
+    key: deriveTransferKey(ephemeral.privateKey, options.receiver.encryptionPublicKey, transferId)
+  };
+}
+
 async function assertTransferRequestRateLimit(options) {
   let promptCount = 0;
   const server = new TransferServer({
@@ -155,6 +241,10 @@ async function assertTransferRequestRateLimit(options) {
     assert.strictEqual(blocked.body.error, 'Too many transfer requests');
     assert(Number(blocked.headers['retry-after']) >= 1);
     assert.strictEqual(promptCount, 2);
+    for (let index = 0; index < 1000; index += 1) {
+      assert.strictEqual(server._consumeTransferRequest('flood-test').allowed, index < 2);
+    }
+    assert.deepStrictEqual(server.requestWindows.get('flood-test').count, 2);
   } finally {
     server.stop();
   }

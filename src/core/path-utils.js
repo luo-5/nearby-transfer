@@ -18,6 +18,42 @@ function safeFilename(fileName) {
   return WINDOWS_RESERVED_BASENAME.test(windowsBasename) ? `_${safe}` : safe;
 }
 
+function ensureSafeDirectory(directory) {
+  if (typeof directory !== 'string' || !directory.trim()) {
+    throw new Error('Invalid directory');
+  }
+
+  if (!path.isAbsolute(directory)) {
+    throw new Error('Directory must be absolute');
+  }
+
+  const absolute = path.resolve(directory);
+  let entry;
+  try {
+    entry = fs.lstatSync(absolute);
+  } catch (error) {
+    if (error && error.code !== 'ENOENT') {
+      throw error;
+    }
+    fs.mkdirSync(absolute, { recursive: true });
+    entry = fs.lstatSync(absolute);
+  }
+
+  if (!entry.isDirectory()) {
+    throw new Error('Directory path must point to a directory');
+  }
+  if (entry.isSymbolicLink()) {
+    throw new Error('Directory path must not be a symbolic link');
+  }
+
+  const real = fs.realpathSync.native(absolute);
+  if (!samePath(real, absolute)) {
+    throw new Error('Directory path must resolve to itself');
+  }
+
+  return absolute;
+}
+
 function uniqueDestinationPath(directory, fileName) {
   const parsed = path.parse(safeFilename(fileName));
   let candidate = path.join(directory, parsed.base);
@@ -32,7 +68,15 @@ function uniqueDestinationPath(directory, fileName) {
   return candidate;
 }
 
+function samePath(left, right) {
+  if (process.platform === 'win32') {
+    return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+  }
+  return path.resolve(left) === path.resolve(right);
+}
+
 module.exports = {
+  ensureSafeDirectory,
   safeFilename,
   uniqueDestinationPath
 };
