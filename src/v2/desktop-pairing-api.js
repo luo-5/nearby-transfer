@@ -16,6 +16,12 @@ function createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore
   return Object.freeze({
     listTrustedPeers: () => trustedPeerStore.listTrustedPeers().map(toPublicPeer),
     revokeTrustedPeer: (deviceId) => trustedPeerStore.revokeTrustedPeer(deviceId),
+    updateTrustedPeerDisplayName: (deviceId, displayName) =>
+      toPublicPeerResult(trustedPeerStore.updateTrustedPeerDisplayName(deviceId, displayName)),
+    updateTrustedPeerPermissions: (deviceId, permissions) =>
+      toPublicPeerResult(trustedPeerStore.updateTrustedPeerPermissions(deviceId, permissions)),
+    updateTrustedPeer: (deviceId, options) =>
+      toPublicPeerResult(trustedPeerStore.updateTrustedPeer(deviceId, options)),
     listPairingSessions: () => pairingSessionStore.listActive().map(toPublicSession),
     startPairing: ({ capabilities = [] } = {}) => {
       const started = pairingSessionStore.startOutgoing({
@@ -72,7 +78,17 @@ function registerPairingIpcHandlers(ipcMain, api) {
   }
   ipcMain.handle('v2:list-trusted-peers', () => api.listTrustedPeers());
   ipcMain.handle('v2:revoke-trusted-peer', (_event, deviceId) => api.revokeTrustedPeer(deviceId));
+  ipcMain.handle('v2:update-trusted-peer-display-name', (_event, deviceId, displayName) =>
+    api.updateTrustedPeerDisplayName(deviceId, displayName));
+  ipcMain.handle('v2:update-trusted-peer-permissions', (_event, deviceId, permissions) =>
+    api.updateTrustedPeerPermissions(deviceId, permissions));
+  ipcMain.handle('v2:update-trusted-peer', (_event, deviceId, options) =>
+    api.updateTrustedPeer(deviceId, options));
   ipcMain.handle('v2:list-pairing-sessions', () => api.listPairingSessions());
+}
+
+function toPublicPeerResult(peer) {
+  return peer ? toPublicPeer(peer) : peer;
 }
 
 function toPublicPeer(peer) {

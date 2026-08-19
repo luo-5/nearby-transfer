@@ -544,7 +544,9 @@ function initializeV2Pairing() {
 function getPairingApi() {
   const api = window.lanTransfer && window.lanTransfer.pairing;
   if (!api || typeof api.listDiscoveredPeers !== 'function' || typeof api.listTrustedPeers !== 'function' ||
-      typeof api.revokeTrustedPeer !== 'function' || typeof api.listSessions !== 'function' || typeof api.start !== 'function' ||
+      typeof api.revokeTrustedPeer !== 'function' || typeof api.updateTrustedPeerDisplayName !== 'function' ||
+      typeof api.updateTrustedPeerPermissions !== 'function' || typeof api.updateTrustedPeer !== 'function' ||
+      typeof api.listSessions !== 'function' || typeof api.start !== 'function' ||
       typeof api.confirm !== 'function' || typeof api.complete !== 'function' || typeof api.cancel !== 'function') {
     return null;
   }
@@ -781,11 +783,17 @@ function renderV2TrustedPeers() {
   elements.v2TrustedPeers.replaceChildren(...peers.map((peer) => {
     const card = document.createElement('article');
     card.className = 'pairing-card trusted-peer-card';
+    const isBusy = pairingState.busyTrustedPeerIds.has(peer.deviceId);
     const details = document.createElement('div');
     details.className = 'pairing-details';
-    const name = document.createElement('strong');
+    const name = document.createElement('input');
+    name.type = 'text';
     name.className = 'pairing-name';
-    name.textContent = peer.displayName || peerLabel(peer);
+    name.value = peer.displayName || peerLabel(peer);
+    name.maxLength = 128;
+    name.placeholder = peerLabel(peer);
+    name.setAttribute('aria-label', `设备“${peerLabel(peer)}”的显示名`);
+    name.disabled = !pairingApi || isBusy;
     const device = document.createElement('span');
     device.className = 'pairing-meta';
     device.textContent = `设备：${peerLabel(peer)}`;
@@ -798,21 +806,82 @@ function renderV2TrustedPeers() {
     const lastSeen = document.createElement('span');
     lastSeen.className = 'pairing-meta';
     lastSeen.textContent = `最近活动：${formatLastSeen(peer.lastSeen)}`;
-    details.append(name, device, fingerprint, permissions, lastSeen);
+    const permissionControls = document.createElement('div');
+    permissionControls.className = 'pairing-details';
+    const permissionInputs = new Map();
+    for (const [key, labelText] of [
+      ['transfer', '允许传输'],
+      ['libraryRead', '允许读取媒体库'],
+      ['libraryUpload', '允许写入媒体库']
+    ]) {
+      const label = document.createElement('label');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = peer.permissions && peer.permissions[key] === true;
+      checkbox.disabled = !pairingApi || isBusy || (key === 'libraryUpload' && !(peer.permissions && peer.permissions.libraryRead === true));
+      checkbox.setAttribute('aria-label', labelText);
+      if (key === 'libraryRead') {
+        checkbox.addEventListener('change', () => {
+          const upload = permissionInputs.get('libraryUpload');
+          if (!checkbox.checked && upload) {
+            upload.checked = false;
+            upload.disabled = true;
+          } else if (upload) {
+            upload.disabled = !checkbox.checked || isBusy;
+          }
+        });
+      }
+      label.append(checkbox, document.createTextNode(` ${labelText}`));
+      permissionInputs.set(key, checkbox);
+      permissionControls.append(label);
+    }
+    details.append(name, device, fingerprint, permissions, lastSeen, permissionControls);
 
     const actions = document.createElement('div');
     actions.className = 'pairing-button-row';
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'primary pairing-button';
+    save.disabled = !pairingApi || isBusy;
+    save.textContent = isBusy ? '正在保存...' : '保存修改';
+    save.addEventListener('click', () => saveV2TrustedPeer(peer, {
+      displayName: name,
+      permissions: permissionInputs
+    }));
     const revoke = document.createElement('button');
-    const isBusy = pairingState.busyTrustedPeerIds.has(peer.deviceId);
     revoke.type = 'button';
     revoke.className = 'secondary pairing-button pairing-cancel';
     revoke.disabled = !pairingApi || isBusy;
     revoke.textContent = isBusy ? '正在撤销...' : '撤销信任';
     revoke.addEventListener('click', () => revokeV2TrustedPeer(peer));
-    actions.append(revoke);
+    actions.append(save, revoke);
     card.append(details, actions);
     return card;
   }));
+}
+
+async function saveV2TrustedPeer(peer, controls) {
+  const pairingApi = getPairingApi();
+  if (!pairingApi || pairingState.busyTrustedPeerIds.has(peer.deviceId)) return;
+
+  pairingState.busyTrustedPeerIds.add(peer.deviceId);
+  setPairingMessage(`正在保存“${peer.displayName || peerLabel(peer)}”的受信设置...`);
+  renderV2Pairing();
+  try {
+    const displayName = controls.displayName.value.trim();
+    const permissions = Object.fromEntries(
+      ['transfer', 'libraryRead', 'libraryUpload'].map((key) => [key, controls.permissions.get(key).checked])
+    );
+    const updated = await pairingApi.updateTrustedPeer(peer.deviceId, { displayName, permissions });
+    if (!updated) throw new Error('该设备已不在受信列表中');
+    await refreshV2Pairing({ silent: true });
+    if (!pairingState.messageIsError) setPairingMessage(`已保存“${displayName}”的受信设置。`);
+  } catch (error) {
+    setPairingMessage(`保存受信设备失败：${errorMessage(error)}`, true);
+  } finally {
+    pairingState.busyTrustedPeerIds.delete(peer.deviceId);
+    renderV2Pairing();
+  }
 }
 
 async function revokeV2TrustedPeer(peer) {

@@ -133,6 +133,95 @@ function testIdentityChangeDetectionIsAtomic() {
   });
 }
 
+function testManagedPeerUpdatesAreAtomicAndSafe() {
+  withTempDirectory('nearby-transfer-peer-updates-', (tempDir) => {
+    const identity = createIdentity('Managed peer');
+    withTrustedPeerStore(tempDir, (store) => {
+      const original = store.upsertTrustedPeer({
+        identity,
+        displayName: 'Original name',
+        permissions: { transfer: false, libraryRead: true },
+        pairedAt: 1760000015000,
+        lastSeen: 1760000015000
+      });
+
+      const renamed = store.updateTrustedPeerDisplayName(identity.deviceId, ' Renamed peer ');
+      assert.strictEqual(renamed.displayName, 'Renamed peer');
+      assert.deepStrictEqual(renamed.permissions, original.permissions);
+      assert.ok(renamed.updatedAt > original.updatedAt);
+
+      const permissionsUpdated = store.updateTrustedPeerPermissions(identity.deviceId, { libraryUpload: true });
+      assert.deepStrictEqual(permissionsUpdated.permissions, {
+        transfer: false,
+        libraryRead: true,
+        libraryUpload: true
+      });
+      assert.ok(permissionsUpdated.updatedAt > renamed.updatedAt);
+
+      const transferUpdated = store.updateTrustedPeerPermissions(identity.deviceId, { transfer: true });
+      assert.strictEqual(transferUpdated.permissions.transfer, true);
+      assert.strictEqual(transferUpdated.permissions.libraryRead, true);
+      assert.strictEqual(transferUpdated.permissions.libraryUpload, true);
+
+      const atomicUpdated = store.updateTrustedPeer(identity.deviceId, {
+        displayName: 'Atomic peer',
+        permissions: { transfer: false, libraryRead: true, libraryUpload: true }
+      });
+      assert.strictEqual(atomicUpdated.displayName, 'Atomic peer');
+      assert.deepStrictEqual(atomicUpdated.permissions, {
+        transfer: false,
+        libraryRead: true,
+        libraryUpload: true
+      });
+      assert.throws(
+        () => store.updateTrustedPeer(identity.deviceId, {
+          displayName: 'Should not persist',
+          permissions: { libraryRead: false, libraryUpload: true }
+        }),
+        /requires library read/
+      );
+      assert.strictEqual(store.getTrustedPeer(identity.deviceId).displayName, 'Atomic peer');
+      assert.throws(() => store.updateTrustedPeer(identity.deviceId, {}), /must contain a field/);
+
+      assert.throws(
+        () => store.updateTrustedPeerPermissions(identity.deviceId, { libraryRead: false }),
+        /requires library read/
+      );
+      assert.deepStrictEqual(store.getTrustedPeer(identity.deviceId).permissions, atomicUpdated.permissions);
+
+      assert.throws(
+        () => store.updateTrustedPeerPermissions(identity.deviceId, { transfer: 'yes' }),
+        /Invalid peer permission/
+      );
+      assert.throws(
+        () => store.updateTrustedPeerDisplayName(identity.deviceId, '   '),
+        /display name is invalid/
+      );
+      assert.throws(
+        () => store.updateTrustedPeerDisplayName(identity.deviceId, 'x'.repeat(129)),
+        /display name is invalid/
+      );
+      assert.strictEqual(store.updateTrustedPeerPermissions('abcdef0123456789', { transfer: false }), false);
+      assert.strictEqual(store.updateTrustedPeerDisplayName('abcdef0123456789', 'Unused'), false);
+
+      assert.strictEqual(store.revokeTrustedPeer(identity.deviceId, 1760000016000), true);
+      assert.strictEqual(store.updateTrustedPeerPermissions(identity.deviceId, { transfer: false }), false);
+      assert.strictEqual(store.updateTrustedPeerDisplayName(identity.deviceId, 'Revoked update'), false);
+      assert.strictEqual(store.getTrustedPeer(identity.deviceId, { includeRevoked: true }).displayName, 'Atomic peer');
+    });
+
+    withTrustedPeerStore(tempDir, (store) => {
+      const persisted = store.getTrustedPeer(identity.deviceId, { includeRevoked: true });
+      assert.strictEqual(persisted.displayName, 'Atomic peer');
+      assert.deepStrictEqual(persisted.permissions, {
+        transfer: false,
+        libraryRead: true,
+        libraryUpload: true
+      });
+    });
+  });
+}
+
 function testCorruptDatabaseRecovery() {
   withTempDirectory('nearby-transfer-peer-corrupt-', (tempDir) => {
     const databasePath = path.join(tempDir, DATABASE_FILE);
@@ -225,6 +314,7 @@ function testInputValidation() {
 
 testPersistenceAndMetadata();
 testIdentityChangeDetectionIsAtomic();
+testManagedPeerUpdatesAreAtomicAndSafe();
 testCorruptDatabaseRecovery();
 testLegacySchemaMigration();
 testInputValidation();

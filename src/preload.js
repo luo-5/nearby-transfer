@@ -13,6 +13,12 @@ contextBridge.exposeInMainWorld('lanTransfer', {
     listDiscoveredPeers: () => ipcRenderer.invoke('v2:list-discovered-peers'),
     listTrustedPeers: () => ipcRenderer.invoke('v2:list-trusted-peers'),
     revokeTrustedPeer: (deviceId) => ipcRenderer.invoke('v2:revoke-trusted-peer', deviceId),
+    updateTrustedPeerDisplayName: (deviceId, displayName) =>
+      ipcRenderer.invoke('v2:update-trusted-peer-display-name', deviceId, displayName),
+    updateTrustedPeerPermissions: (deviceId, permissions) =>
+      ipcRenderer.invoke('v2:update-trusted-peer-permissions', deviceId, permissions),
+    updateTrustedPeer: (deviceId, options) =>
+      ipcRenderer.invoke('v2:update-trusted-peer', deviceId, options),
     listSessions: () => ipcRenderer.invoke('v2:list-pairing-sessions'),
     start: (request) => ipcRenderer.invoke('v2:start-network-pairing', request),
     confirm: (pairingId) => ipcRenderer.invoke('v2:confirm-network-pairing', pairingId),

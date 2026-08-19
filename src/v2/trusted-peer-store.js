@@ -104,6 +104,56 @@ class TrustedPeerStore {
     return rows.map(rowToPeer);
   }
 
+  updateTrustedPeerDisplayName(deviceId, displayName) {
+    return this.updateTrustedPeer(deviceId, { displayName });
+  }
+
+  updateTrustedPeerPermissions(deviceId, permissions) {
+    return this.updateTrustedPeer(deviceId, { permissions });
+  }
+
+  updateTrustedPeer(deviceId, options) {
+    assertDeviceId(deviceId);
+    assertPlainObject(options, 'Trusted peer update');
+    assertAllowedKeys(options, ['displayName', 'permissions'], 'trusted peer update');
+    if (Object.keys(options).length === 0) {
+      throw new TypeError('Trusted peer update must contain a field');
+    }
+    const hasDisplayName = Object.hasOwn(options, 'displayName');
+    const hasPermissions = Object.hasOwn(options, 'permissions');
+    const name = hasDisplayName ? normalizeDisplayName(options.displayName) : null;
+    if (hasPermissions) assertPermissionPatch(options.permissions);
+
+    return this._transaction(() => {
+      const existing = this.database.prepare(`
+        SELECT display_name, transfer_allowed, library_read_allowed, library_upload_allowed, updated_at
+        FROM trusted_peers
+        WHERE device_id = ? AND revoked_at IS NULL
+      `).get(deviceId);
+      if (!existing) {
+        return false;
+      }
+      const grants = hasPermissions ? normalizePermissionPatch(options.permissions, existing) : {
+        transfer: existing.transfer_allowed === 1,
+        libraryRead: existing.library_read_allowed === 1,
+        libraryUpload: existing.library_upload_allowed === 1
+      };
+      this.database.prepare(`
+        UPDATE trusted_peers
+        SET display_name = ?, transfer_allowed = ?, library_read_allowed = ?, library_upload_allowed = ?, updated_at = ?
+        WHERE device_id = ? AND revoked_at IS NULL
+      `).run(
+        hasDisplayName ? name : existing.display_name,
+        grants.transfer ? 1 : 0,
+        grants.libraryRead ? 1 : 0,
+        grants.libraryUpload ? 1 : 0,
+        nextUpdatedAt(existing.updated_at),
+        deviceId
+      );
+      return this.getTrustedPeer(deviceId, { includeRevoked: true });
+    });
+  }
+
   markTrustedPeerSeen(deviceId, seenAt = Date.now()) {
     assertDeviceId(deviceId);
     assertTimestamp(seenAt, 'Last-seen time');
@@ -283,6 +333,24 @@ function normalizePermissions(permissions) {
     }
   }
   return normalized;
+}
+
+function assertPermissionPatch(permissions) {
+  assertPlainObject(permissions, 'Peer permissions');
+  assertAllowedKeys(permissions, ['transfer', 'libraryRead', 'libraryUpload'], 'peer permission update');
+  for (const key of Object.keys(permissions)) {
+    if (typeof permissions[key] !== 'boolean') {
+      throw new TypeError(`Invalid peer permission: ${key}`);
+    }
+  }
+}
+
+function normalizePermissionPatch(permissions, existing) {
+  return normalizePermissions({
+    transfer: permissions.transfer === undefined ? existing.transfer_allowed === 1 : permissions.transfer,
+    libraryRead: permissions.libraryRead === undefined ? existing.library_read_allowed === 1 : permissions.libraryRead,
+    libraryUpload: permissions.libraryUpload === undefined ? existing.library_upload_allowed === 1 : permissions.libraryUpload
+  });
 }
 
 function normalizeDisplayName(value) {
