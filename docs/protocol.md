@@ -1,3 +1,10 @@
+# Legacy protocol v0.x
+
+This document describes the version 1 MVP protocol retained only for the
+v0.2.0 baseline. The incompatible v1.0 protocol foundation is documented in
+[`protocol/v2.md`](protocol/v2.md).
+
+---
 # Protocol
 
 ## Discovery

@@ -1,0 +1,21 @@
+{
+  "pairingCode": {
+    "pairingId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "initiator": {
+      "deviceId": "b973948dff5a5e75",
+      "deviceName": "Windows workstation",
+      "fingerprint": "B973-948D-FF5A-5E75-87DE-8F82",
+      "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAYDme4dj/rIzOcN6XC7RmLkPyjeP9zZAuaV0k/mZQQf0=\n-----END PUBLIC KEY-----\n",
+      "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEA4Smruj1ZDO5nzfLh2zNGsl21u8nrOATuWh0GC0U8hSg=\n-----END PUBLIC KEY-----\n"
+    },
+    "responder": {
+      "deviceId": "b4153ead60ea8430",
+      "deviceName": "Android phone",
+      "fingerprint": "B415-3EAD-60EA-8430-F3EF-6677",
+      "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXtUl9qrvW2JRg6OI1RkzTt4lpl5R4sQo82wvWX4XQ7s=\n-----END PUBLIC KEY-----\n",
+      "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAMC48sdLLjnnjK4zT6ymBq5dMFvynmmOMKeE6lLLh03I=\n-----END PUBLIC KEY-----\n"
+    },
+    "expectedTranscript": "{\"app\":\"nearby-transfer\",\"initiator\":{\"deviceId\":\"b973948dff5a5e75\",\"deviceName\":\"Windows workstation\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEA4Smruj1ZDO5nzfLh2zNGsl21u8nrOATuWh0GC0U8hSg=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"B973-948D-FF5A-5E75-87DE-8F82\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAYDme4dj/rIzOcN6XC7RmLkPyjeP9zZAuaV0k/mZQQf0=\\n-----END PUBLIC KEY-----\\n\"},\"pairingId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"protocolVersion\":2,\"responder\":{\"deviceId\":\"b4153ead60ea8430\",\"deviceName\":\"Android phone\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAMC48sdLLjnnjK4zT6ymBq5dMFvynmmOMKeE6lLLh03I=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"B415-3EAD-60EA-8430-F3EF-6677\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAXtUl9qrvW2JRg6OI1RkzTt4lpl5R4sQo82wvWX4XQ7s=\\n-----END PUBLIC KEY-----\\n\"},\"type\":\"pairing-code\"}",
+    "expectedCode": "574940"
+  }
+}
