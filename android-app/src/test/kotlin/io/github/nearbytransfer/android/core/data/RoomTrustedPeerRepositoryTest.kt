@@ -191,7 +191,7 @@ class RoomTrustedPeerRepositoryTest {
             context,
             NearbyTransferDatabase::class.java,
             databaseName,
-        ).addMigrations(NearbyTransferDatabase.MIGRATION_1_2)
+        ).addMigrations(*NearbyTransferDatabase.ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
 

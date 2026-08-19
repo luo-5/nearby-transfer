@@ -2,7 +2,6 @@ package io.github.nearbytransfer.android
 
 import android.content.Context
 import android.os.Looper
-import androidx.room.Room
 import io.github.nearbytransfer.android.core.data.RoomTrustedPeerRepository
 import io.github.nearbytransfer.android.core.data.TrustedPeerRepository
 import io.github.nearbytransfer.android.core.data.local.NearbyTransferDatabase
@@ -107,11 +106,7 @@ object V2TrustedPeerPersistence {
         val applicationContext = context.applicationContext
             ?: throw IllegalArgumentException("An application Context is required.")
         return runBlocking(Dispatchers.IO) {
-            val database = Room.databaseBuilder(
-                applicationContext,
-                NearbyTransferDatabase::class.java,
-                NearbyTransferDatabase.DATABASE_NAME,
-            ).addMigrations(NearbyTransferDatabase.MIGRATION_1_2).build()
+            val database = NearbyTransferDatabase.build(applicationContext)
             try {
                 operation(RoomTrustedPeerRepository(database.trustedPeerDao(), nowEpochMillis))
             } finally {

@@ -233,7 +233,7 @@ class V2TrustedPeerPersistenceTest {
             context,
             NearbyTransferDatabase::class.java,
             NearbyTransferDatabase.DATABASE_NAME,
-        ).addMigrations(NearbyTransferDatabase.MIGRATION_1_2).build()
+        ).addMigrations(*NearbyTransferDatabase.ALL_MIGRATIONS).build()
         try {
             requireNotNull(database.trustedPeerDao().findByDeviceId(deviceId))
         } finally {
