@@ -8,6 +8,7 @@ This guide describes how to build Nearby Transfer from source for Linux, Windows
 - npm for installing desktop dependencies.
 - Java 17 for Android builds.
 - Android SDK platform 35 and build tools 35.0.0 for Android builds.
+- No global Gradle installation is required; use the checked-in Gradle Wrapper.
 - `rpmbuild` on Linux if RPM packages are needed.
 
 ## Install Desktop Dependencies
@@ -74,15 +75,23 @@ The NSIS installer target requires a Windows runner or Wine when cross-building 
 
 ## Test and Build Android
 
-```bash
-gradle :android-app:testDebugUnitTest
-gradle :android-app:assembleDebug
+Use the checked-in Gradle 8.7 Wrapper. It downloads the official Gradle distribution when needed and verifies it against the pinned SHA-256 checksum in `gradle/wrapper/gradle-wrapper.properties`.
+
+On Windows:
+
+```powershell
+.\gradlew.bat :android-app:testDebugUnitTest
+.\gradlew.bat :android-app:assembleDebug
 ```
 
-If Gradle is not installed globally, use a local Gradle distribution or the GitHub Actions workflow in `.github/workflows/build-android.yml`.
+On Linux and macOS:
+
+```bash
+./gradlew :android-app:testDebugUnitTest
+./gradlew :android-app:assembleDebug
+```
 
 The debug APK is intended for local testing only. Configure release signing and build a release APK or AAB before public Android distribution.
-
 ## GitHub Actions
 
 The repository includes workflows for source checks and platform artifacts:

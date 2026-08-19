@@ -31,22 +31,20 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Setup Gradle
+      - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: 8.7
 
       - name: Run Android unit tests
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-        run: gradle :android-app:testDebugUnitTest
+        run: ./gradlew :android-app:testDebugUnitTest
 
       - name: Build Android debug APK
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-        run: gradle :android-app:assembleDebug
+        run: ./gradlew :android-app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
