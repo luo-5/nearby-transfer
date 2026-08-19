@@ -3,12 +3,13 @@ package io.github.nearbytransfer.android;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -33,77 +34,206 @@ public class V2EncryptedChunkWriterTest {
     private static final String TASK_ID = "ABEiM0RVZneImaq7zN3u_w";
 
     @Test
-    public void writesFsyncsPersistsAndPublishesACompleteBatch() throws Exception {
+    public void receivesPersistsAndSealsWithoutPublishingOrDeletingStaging() throws Exception {
         byte[] encryptionKey = filled(V2TransferCrypto.KEY_BYTES, 0x31);
         byte[] callerKey = encryptionKey.clone();
         MemoryStagingStore staging = new MemoryStagingStore();
-        AtomicMemoryPublisher publisher = new AtomicMemoryPublisher();
-        List<String> events = staging.events;
         List<V2EncryptedChunkWriter.Progress> durable = new ArrayList<>();
-        V2EncryptedChunkWriter.Manifest manifest = manifest(
-            file("a.txt", bytes("hello")),
-            file("z-empty.txt", new byte[0])
-        );
-        V2EncryptedChunkWriter.ReceivePlan plan = plan(
-            target("a.txt", "destination-a"),
-            target("z-empty.txt", "destination-empty")
-        );
-
         V2EncryptedChunkWriter writer = V2EncryptedChunkWriter.create(
-            manifest, plan, callerKey, null, staging, publisher,
+            manifest(file("a.txt", bytes("hello")), file("z-empty.txt", new byte[0])),
+            plan(target("a.txt", "destination-a"), target("z-empty.txt", "destination-empty")),
+            callerKey,
+            null,
+            staging,
             progress -> {
                 assertTrue("progress must follow a durable force", staging.allWritesForced());
-                events.add("progress:" + progress.nextSequence);
                 durable.add(progress);
             }
         );
         Arrays.fill(callerKey, (byte) 0);
 
-        V2EncryptedChunkWriter.Progress first = writer.accept(frame(encryptionKey, "a.txt", 0, 0, bytes("he")));
-        assertEquals(2, first.files.get(0).committedOffset);
-        assertFalse(first.files.get(0).completed);
-        assertEquals("force:00000000.part", events.get(events.size() - 2));
-        assertEquals("progress:1", events.get(events.size() - 1));
+        writer.accept(frame(encryptionKey, "a.txt", 0, 0, bytes("he")));
+        writer.accept(frame(encryptionKey, "a.txt", 2, 1, bytes("llo")));
+        writer.accept(frame(encryptionKey, "z-empty.txt", 0, 2, new byte[0]));
 
-        V2EncryptedChunkWriter.Progress second = writer.accept(frame(encryptionKey, "a.txt", 2, 1, bytes("llo")));
-        assertEquals(5, second.files.get(0).committedOffset);
-        assertTrue(second.files.get(0).completed);
-        V2EncryptedChunkWriter.Progress finalProgress = writer.accept(
-            frame(encryptionKey, "z-empty.txt", 0, 2, new byte[0])
-        );
-        assertEquals(3, finalProgress.nextSequence);
-        assertTrue(finalProgress.files.get(1).completed);
+        V2EncryptedChunkWriter.SealedTransfer sealed = writer.sealForPublication();
+        assertEquals(V2EncryptedChunkWriter.State.SEALED, writer.state());
+        assertEquals(TASK_ID, sealed.taskId());
+        assertEquals(2, sealed.files().size());
+        assertEquals("a.txt", sealed.files().get(0).target().path);
+        assertEquals("destination-a", sealed.files().get(0).target().destinationToken);
+        assertEquals("z-empty.txt", sealed.files().get(1).target().path);
         assertEquals(3, durable.size());
-
-        V2EncryptedChunkWriter.Completion completion = writer.complete();
-        assertFalse(completion.cleanupPending);
-        assertEquals(V2EncryptedChunkWriter.State.COMPLETED, writer.state());
-        assertArrayEquals(bytes("hello"), publisher.visible.get("destination-a"));
-        assertArrayEquals(new byte[0], publisher.visible.get("destination-empty"));
-        assertEquals(1, publisher.commitCount);
-        assertEquals(0, publisher.rollbackCount);
-        assertTrue(staging.deleted);
-        assertEquals(0, staging.openHandles);
-        assertEquals(1, staging.maxOpenHandles);
+        assertFalse("sealing must retain staging", staging.deleted);
+        assertArrayEquals(bytes("hello"), staging.bytes("00000000.part"));
+        assertArrayEquals(new byte[0], staging.bytes("00000001.part"));
         assertNull(internalSessionKey(writer));
         assertArrayEquals(filled(V2TransferCrypto.KEY_BYTES, 0x31), encryptionKey);
+
+        Map<String, byte[]> published = consumeAll(sealed);
+        assertArrayEquals(bytes("hello"), published.get("destination-a"));
+        assertArrayEquals(new byte[0], published.get("destination-empty"));
+        sealed.assertSourcesConsumedAndClosed();
+        assertFalse("publication does not imply staging cleanup", staging.deleted);
+
+        sealed.cleanupStaging();
+        sealed.cleanupStaging();
+        assertTrue(staging.deleted);
+        assertTrue(sealed.isStagingCleaned());
+        assertEquals(0, staging.openHandles);
+        assertEquals(1, staging.maxOpenHandles);
     }
 
     @Test
-    public void rejectsOutOfOrderMetadataAndAuthenticationWithoutCommittingBytes() throws Exception {
+    public void incompleteSealIsRejectedWithoutDestroyingReceivableState() throws Exception {
         byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x42);
+        WriterFixture fixture = fixture(key, file("a.txt", bytes("data")));
+        fixture.writer.accept(frame(key, "a.txt", 0, 0, bytes("da")));
 
+        assertFailure(fixture.writer::sealForPublication);
+        assertEquals(V2EncryptedChunkWriter.State.RECEIVING, fixture.writer.state());
+        assertNotNull(internalSessionKey(fixture.writer));
+        assertFalse(fixture.staging.deleted);
+
+        fixture.writer.accept(frame(key, "a.txt", 2, 1, bytes("ta")));
+        assertNotNull(fixture.writer.sealForPublication());
+        assertEquals(V2EncryptedChunkWriter.State.SEALED, fixture.writer.state());
+    }
+
+    @Test
+    public void repeatedSealReturnsTheSameImmutableHandoff() throws Exception {
+        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x53);
+        WriterFixture fixture = fixture(key, file("a.txt", bytes("data")));
+        fixture.writer.accept(frame(key, "a.txt", 0, 0, bytes("data")));
+
+        V2EncryptedChunkWriter.SealedTransfer first = fixture.writer.sealForPublication();
+        V2EncryptedChunkWriter.SealedTransfer second = fixture.writer.sealForPublication();
+        assertSame(first, second);
+        assertFailure(() -> fixture.writer.accept(frame(key, "a.txt", 4, 1, new byte[0])));
+        fixture.writer.cancel();
+        assertEquals(V2EncryptedChunkWriter.State.SEALED, fixture.writer.state());
+        assertFalse(fixture.staging.deleted);
+    }
+
+    @Test
+    public void sourceContractDetectsIgnoredPartialAndLeakedConsumers() throws Exception {
+        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x64);
+
+        WriterFixture ignoredFixture = completedFixture(key, bytes("data"));
+        V2EncryptedChunkWriter.SealedTransfer ignored = ignoredFixture.writer.sealForPublication();
+        assertFailure(ignored::assertSourcesConsumedAndClosed);
+        assertFailure(ignored::cleanupStaging);
+        assertFalse(ignoredFixture.staging.deleted);
+
+        WriterFixture partialFixture = completedFixture(key, bytes("data"));
+        V2EncryptedChunkWriter.VerifiedSource partial = partialFixture.writer
+            .sealForPublication().files().get(0).source();
+        InputStream partialInput = partial.open();
+        assertTrue(partialInput.read() >= 0);
+        assertFailure(partialInput::close);
+        assertFailure(partial::assertFullyConsumedAndClosed);
+        assertEquals(0, partialFixture.staging.openHandles);
+
+        WriterFixture leakedFixture = completedFixture(key, bytes("data"));
+        V2EncryptedChunkWriter.VerifiedSource leaked = leakedFixture.writer
+            .sealForPublication().files().get(0).source();
+        InputStream leakedInput = leaked.open();
+        assertTrue(leakedInput.read() >= 0);
+        assertFailure(leaked::assertFullyConsumedAndClosed);
+        assertEquals("detection must close a leaked staging handle", 0, leakedFixture.staging.openHandles);
+        assertFailure(leakedInput::read);
+    }
+
+    @Test
+    public void verifiedSourceIsOneShotReauthenticatesAndRequiresClose() throws Exception {
+        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x75);
+        WriterFixture fixture = completedFixture(key, bytes("good"));
+        V2EncryptedChunkWriter.VerifiedSource source = fixture.writer
+            .sealForPublication().files().get(0).source();
+        try (InputStream input = source.open()) {
+            assertArrayEquals(bytes("good"), input.readAllBytes());
+        }
+        source.assertFullyConsumedAndClosed();
+        assertFailure(source::open);
+
+        WriterFixture mutatedFixture = completedFixture(key, bytes("good"));
+        V2EncryptedChunkWriter.VerifiedSource mutated = mutatedFixture.writer
+            .sealForPublication().files().get(0).source();
+        mutatedFixture.staging.seed("00000000.part", bytes("evil"));
+        assertFailure(() -> {
+            try (InputStream input = mutated.open()) { input.readAllBytes(); }
+        });
+        assertFailure(mutated::assertFullyConsumedAndClosed);
+    }
+
+    @Test
+    public void crossThreadCancelWaitsForSealAndCannotReverseSuccessfulHandoff() throws Exception {
+        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x21);
+        WriterFixture fixture = completedFixture(key, bytes("data"));
+        CountDownLatch verificationStarted = new CountDownLatch(1);
+        CountDownLatch allowVerification = new CountDownLatch(1);
+        fixture.staging.onVerifiedRead = () -> {
+            verificationStarted.countDown();
+            try {
+                if (!allowVerification.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("timed out waiting to verify");
+                }
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(error);
+            }
+        };
+
+        AtomicReference<V2EncryptedChunkWriter.SealedTransfer> result = new AtomicReference<>();
+        AtomicReference<Throwable> sealFailure = new AtomicReference<>();
+        Thread sealing = new Thread(() -> {
+            try { result.set(fixture.writer.sealForPublication()); }
+            catch (Throwable error) { sealFailure.set(error); }
+        }, "v2-writer-seal");
+        sealing.start();
+        assertTrue("seal verification did not start", verificationStarted.await(5, TimeUnit.SECONDS));
+
+        AtomicBoolean cancelReturned = new AtomicBoolean();
+        Thread cancellation = new Thread(() -> {
+            fixture.writer.cancel();
+            cancelReturned.set(true);
+        }, "v2-writer-cancel");
+        cancellation.start();
+        Thread.sleep(100);
+        assertFalse("cross-thread cancel must wait for active sealing", cancelReturned.get());
+
+        allowVerification.countDown();
+        sealing.join(5_000);
+        cancellation.join(5_000);
+        assertFalse(sealing.isAlive());
+        assertFalse(cancellation.isAlive());
+        if (sealFailure.get() != null) throw new AssertionError(sealFailure.get());
+        assertNotNull(result.get());
+        assertTrue(cancelReturned.get());
+        assertEquals(V2EncryptedChunkWriter.State.SEALED, fixture.writer.state());
+        assertNull(internalSessionKey(fixture.writer));
+        assertFalse(fixture.staging.deleted);
+    }
+
+    @Test
+    public void reentrantCancelDuringSealWinsAtVerificationCheckpoint() throws Exception {
+        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x32);
+        WriterFixture fixture = completedFixture(key, bytes("data"));
+        fixture.staging.onVerifiedRead = fixture.writer::cancel;
+
+        assertFailure(fixture.writer::sealForPublication);
+        assertEquals(V2EncryptedChunkWriter.State.CANCELLED, fixture.writer.state());
+        assertNull(internalSessionKey(fixture.writer));
+        assertFalse(fixture.staging.deleted);
+        assertEquals(0, fixture.staging.openHandles);
+    }
+
+    @Test
+    public void rejectsInvalidFramesAndRetainsFsyncedTailAfterAmbiguousProgress() throws Exception {
+        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x43);
         WriterFixture wrongPath = fixture(key, file("a.txt", bytes("data")));
         assertFailure(() -> wrongPath.writer.accept(frame(key, "b.txt", 0, 0, bytes("data"))));
         assertTerminalFailure(wrongPath, 0);
-
-        WriterFixture wrongOffset = fixture(key, file("a.txt", bytes("data")));
-        assertFailure(() -> wrongOffset.writer.accept(frame(key, "a.txt", 1, 0, bytes("data"))));
-        assertTerminalFailure(wrongOffset, 0);
-
-        WriterFixture wrongSequence = fixture(key, file("a.txt", bytes("data")));
-        assertFailure(() -> wrongSequence.writer.accept(frame(key, "a.txt", 0, 1, bytes("data"))));
-        assertTerminalFailure(wrongSequence, 0);
 
         WriterFixture badTag = fixture(key, file("a.txt", bytes("data")));
         V2TransferChunkFrame.Frame valid = frame(key, "a.txt", 0, 0, bytes("data"));
@@ -115,277 +245,77 @@ public class V2EncryptedChunkWriterTest {
         );
         assertFailure(() -> badTag.writer.accept(tampered));
         assertTerminalFailure(badTag, 0);
-    }
 
-    @Test
-    public void resumeVerifiesCompletedPrefixAndTruncatesUncommittedTail() throws Exception {
-        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x53);
         MemoryStagingStore staging = new MemoryStagingStore();
-        staging.seed("00000000.part", bytes("hello!"));
-        staging.seed("00000001.part", bytes("worUNCOMMITTED"));
-        V2EncryptedChunkWriter.Manifest manifest = manifest(
-            file("a.txt", bytes("hello!")),
-            file("b.txt", bytes("world"))
-        );
-        V2EncryptedChunkWriter.Progress resume = new V2EncryptedChunkWriter.Progress(4, Arrays.asList(
-            new V2EncryptedChunkWriter.FileProgress("a.txt", 6, true),
-            new V2EncryptedChunkWriter.FileProgress("b.txt", 3, false)
-        ));
-        AtomicMemoryPublisher publisher = new AtomicMemoryPublisher();
         V2EncryptedChunkWriter writer = V2EncryptedChunkWriter.create(
-            manifest,
-            plan(target("a.txt", "a"), target("b.txt", "b")),
-            key,
-            resume,
-            staging,
-            publisher,
-            ignored -> {}
-        );
-
-        assertArrayEquals(bytes("wor"), staging.bytes("00000001.part"));
-        assertTrue(staging.forceCount("00000001.part") > 0);
-        V2EncryptedChunkWriter.Progress completeProgress = writer.accept(
-            frame(key, "b.txt", 3, 4, bytes("ld"))
-        );
-        assertTrue(completeProgress.files.get(1).completed);
-        writer.complete();
-        assertArrayEquals(bytes("hello!"), publisher.visible.get("a"));
-        assertArrayEquals(bytes("world"), publisher.visible.get("b"));
-    }
-
-    @Test
-    public void ambiguousProgressFailureRetainsFsyncedTailForSafeRecovery() throws Exception {
-        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x64);
-        MemoryStagingStore staging = new MemoryStagingStore();
-        V2EncryptedChunkWriter.Manifest manifest = manifest(file("a.txt", bytes("data")));
-        V2EncryptedChunkWriter writer = V2EncryptedChunkWriter.create(
-            manifest,
+            manifest(file("a.txt", bytes("data"))),
             plan(target("a.txt", "a")),
             key,
             null,
             staging,
-            new AtomicMemoryPublisher(),
             ignored -> { throw new IOException("durable progress result is unknown"); }
         );
-
         assertFailure(() -> writer.accept(frame(key, "a.txt", 0, 0, bytes("data"))));
         assertEquals(V2EncryptedChunkWriter.State.FAILED, writer.state());
         assertArrayEquals(bytes("data"), staging.bytes("00000000.part"));
         assertTrue(staging.forceCount("00000000.part") > 0);
-
-        V2EncryptedChunkWriter.Progress oldDurableProgress = new V2EncryptedChunkWriter.Progress(
-            0,
-            Collections.singletonList(new V2EncryptedChunkWriter.FileProgress("a.txt", 0, false))
-        );
-        AtomicMemoryPublisher publisher = new AtomicMemoryPublisher();
-        V2EncryptedChunkWriter resumed = V2EncryptedChunkWriter.create(
-            manifest,
-            plan(target("a.txt", "a")),
-            key,
-            oldDurableProgress,
-            staging,
-            publisher,
-            ignored -> {}
-        );
-        assertArrayEquals(new byte[0], staging.bytes("00000000.part"));
-        resumed.accept(frame(key, "a.txt", 0, 0, bytes("data")));
-        resumed.complete();
-        assertArrayEquals(bytes("data"), publisher.visible.get("a"));
     }
 
     @Test
-    public void hashMismatchAndCancellationRollBackUncommittedPlaintext() throws Exception {
-        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x75);
-        WriterFixture mismatch = fixture(key, file("a.txt", bytes("good")));
-        assertFailure(() -> mismatch.writer.accept(frame(key, "a.txt", 0, 0, bytes("evil"))));
-        assertTerminalFailure(mismatch, 0);
-        assertTrue(mismatch.staging.forceCount("00000000.part") >= 2);
-
-        WriterFixture cancelled = fixture(key, file("a.txt", bytes("data")));
-        cancelled.staging.onForce = cancelled.writer::cancel;
-        assertFailure(() -> cancelled.writer.accept(frame(key, "a.txt", 0, 0, bytes("data"))));
-        assertEquals(V2EncryptedChunkWriter.State.CANCELLED, cancelled.writer.state());
-        assertArrayEquals(new byte[0], cancelled.staging.bytes("00000000.part"));
-        assertNull(internalSessionKey(cancelled.writer));
-        assertEquals(0, cancelled.publisher.commitCount);
-
-        WriterFixture explicit = fixture(key, file("a.txt", bytes("data")));
-        explicit.writer.cancel();
-        explicit.writer.cancel();
-        assertEquals(V2EncryptedChunkWriter.State.CANCELLED, explicit.writer.state());
-        assertFailure(() -> explicit.writer.accept(frame(key, "a.txt", 0, 0, bytes("data"))));
-        assertFalse(explicit.staging.deleted);
-        assertNull(internalSessionKey(explicit.writer));
-    }
-
-    @Test
-    public void publicationNeverOverwritesAndRollsBackEveryFailedBatch() throws Exception {
-        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x26);
+    public void resumesCommittedPrefixAndTruncatesUncommittedTail() throws Exception {
+        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x54);
         MemoryStagingStore staging = new MemoryStagingStore();
-        AtomicMemoryPublisher publisher = new AtomicMemoryPublisher();
-        publisher.visible.put("a", bytes("existing"));
+        staging.seed("00000000.part", bytes("hello!"));
+        staging.seed("00000001.part", bytes("worUNCOMMITTED"));
         V2EncryptedChunkWriter writer = V2EncryptedChunkWriter.create(
-            manifest(file("a.txt", bytes("new"))),
-            plan(target("a.txt", "a")),
+            manifest(file("a.txt", bytes("hello!")), file("b.txt", bytes("world"))),
+            plan(target("a.txt", "a"), target("b.txt", "b")),
             key,
-            null,
+            new V2EncryptedChunkWriter.Progress(4, Arrays.asList(
+                new V2EncryptedChunkWriter.FileProgress("a.txt", 6, true),
+                new V2EncryptedChunkWriter.FileProgress("b.txt", 3, false)
+            )),
             staging,
-            publisher,
             ignored -> {}
         );
-        writer.accept(frame(key, "a.txt", 0, 0, bytes("new")));
-        assertFailure(writer::complete);
-        assertArrayEquals(bytes("existing"), publisher.visible.get("a"));
-        assertEquals(1, publisher.rollbackCount);
-        assertEquals(V2EncryptedChunkWriter.State.FAILED, writer.state());
+
+        assertArrayEquals(bytes("wor"), staging.bytes("00000001.part"));
+        writer.accept(frame(key, "b.txt", 3, 4, bytes("ld")));
+        V2EncryptedChunkWriter.SealedTransfer sealed = writer.sealForPublication();
+        Map<String, byte[]> copied = consumeAll(sealed);
+        assertArrayEquals(bytes("hello!"), copied.get("a"));
+        assertArrayEquals(bytes("world"), copied.get("b"));
         assertFalse(staging.deleted);
-
-        WriterFixture commitFailure = fixture(key, file("a.txt", bytes("data")));
-        commitFailure.publisher.failCommit = true;
-        commitFailure.writer.accept(frame(key, "a.txt", 0, 0, bytes("data")));
-        assertFailure(commitFailure.writer::complete);
-        assertTrue(commitFailure.publisher.visible.isEmpty());
-        assertTrue(commitFailure.publisher.pending.isEmpty());
-        assertEquals(1, commitFailure.publisher.rollbackCount);
     }
 
     @Test
-    public void publicationSourceIsReauthenticatedWhileBeingCopied() throws Exception {
-        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x17);
+    public void opensAtMostOneStagingHandleForLargeManifest() throws Exception {
+        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x65);
+        int count = 2048;
+        List<V2EncryptedChunkWriter.FileSpec> files = new ArrayList<>(count);
+        List<V2EncryptedChunkWriter.ReceiveTarget> targets = new ArrayList<>(count);
+        List<V2EncryptedChunkWriter.FileProgress> progress = new ArrayList<>(count);
         MemoryStagingStore staging = new MemoryStagingStore();
-        PrefixOnlyPublisher publisher = new PrefixOnlyPublisher();
-        V2EncryptedChunkWriter writer = V2EncryptedChunkWriter.create(
-            manifest(file("a.txt", bytes("data"))),
-            plan(target("a.txt", "a")),
-            key,
-            null,
-            staging,
-            publisher,
-            ignored -> {}
-        );
-        writer.accept(frame(key, "a.txt", 0, 0, bytes("data")));
-        assertFailure(writer::complete);
-        assertEquals(1, publisher.rollbackCount);
-        assertFalse(publisher.committed);
-        assertEquals(V2EncryptedChunkWriter.State.FAILED, writer.state());
-    }
-
-
-    @Test
-    public void opensAtMostOneStagingHandleForLargeManifests() throws Exception {
-        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x2a);
-        MemoryStagingStore staging = new MemoryStagingStore();
-        List<V2EncryptedChunkWriter.FileSpec> files = new ArrayList<>();
-        List<V2EncryptedChunkWriter.ReceiveTarget> targets = new ArrayList<>();
-        for (int index = 0; index < 2_048; index++) {
-            String path = String.format("files/%04d.txt", index);
+        for (int index = 0; index < count; index++) {
+            String path = String.format("files/%04d.bin", index);
             files.add(file(path, new byte[0]));
             targets.add(target(path, "destination-" + index));
+            progress.add(new V2EncryptedChunkWriter.FileProgress(path, 0, true));
+            staging.seed(String.format("%08d.part", index), new byte[0]);
         }
-
         V2EncryptedChunkWriter writer = V2EncryptedChunkWriter.create(
             new V2EncryptedChunkWriter.Manifest(TASK_ID, files),
             new V2EncryptedChunkWriter.ReceivePlan(TASK_ID, targets),
             key,
-            null,
+            new V2EncryptedChunkWriter.Progress(0, progress),
             staging,
-            new AtomicMemoryPublisher(),
             ignored -> {}
         );
-
-        assertEquals(0, staging.openHandles);
+        V2EncryptedChunkWriter.SealedTransfer sealed = writer.sealForPublication();
+        assertEquals(count, sealed.files().size());
         assertEquals(1, staging.maxOpenHandles);
-        writer.close();
         assertEquals(0, staging.openHandles);
-    }
-
-    @Test
-    public void rejectsPublishersThatIgnoreOrLeakVerifiedSources() throws Exception {
-        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x19);
-
-        MemoryStagingStore ignoredStaging = new MemoryStagingStore();
-        IgnoringPublisher ignoring = new IgnoringPublisher();
-        V2EncryptedChunkWriter ignoredWriter = V2EncryptedChunkWriter.create(
-            manifest(file("a.txt", bytes("data"))),
-            plan(target("a.txt", "a")),
-            key,
-            null,
-            ignoredStaging,
-            ignoring,
-            ignored -> {}
-        );
-        ignoredWriter.accept(frame(key, "a.txt", 0, 0, bytes("data")));
-        assertFailure(ignoredWriter::complete);
-        assertEquals(V2EncryptedChunkWriter.State.FAILED, ignoredWriter.state());
-        assertEquals(1, ignoring.rollbackCount);
-        assertFalse(ignoring.committed);
-        assertEquals(0, ignoredStaging.openHandles);
-
-        MemoryStagingStore leakedStaging = new MemoryStagingStore();
-        LeakingPrefixPublisher leaking = new LeakingPrefixPublisher();
-        V2EncryptedChunkWriter leakedWriter = V2EncryptedChunkWriter.create(
-            manifest(file("a.txt", bytes("data"))),
-            plan(target("a.txt", "a")),
-            key,
-            null,
-            leakedStaging,
-            leaking,
-            ignored -> {}
-        );
-        leakedWriter.accept(frame(key, "a.txt", 0, 0, bytes("data")));
-        assertFailure(leakedWriter::complete);
-        assertEquals(V2EncryptedChunkWriter.State.FAILED, leakedWriter.state());
-        assertEquals(1, leaking.rollbackCount);
-        assertFalse(leaking.committed);
-        assertEquals(0, leakedStaging.openHandles);
-    }
-
-    @Test
-    public void crossThreadCancelWaitsForCommitAndDoesNotReverseSuccess() throws Exception {
-        byte[] key = filled(V2TransferCrypto.KEY_BYTES, 0x4b);
-        MemoryStagingStore staging = new MemoryStagingStore();
-        BlockingCommitPublisher publisher = new BlockingCommitPublisher();
-        V2EncryptedChunkWriter writer = V2EncryptedChunkWriter.create(
-            manifest(file("a.txt", bytes("data"))),
-            plan(target("a.txt", "a")),
-            key,
-            null,
-            staging,
-            publisher,
-            ignored -> {}
-        );
-        writer.accept(frame(key, "a.txt", 0, 0, bytes("data")));
-
-        AtomicReference<Throwable> completionFailure = new AtomicReference<>();
-        Thread completion = new Thread(() -> {
-            try { writer.complete(); }
-            catch (Throwable error) { completionFailure.set(error); }
-        }, "v2-writer-complete");
-        completion.start();
-        assertTrue("commit did not start", publisher.commitStarted.await(5, TimeUnit.SECONDS));
-
-        AtomicBoolean cancelReturned = new AtomicBoolean();
-        CountDownLatch cancelStarted = new CountDownLatch(1);
-        Thread cancellation = new Thread(() -> {
-            cancelStarted.countDown();
-            writer.cancel();
-            cancelReturned.set(true);
-        }, "v2-writer-cancel");
-        cancellation.start();
-        assertTrue(cancelStarted.await(5, TimeUnit.SECONDS));
-        Thread.sleep(100);
-        assertFalse("cross-thread cancel must wait for the active commit", cancelReturned.get());
-
-        publisher.allowCommit.countDown();
-        completion.join(5_000);
-        cancellation.join(5_000);
-        assertFalse("completion thread is still running", completion.isAlive());
-        assertFalse("cancellation thread is still running", cancellation.isAlive());
-        if (completionFailure.get() != null) throw new AssertionError(completionFailure.get());
-        assertTrue(cancelReturned.get());
-        assertEquals(V2EncryptedChunkWriter.State.COMPLETED, writer.state());
-        assertArrayEquals(bytes("data"), publisher.visible.get("a"));
-        assertEquals(0, staging.openHandles);
+        assertFalse(staging.deleted);
     }
 
     @Test
@@ -397,10 +327,7 @@ public class V2EncryptedChunkWriterTest {
             V2TransferCrypto.MAX_SEQUENCE + 1,
             Collections.emptyList()
         ));
-        assertFailure(() -> manifest(
-            file("A.txt", bytes("a")),
-            file("a.txt", bytes("b"))
-        ));
+        assertFailure(() -> manifest(file("A.txt", bytes("a")), file("a.txt", bytes("b"))));
 
         Path root = Files.createTempDirectory("nearby-v2-writer-").toAbsolutePath();
         try {
@@ -414,7 +341,6 @@ public class V2EncryptedChunkWriterTest {
                 assertArrayEquals(payload, input.readAllBytes());
             }
             file.close();
-
             Path task = root.resolve(".nearby-transfer-" + TASK_ID + ".staging");
             Files.write(task.resolve("unexpected"), new byte[] { 1 });
             assertFailure(() -> store.prepare(TASK_ID, Collections.singletonList("00000000.part")));
@@ -428,22 +354,40 @@ public class V2EncryptedChunkWriterTest {
         }
     }
 
+    private static Map<String, byte[]> consumeAll(V2EncryptedChunkWriter.SealedTransfer sealed) throws Exception {
+        Map<String, byte[]> copied = new LinkedHashMap<>();
+        for (V2EncryptedChunkWriter.SealedFile file : sealed.files()) {
+            V2EncryptedChunkWriter.VerifiedSource source = file.source();
+            assertEquals(file.target().path, source.relativePath());
+            try (InputStream input = source.open()) {
+                byte[] bytes = input.readAllBytes();
+                assertEquals(source.size(), bytes.length);
+                copied.put(file.target().destinationToken, bytes);
+            }
+            source.assertFullyConsumedAndClosed();
+        }
+        return copied;
+    }
+
+    private static WriterFixture completedFixture(byte[] key, byte[] payload) throws Exception {
+        WriterFixture fixture = fixture(key, file("a.txt", payload));
+        fixture.writer.accept(frame(key, "a.txt", 0, 0, payload));
+        return fixture;
+    }
+
     private static WriterFixture fixture(byte[] key, V2EncryptedChunkWriter.FileSpec... files) throws Exception {
         MemoryStagingStore staging = new MemoryStagingStore();
-        AtomicMemoryPublisher publisher = new AtomicMemoryPublisher();
-        V2EncryptedChunkWriter.Manifest manifest = manifest(files);
         List<V2EncryptedChunkWriter.ReceiveTarget> targets = new ArrayList<>();
         for (V2EncryptedChunkWriter.FileSpec file : files) targets.add(target(file.path, file.path));
         V2EncryptedChunkWriter writer = V2EncryptedChunkWriter.create(
-            manifest,
+            manifest(files),
             new V2EncryptedChunkWriter.ReceivePlan(TASK_ID, targets),
             key,
             null,
             staging,
-            publisher,
             ignored -> {}
         );
-        return new WriterFixture(writer, staging, publisher);
+        return new WriterFixture(writer, staging);
     }
 
     private static V2EncryptedChunkWriter.Manifest manifest(V2EncryptedChunkWriter.FileSpec... files) {
@@ -478,7 +422,7 @@ public class V2EncryptedChunkWriterTest {
         assertEquals(V2EncryptedChunkWriter.State.FAILED, fixture.writer.state());
         assertEquals(expectedBytes, fixture.staging.bytes("00000000.part").length);
         assertNull(internalSessionKey(fixture.writer));
-        assertEquals(0, fixture.publisher.commitCount);
+        assertFalse(fixture.staging.deleted);
     }
 
     private static byte[] internalSessionKey(V2EncryptedChunkWriter writer) throws Exception {
@@ -542,16 +486,10 @@ public class V2EncryptedChunkWriterTest {
     private static final class WriterFixture {
         final V2EncryptedChunkWriter writer;
         final MemoryStagingStore staging;
-        final AtomicMemoryPublisher publisher;
 
-        WriterFixture(
-            V2EncryptedChunkWriter writer,
-            MemoryStagingStore staging,
-            AtomicMemoryPublisher publisher
-        ) {
+        WriterFixture(V2EncryptedChunkWriter writer, MemoryStagingStore staging) {
             this.writer = writer;
             this.staging = staging;
-            this.publisher = publisher;
         }
     }
 
@@ -560,6 +498,7 @@ public class V2EncryptedChunkWriterTest {
         final List<String> events = new ArrayList<>();
         boolean deleted;
         Runnable onForce;
+        Runnable onVerifiedRead;
         int openHandles;
         int maxOpenHandles;
 
@@ -578,15 +517,15 @@ public class V2EncryptedChunkWriterTest {
         }
 
         boolean allWritesForced() {
-            for (MemoryFileData file : files.values()) {
-                if (file.dirty) return false;
-            }
+            for (MemoryFileData file : files.values()) if (file.dirty) return false;
             return true;
         }
 
         @Override public void prepare(String taskId, List<String> fileIds) {
             assertEquals(TASK_ID, taskId);
-            for (String fileId : fileIds) files.computeIfAbsent(fileId, ignored -> new MemoryFileData(new byte[0]));
+            for (String fileId : fileIds) {
+                files.computeIfAbsent(fileId, ignored -> new MemoryFileData(new byte[0]));
+            }
         }
 
         @Override public V2EncryptedChunkWriter.StagingFile open(String taskId, String fileId) {
@@ -658,7 +597,26 @@ public class V2EncryptedChunkWriterTest {
 
         @Override public InputStream openVerifiedInput() throws IOException {
             requireOpen();
-            return new ByteArrayInputStream(data.bytes.clone());
+            byte[] snapshot = data.bytes.clone();
+            return new ByteArrayInputStream(snapshot) {
+                private boolean hookCalled;
+
+                private void callHook() {
+                    if (hookCalled || owner.onVerifiedRead == null) return;
+                    hookCalled = true;
+                    owner.onVerifiedRead.run();
+                }
+
+                @Override public synchronized int read() {
+                    callHook();
+                    return super.read();
+                }
+
+                @Override public synchronized int read(byte[] buffer, int offset, int length) {
+                    callHook();
+                    return super.read(buffer, offset, length);
+                }
+            };
         }
 
         @Override public void close() {
@@ -670,146 +628,6 @@ public class V2EncryptedChunkWriterTest {
 
         private void requireOpen() throws IOException {
             if (closed) throw new IOException("Memory staging file is closed");
-        }
-    }
-
-    private static class AtomicMemoryPublisher implements V2EncryptedChunkWriter.Publisher {
-        final Map<String, byte[]> visible = new LinkedHashMap<>();
-        final Map<String, byte[]> pending = new LinkedHashMap<>();
-        int commitCount;
-        int rollbackCount;
-        boolean failCommit;
-
-        @Override public V2EncryptedChunkWriter.Publication begin(String taskId) {
-            assertEquals(TASK_ID, taskId);
-            pending.clear();
-            return new V2EncryptedChunkWriter.Publication() {
-                @Override public void publishNoReplace(
-                    V2EncryptedChunkWriter.ReceiveTarget target,
-                    V2EncryptedChunkWriter.VerifiedSource source
-                ) throws Exception {
-                    if (visible.containsKey(target.destinationToken) || pending.containsKey(target.destinationToken)) {
-                        throw new IOException("destination already exists");
-                    }
-                    assertEquals(target.path, source.relativePath());
-                    try (InputStream input = source.open()) {
-                        byte[] copied = input.readAllBytes();
-                        if (copied.length != source.size()) throw new IOException("source size changed");
-                        pending.put(target.destinationToken, copied);
-                    }
-                    assertFalse("publication must remain invisible before commit", visible.containsKey(target.destinationToken));
-                }
-
-                @Override public void commit() throws Exception {
-                    if (failCommit) throw new IOException("atomic commit failed");
-                    visible.putAll(pending);
-                    pending.clear();
-                    commitCount++;
-                }
-
-                @Override public void rollback() {
-                    pending.clear();
-                    rollbackCount++;
-                }
-            };
-        }
-    }
-
-
-
-    private static final class IgnoringPublisher implements V2EncryptedChunkWriter.Publisher {
-        int rollbackCount;
-        boolean committed;
-
-        @Override public V2EncryptedChunkWriter.Publication begin(String taskId) {
-            return new V2EncryptedChunkWriter.Publication() {
-                @Override public void publishNoReplace(
-                    V2EncryptedChunkWriter.ReceiveTarget target,
-                    V2EncryptedChunkWriter.VerifiedSource source
-                ) {
-                    // Deliberately ignore the source.
-                }
-
-                @Override public void commit() { committed = true; }
-
-                @Override public void rollback() { rollbackCount++; }
-            };
-        }
-    }
-
-    private static final class LeakingPrefixPublisher implements V2EncryptedChunkWriter.Publisher {
-        int rollbackCount;
-        boolean committed;
-        InputStream leaked;
-
-        @Override public V2EncryptedChunkWriter.Publication begin(String taskId) {
-            return new V2EncryptedChunkWriter.Publication() {
-                @Override public void publishNoReplace(
-                    V2EncryptedChunkWriter.ReceiveTarget target,
-                    V2EncryptedChunkWriter.VerifiedSource source
-                ) throws Exception {
-                    leaked = source.open();
-                    assertTrue(leaked.read() >= 0);
-                    // Deliberately return without reaching EOF or closing the stream.
-                }
-
-                @Override public void commit() { committed = true; }
-
-                @Override public void rollback() { rollbackCount++; }
-            };
-        }
-    }
-
-    private static final class BlockingCommitPublisher implements V2EncryptedChunkWriter.Publisher {
-        final Map<String, byte[]> visible = new LinkedHashMap<>();
-        final Map<String, byte[]> pending = new LinkedHashMap<>();
-        final CountDownLatch commitStarted = new CountDownLatch(1);
-        final CountDownLatch allowCommit = new CountDownLatch(1);
-
-        @Override public V2EncryptedChunkWriter.Publication begin(String taskId) {
-            return new V2EncryptedChunkWriter.Publication() {
-                @Override public void publishNoReplace(
-                    V2EncryptedChunkWriter.ReceiveTarget target,
-                    V2EncryptedChunkWriter.VerifiedSource source
-                ) throws Exception {
-                    try (InputStream input = source.open()) {
-                        pending.put(target.destinationToken, input.readAllBytes());
-                    }
-                }
-
-                @Override public void commit() throws Exception {
-                    commitStarted.countDown();
-                    if (!allowCommit.await(5, TimeUnit.SECONDS)) {
-                        throw new IOException("timed out waiting to commit");
-                    }
-                    visible.putAll(pending);
-                    pending.clear();
-                }
-
-                @Override public void rollback() { pending.clear(); }
-            };
-        }
-    }
-
-    private static final class PrefixOnlyPublisher implements V2EncryptedChunkWriter.Publisher {
-        int rollbackCount;
-        boolean committed;
-
-        @Override public V2EncryptedChunkWriter.Publication begin(String taskId) {
-            return new V2EncryptedChunkWriter.Publication() {
-                @Override public void publishNoReplace(
-                    V2EncryptedChunkWriter.ReceiveTarget target,
-                    V2EncryptedChunkWriter.VerifiedSource source
-                ) throws Exception {
-                    try (InputStream input = source.open()) {
-                        assertTrue(input.read() >= 0);
-                    }
-                }
-
-                @Override public void commit() { committed = true; }
-
-                @Override public void rollback() { rollbackCount++; }
-            };
         }
     }
 }

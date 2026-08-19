@@ -32,16 +32,17 @@ import java.util.regex.Pattern;
 /**
  * Authenticated, resumable receiver for protocol-v2 encrypted chunk frames.
  *
- * <p>{@link Publication#commit()} is the publication linearization point for this in-memory writer.
- * The owner must bracket {@link #complete()} with a durable, recoverable task-state transition and
- * an idempotent publication identity so process death around commit can be reconciled safely.
+ * <p>This class owns only reception and app-private staging. {@link #sealForPublication()} verifies
+ * every manifest entry and transfers one-shot verified sources to the publication layer, but does
+ * not publish or delete staging. A durable publication coordinator must persist a per-file receipt
+ * before calling {@link SealedTransfer#cleanupStaging()} after all destinations are reconciled.
  */
 final class V2EncryptedChunkWriter implements AutoCloseable {
     private static final long MAX_SAFE_INTEGER = V2TransferCrypto.MAX_SAFE_INTEGER;
     private static final Pattern SHA256 = Pattern.compile("^[a-f0-9]{64}$");
     private static final Pattern TASK_ID = Pattern.compile("^[A-Za-z0-9_-]{22}$");
 
-    enum State { RECEIVING, COMPLETED, CANCELLED, FAILED, CLOSED }
+    enum State { RECEIVING, SEALED, CANCELLED, FAILED, CLOSED }
 
     static final class FileSpec {
         final String path;
@@ -181,27 +182,66 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
         String relativePath();
         long size();
         InputStream open() throws Exception;
+        void assertFullyConsumedAndClosed() throws Exception;
+    }
+
+    static final class SealedFile {
+        private final ReceiveTarget target;
+        private final VerifiedSource source;
+
+        private SealedFile(ReceiveTarget target, VerifiedSource source) {
+            this.target = target;
+            this.source = source;
+        }
+
+        ReceiveTarget target() { return target; }
+        VerifiedSource source() { return source; }
     }
 
     /**
-     * Final-destination abstraction suitable for filesystem, SAF or MediaStore.
-     * A publication must remain invisible until commit, reject every existing
-     * destination instead of replacing it, and make the complete batch visible
-     * atomically. A failed publication is rolled back before complete returns.
+     * Immutable hand-off from reception to a durable publication coordinator.
+     *
+     * <p>The ordered files are not an atomic publication transaction. The coordinator must publish
+     * and durably receipt each file independently, reconcile ambiguous provider results, and call
+     * {@link #cleanupStaging()} only after every receipt is final.
      */
-    interface Publisher {
-        Publication begin(String taskId) throws Exception;
-    }
+    static final class SealedTransfer {
+        private final String taskId;
+        private final List<SealedFile> files;
+        private final StagingStore staging;
+        private boolean stagingCleaned;
 
-    interface Publication {
-        void publishNoReplace(ReceiveTarget target, VerifiedSource source) throws Exception;
-        void commit() throws Exception;
-        void rollback() throws Exception;
-    }
+        private SealedTransfer(String taskId, List<SealedFile> files, StagingStore staging) {
+            this.taskId = taskId;
+            this.files = Collections.unmodifiableList(new ArrayList<>(files));
+            this.staging = staging;
+        }
 
-    static final class Completion {
-        final boolean cleanupPending;
-        Completion(boolean cleanupPending) { this.cleanupPending = cleanupPending; }
+        String taskId() { return taskId; }
+        List<SealedFile> files() { return files; }
+
+        void assertSourcesConsumedAndClosed() throws Exception {
+            Throwable failure = null;
+            for (SealedFile file : files) {
+                try { file.source.assertFullyConsumedAndClosed(); }
+                catch (Throwable error) {
+                    if (failure == null) failure = error;
+                    else failure.addSuppressed(error);
+                }
+            }
+            if (failure instanceof Exception) throw (Exception) failure;
+            if (failure != null) throw new IOException("Unable to verify sealed sealed sources", failure);
+        }
+
+        /** Explicit, idempotent cleanup after the coordinator has persisted final receipts. */
+        synchronized void cleanupStaging() throws Exception {
+            if (stagingCleaned) return;
+            assertSourcesConsumedAndClosed();
+            staging.deleteTask(taskId);
+            stagingCleaned = true;
+        }
+
+        synchronized boolean isStagingCleaned() { return stagingCleaned; }
     }
 
     private static final class Record {
@@ -224,7 +264,6 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
     private final Manifest manifest;
     private final ReceivePlan plan;
     private final StagingStore staging;
-    private final Publisher publisher;
     private final ProgressStore progressStore;
     private final List<Record> records = new ArrayList<>();
     private final ReentrantLock operation = new ReentrantLock();
@@ -233,24 +272,24 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
     private byte[] sessionKey;
     private long nextSequence;
     private int currentIndex;
+    private SealedTransfer sealedTransfer;
 
     static V2EncryptedChunkWriter create(
         Manifest manifest, ReceivePlan plan, byte[] sessionKey, Progress resumeProgress,
-        StagingStore staging, Publisher publisher, ProgressStore progressStore
+        StagingStore staging, ProgressStore progressStore
     ) throws Exception {
         return new V2EncryptedChunkWriter(
-            manifest, plan, sessionKey, resumeProgress, staging, publisher, progressStore
+            manifest, plan, sessionKey, resumeProgress, staging, progressStore
         );
     }
 
     private V2EncryptedChunkWriter(
         Manifest manifest, ReceivePlan plan, byte[] sessionKey, Progress resumeProgress,
-        StagingStore staging, Publisher publisher, ProgressStore progressStore
+        StagingStore staging, ProgressStore progressStore
     ) throws Exception {
         this.manifest = Objects.requireNonNull(manifest, "Manifest is required");
         this.plan = Objects.requireNonNull(plan, "Receive plan is required");
         this.staging = Objects.requireNonNull(staging, "Staging store is required");
-        this.publisher = Objects.requireNonNull(publisher, "Publisher is required");
         this.progressStore = progressStore == null ? ignored -> {} : progressStore;
         if (sessionKey == null || sessionKey.length != V2TransferCrypto.KEY_BYTES) {
             throw new IllegalArgumentException("Session key must contain exactly 32 bytes");
@@ -370,43 +409,27 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
         }
     }
 
-    Completion complete() throws Exception {
+    SealedTransfer sealForPublication() throws Exception {
         operation.lock();
         try {
+            if (state == State.SEALED) return sealedTransfer;
             assertReceiving();
+            if (currentIndex != records.size()) throw new IllegalStateException("Transfer is incomplete");
             try {
-                if (currentIndex != records.size()) throw new IllegalStateException("Transfer is incomplete");
                 throwIfCancelled();
-                for (Record record : records) verifyFile(record, record.committedOffset);
-                Publication publication = publisher.begin(manifest.taskId);
-                try {
-                    for (Record record : records) {
-                        throwIfCancelled();
-                        PublicationSource source = sourceFor(record);
-                        try {
-                            publication.publishNoReplace(record.target, source);
-                            source.assertFullyConsumedAndClosed();
-                        } catch (Throwable publishError) {
-                            source.closeLeakedStream(publishError);
-                            throw publishError;
-                        }
-                    }
+                List<SealedFile> files = new ArrayList<>(records.size());
+                for (Record record : records) {
+                    verifyFile(record, record.committedOffset);
                     throwIfCancelled();
-                    publication.commit();
-                } catch (Throwable publishError) {
-                    try { publication.rollback(); }
-                    catch (Throwable rollbackError) { publishError.addSuppressed(rollbackError); }
-                    throw publishError;
+                    files.add(new SealedFile(record.target, sourceFor(record)));
                 }
-                // A successful commit wins over concurrent cancellation. Cross-thread cancel waits
-                // for this operation lock and observes COMPLETED rather than reversing publication.
-                state = State.COMPLETED;
+                sealedTransfer = new SealedTransfer(manifest.taskId, files, staging);
+                // Successful sealing wins over a concurrent cancellation. Cross-thread cancel waits
+                // for this operation lock and observes SEALED rather than invalidating the hand-off.
+                state = State.SEALED;
                 cancelRequested = false;
                 clearKey();
-                boolean cleanupPending = false;
-                try { staging.deleteTask(manifest.taskId); }
-                catch (Throwable ignored) { cleanupPending = true; }
-                return new Completion(cleanupPending);
+                return sealedTransfer;
             } catch (Throwable error) {
                 if (state == State.RECEIVING) failAndClose();
                 throw error;
@@ -425,7 +448,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
         }
 
         // Cross-thread cancellation is linearized after the active operation. In
-        // particular, a commit that has already completed is never reversed.
+        // particular, a seal that has already completed is never reversed.
         operation.lock();
         try {
             if (state == State.RECEIVING) {
@@ -581,30 +604,30 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
         return staging.open(manifest.taskId, record.fileId);
     }
 
-    private PublicationSource sourceFor(Record record) {
-        return new PublicationSource(record);
+    private SealedSource sourceFor(Record record) {
+        return new SealedSource(record);
     }
 
-    private final class PublicationSource implements VerifiedSource {
+    private final class SealedSource implements VerifiedSource {
         private final Record record;
-        private PublicationInputStream stream;
+        private SealedInputStream stream;
         private boolean openAttempted;
         private boolean verifiedAndClosed;
 
-        PublicationSource(Record record) { this.record = record; }
+        SealedSource(Record record) { this.record = record; }
 
         @Override public String relativePath() { return record.spec.path; }
         @Override public long size() { return record.spec.size; }
 
-        @Override public InputStream open() throws Exception {
-            if (openAttempted) throw new IllegalStateException("Published source may be opened only once");
+        @Override public synchronized InputStream open() throws Exception {
+            if (openAttempted) throw new IllegalStateException("Sealed source may be opened only once");
             openAttempted = true;
             StagingFile file = openRecord(record);
             try {
                 HashVerifyingInputStream verified = new HashVerifyingInputStream(
                     file.openVerifiedInput(), record.spec.size, hexToBytes(record.spec.sha256)
                 );
-                stream = new PublicationInputStream(verified, file, this);
+                stream = new SealedInputStream(verified, file, this);
                 return stream;
             } catch (Throwable error) {
                 try { file.close(); }
@@ -613,43 +636,57 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
             }
         }
 
-        void markClosed(boolean verified) {
+        synchronized void markClosed(boolean verified) {
             verifiedAndClosed = verified;
         }
 
-        void assertFullyConsumedAndClosed() throws Exception {
+        @Override public synchronized void assertFullyConsumedAndClosed() throws Exception {
             if (!openAttempted) {
-                throw new IOException("Publisher did not open the verified source");
+                throw new IOException("Publication coordinator did not open the verified source");
             }
             if (stream == null || !stream.isClosed()) {
-                IOException error = new IOException("Publisher must fully consume and close the verified source");
+                IOException error = new IOException("Publication coordinator must fully consume and close the verified source");
                 closeLeakedStream(error);
                 throw error;
             }
             if (!verifiedAndClosed) {
-                throw new IOException("Publisher did not completely verify the published source");
+                throw new IOException("Publication coordinator did not completely verify the sealed source");
             }
         }
 
-        void closeLeakedStream(Throwable owner) {
+        synchronized void closeLeakedStream(Throwable owner) {
             if (stream == null || stream.isClosed()) return;
             try { stream.close(); }
             catch (Throwable closeError) { owner.addSuppressed(closeError); }
         }
     }
 
-    private static final class PublicationInputStream extends FilterInputStream {
+    private static final class SealedInputStream extends FilterInputStream {
         private final StagingFile file;
-        private final PublicationSource owner;
+        private final SealedSource owner;
         private boolean closed;
 
-        PublicationInputStream(InputStream input, StagingFile file, PublicationSource owner) {
+        SealedInputStream(InputStream input, StagingFile file, SealedSource owner) {
             super(input);
             this.file = file;
             this.owner = owner;
         }
 
         boolean isClosed() { return closed; }
+
+        @Override public int read() throws IOException {
+            requireOpen();
+            return super.read();
+        }
+
+        @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+            requireOpen();
+            return super.read(buffer, offset, length);
+        }
+
+        private void requireOpen() throws IOException {
+            if (closed) throw new IOException("Verified publication source is closed");
+        }
 
         @Override public void close() throws IOException {
             if (closed) return;
@@ -664,7 +701,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
             }
             owner.markClosed(failure == null);
             if (failure instanceof IOException) throw (IOException) failure;
-            if (failure != null) throw new IOException("Unable to close verified publication source", failure);
+            if (failure != null) throw new IOException("Unable to close verified sealed source", failure);
         }
     }
 
@@ -733,7 +770,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
             else {
                 digest.update((byte) value);
                 count++;
-                if (count > expectedSize) throw new IOException("Published source exceeds its verified size");
+                if (count > expectedSize) throw new IOException("Sealed source exceeds its verified size");
             }
             return value;
         }
@@ -744,7 +781,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
             else if (read > 0) {
                 digest.update(buffer, offset, read);
                 count += read;
-                if (count > expectedSize) throw new IOException("Published source exceeds its verified size");
+                if (count > expectedSize) throw new IOException("Sealed source exceeds its verified size");
             }
             return read;
         }
@@ -771,7 +808,7 @@ final class V2EncryptedChunkWriter implements AutoCloseable {
             byte[] actual = digest.digest();
             try {
                 if (count != expectedSize || !MessageDigest.isEqual(expectedDigest, actual)) {
-                    throw new IOException("Published source no longer matches the verified manifest entry");
+                    throw new IOException("Sealed source no longer matches the verified manifest entry");
                 }
                 verified = true;
             } finally {
