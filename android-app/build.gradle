@@ -2,6 +2,7 @@ plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android' version '2.0.21'
     id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21'
+    id 'com.google.devtools.ksp' version '2.0.21-1.0.28'
 }
 
 android {
@@ -42,6 +43,10 @@ android {
     }
 
 
+    testOptions {
+        unitTests.includeAndroidResources = true
+    }
+
     sourceSets {
         test {
             resources.srcDir rootProject.file('test/fixtures')
@@ -60,9 +65,17 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.6'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
 
+    implementation 'androidx.room:room-runtime:2.6.1'
+    implementation 'androidx.room:room-ktx:2.6.1'
+    ksp 'androidx.room:room-compiler:2.6.1'
+
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20260814'
+    testImplementation 'androidx.room:room-testing:2.6.1'
+    testImplementation 'androidx.test:core:1.6.1'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
 }
