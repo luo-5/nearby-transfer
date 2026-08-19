@@ -2,6 +2,7 @@ const dgram = require('dgram');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const { fingerprintFor } = require('./crypto');
+const { multicastInterfaces } = require('./multicast-interfaces');
 
 const APP_ID = 'nearby-transfer';
 const PROTOCOL_VERSION = 1;
@@ -22,6 +23,7 @@ class Discovery extends EventEmitter {
     this.peers = new Map();
     this.announceTimer = null;
     this.pruneTimer = null;
+    this.multicastInterfaces = [];
   }
 
   start() {
@@ -33,13 +35,7 @@ class Discovery extends EventEmitter {
     this.socket.on('message', (message, remote) => this._handleMessage(message, remote));
     this.socket.on('error', (error) => this.emit('error', error));
     this.socket.bind(DISCOVERY_PORT, () => {
-      try {
-        this.socket.addMembership(MULTICAST_ADDRESS);
-        this.socket.setMulticastTTL(1);
-        this.socket.setMulticastLoopback(true);
-      } catch (error) {
-        this.emit('error', error);
-      }
+      this._configureMulticast();
 
       this.announce();
       this.announceTimer = setInterval(() => this.announce(), ANNOUNCE_INTERVAL_MS);
@@ -59,6 +55,7 @@ class Discovery extends EventEmitter {
     if (this.socket) {
       this.socket.close();
       this.socket = null;
+      this.multicastInterfaces = [];
     }
   }
 
@@ -80,7 +77,43 @@ class Discovery extends EventEmitter {
       timestamp: Date.now()
     }));
 
-    this.socket.send(payload, 0, payload.length, DISCOVERY_PORT, MULTICAST_ADDRESS);
+    const interfaces = this.multicastInterfaces;
+    if (interfaces.length === 0) {
+      this.socket.send(payload, 0, payload.length, DISCOVERY_PORT, MULTICAST_ADDRESS);
+      return;
+    }
+    for (const interfaceAddress of interfaces) {
+      try {
+        this.socket.setMulticastInterface(interfaceAddress);
+        this.socket.send(payload, 0, payload.length, DISCOVERY_PORT, MULTICAST_ADDRESS);
+      } catch (error) {
+        this.emit('error', error);
+      }
+    }
+  }
+
+  _configureMulticast() {
+    const socket = this.socket;
+    if (!socket) return;
+    socket.setMulticastTTL(1);
+    socket.setMulticastLoopback(true);
+    const joined = [];
+    for (const interfaceAddress of multicastInterfaces()) {
+      try {
+        socket.addMembership(MULTICAST_ADDRESS, interfaceAddress);
+        joined.push(interfaceAddress);
+      } catch (error) {
+        this.emit('error', error);
+      }
+    }
+    if (joined.length === 0) {
+      try {
+        socket.addMembership(MULTICAST_ADDRESS);
+      } catch (error) {
+        this.emit('error', error);
+      }
+    }
+    this.multicastInterfaces = joined;
   }
 
   listPeers() {

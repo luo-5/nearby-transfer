@@ -6,6 +6,7 @@ const { EventEmitter } = require('events');
 const { TextDecoder } = require('util');
 const { APP_ID, MESSAGE_TYPES, MAX_CAPABILITIES, MAX_CAPABILITY_LENGTH, MAX_DEVICE_NAME_LENGTH, PROTOCOL_VERSION } = require('./constants');
 const { canonicalJson, parseCanonicalJson } = require('./canonical-json');
+const { multicastInterfaces } = require('../core/multicast-interfaces');
 const { assertValidPublicIdentity, publicIdentity } = require('./pairing');
 
 const MULTICAST_ADDRESS = '239.255.77.77';
@@ -31,6 +32,7 @@ class V2Discovery extends EventEmitter {
     this.peers = new Map();
     this.announceTimer = null;
     this.pruneTimer = null;
+    this.multicastInterfaces = [];
   }
 
   start() {
@@ -41,13 +43,7 @@ class V2Discovery extends EventEmitter {
     socket.on('error', (error) => this.emit('error', error));
     socket.bind(DISCOVERY_PORT, () => {
       if (socket !== this.socket) return;
-      try {
-        socket.addMembership(MULTICAST_ADDRESS);
-        socket.setMulticastTTL(1);
-        socket.setMulticastLoopback(true);
-      } catch (error) {
-        this.emit('error', error);
-      }
+      this._configureMulticast(socket);
       this.announce();
       this.announceTimer = setInterval(() => this.announce(), this.announceIntervalMs);
       this.pruneTimer = setInterval(() => this._prunePeers(), this.announceIntervalMs);
@@ -61,6 +57,7 @@ class V2Discovery extends EventEmitter {
     this.pruneTimer = null;
     if (this.socket) this.socket.close();
     this.socket = null;
+    this.multicastInterfaces = [];
     this.peers.clear();
   }
 
@@ -77,10 +74,44 @@ class V2Discovery extends EventEmitter {
         ...announcement,
         signature: signDiscoveryAnnouncement(announcement, this.device.signingPrivateKey)
       }), 'utf8');
-      this.socket.send(encoded, 0, encoded.length, DISCOVERY_PORT, MULTICAST_ADDRESS);
+      const interfaces = this.multicastInterfaces;
+      if (interfaces.length === 0) {
+        this.socket.send(encoded, 0, encoded.length, DISCOVERY_PORT, MULTICAST_ADDRESS);
+        return;
+      }
+      for (const interfaceAddress of interfaces) {
+        try {
+          this.socket.setMulticastInterface(interfaceAddress);
+          this.socket.send(encoded, 0, encoded.length, DISCOVERY_PORT, MULTICAST_ADDRESS);
+        } catch (error) {
+          this.emit('error', error);
+        }
+      }
     } catch (error) {
       this.emit('error', error);
     }
+  }
+
+  _configureMulticast(socket) {
+    socket.setMulticastTTL(1);
+    socket.setMulticastLoopback(true);
+    const joined = [];
+    for (const interfaceAddress of multicastInterfaces()) {
+      try {
+        socket.addMembership(MULTICAST_ADDRESS, interfaceAddress);
+        joined.push(interfaceAddress);
+      } catch (error) {
+        this.emit('error', error);
+      }
+    }
+    if (joined.length === 0) {
+      try {
+        socket.addMembership(MULTICAST_ADDRESS);
+      } catch (error) {
+        this.emit('error', error);
+      }
+    }
+    this.multicastInterfaces = joined;
   }
 
   listPeers() {
