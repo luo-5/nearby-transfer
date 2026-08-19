@@ -7,7 +7,7 @@ All notable changes to Nearby Transfer will be documented in this file.
 ### Foundation
 
 - Added the version 2 protocol contract, deterministic canonical JSON rules, and a signed pairing-offer foundation.
-- Added a cross-platform pairing-code test vector verified by desktop Node and Android JVM tests.
+- Added a cross-platform pairing-code test vector verified by desktop Node and Android JVM tests.`n- Added a versioned SQLite trusted-peer store with explicit transfer and file-library grants.
 - Documented the v1.0 module boundaries, trust model, migration policy, and planned authenticated message families.
 
 ## 0.2.0 - Unreleased

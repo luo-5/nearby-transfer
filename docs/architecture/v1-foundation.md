@@ -30,7 +30,7 @@ validated request/response contract.
 
 ## Durable data
 
-Desktop will migrate from `device.json` to a versioned local database while
+Desktop will migrate from `device.json` to a versioned SQLite database using the Electron runtime's `node:sqlite` support while
 retaining the current local identity. Android will use the corresponding Room
 schema. The first schemas are:
 
@@ -42,7 +42,7 @@ schema. The first schemas are:
 - `shared_libraries` and `library_grants`: desktop-only directory configuration
   and per-peer permissions.
 
-Private identity keys remain in platform-appropriate protected storage where
+The initial trusted-peer schema is implemented in `src/v2/trusted-peer-store.js`; it stores public peer identities and grants only. Private identity keys remain in platform-appropriate protected storage where
 possible; database rows contain references or encrypted material, never UI
 exports.
 
