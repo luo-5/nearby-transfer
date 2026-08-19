@@ -5,6 +5,10 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import io.github.nearbytransfer.android.core.data.local.NearbyTransferDatabase
+import io.github.nearbytransfer.android.core.data.local.TransferJobEntity
+import io.github.nearbytransfer.android.core.publication.PublicationFileState as CoordinatorPublicationFileState
+import io.github.nearbytransfer.android.core.publication.PublicationState as CoordinatorPublicationState
+import io.github.nearbytransfer.android.core.publication.RoomPublicationJournal
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
@@ -209,6 +213,268 @@ class RoomTransferJobRepositoryTest {
     }
 
     @Test
+    fun incomingJobsPersistCanonicalCheckpointAndAdvanceWithRevisionCas() = runBlocking {
+        val taskId = taskId(8)
+        val outgoingId = taskId(9)
+        val incoming = repository.createIncoming(
+            taskId,
+            "0123456789abcdef",
+            manifest(taskId, 10),
+            true,
+            1,
+        )
+        val outgoing = repository.createOutgoing(
+            outgoingId,
+            "0123456789abcdef",
+            manifest(outgoingId, 10),
+            true,
+            1,
+        )
+        assertNotNull(incoming.checkpointJson)
+        assertEquals(ReceiveCheckpointCodec.createInitial(incoming.manifestJson).json, incoming.checkpointJson)
+        assertNull(outgoing.checkpointJson)
+        assertEquals(0L, incoming.revision)
+
+        repository.transition(taskId, TransferJobState.QUEUED, 2)
+        repository.transition(taskId, TransferJobState.TRANSFERRING, 3)
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.updateProgress(taskId, 10, 4) }
+        }
+
+        val candidate = requireNotNull(repository.find(taskId)?.checkpointJson)
+            .replace("\"committedOffset\":0", "\"committedOffset\":10")
+            .replace("\"completed\":false", "\"completed\":true")
+            .replace("\"nextSequence\":0", "\"nextSequence\":1")
+            .replace("\"transferredBytes\":0", "\"transferredBytes\":10")
+        val advanced = requireNotNull(repository.updateReceiveCheckpoint(taskId, candidate, 4))
+        assertEquals(10L, advanced.transferredBytes)
+        assertEquals(3L, advanced.revision)
+        assertEquals(candidate, advanced.checkpointJson)
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.updateReceiveCheckpoint(taskId, incoming.checkpointJson!!, 5) }
+        }
+        Unit
+    }
+
+    @Test
+    fun publicationLifecycleRequiresCleanupAndDedicatedIncomingFinalization() = runBlocking {
+        val taskId = taskId(10)
+        repository.createIncoming(taskId, "0123456789abcdef", manifest(taskId, 10), true, 1)
+        repository.transition(taskId, TransferJobState.QUEUED, 2)
+        repository.transition(taskId, TransferJobState.TRANSFERRING, 3)
+        val initial = requireNotNull(repository.find(taskId)?.checkpointJson)
+        val full = initial
+            .replace("\"committedOffset\":0", "\"committedOffset\":10")
+            .replace("\"completed\":false", "\"completed\":true")
+            .replace("\"nextSequence\":0", "\"nextSequence\":1")
+            .replace("\"transferredBytes\":0", "\"transferredBytes\":10")
+        repository.updateReceiveCheckpoint(taskId, full, 4)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.transition(taskId, TransferJobState.COMPLETED, 5) }
+        }
+        val prepared = requireNotNull(
+            repository.preparePublication(
+                taskId,
+                "publication-10",
+                PublicationBackend.MEDIA_STORE,
+                "content://media/root",
+                5,
+            ),
+        )
+        assertEquals(PublicationState.PREPARED, prepared.publicationState)
+        assertEquals(PublicationBackend.MEDIA_STORE, prepared.publicationBackend)
+        assertEquals("content://media/root", prepared.publicationRootToken)
+
+        assertTrue(repository.loadRecoveryWork().any { it.taskId == taskId })
+        val journal = RoomPublicationJournal(database, "content://media/root") { 7L }
+        val current = requireNotNull(journal.load("publication-10"))
+        val published = current.copy(
+            files = current.files.map { file ->
+                file.copy(
+                    state = CoordinatorPublicationFileState.PUBLISHED,
+                    targetToken = "content://media/file-${file.spec.index}",
+                    observedSize = file.spec.size,
+                    observedSha256 = file.spec.sha256,
+                )
+            },
+            state = CoordinatorPublicationState.PUBLISHED,
+            revision = current.revision + 1L,
+        )
+        assertTrue(journal.compareAndSet("publication-10", current.revision, published))
+        assertTrue(requireNotNull(repository.find(taskId)).cleanupPending)
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.finalizePublication(taskId, "publication-10", 8) }
+        }
+        val cleaned = requireNotNull(repository.markCleanupComplete(taskId, "publication-10", 8))
+        assertFalse(cleaned.cleanupPending)
+        val completed = requireNotNull(repository.finalizePublication(taskId, "publication-10", 9))
+        assertEquals(TransferJobState.COMPLETED, completed.state)
+        assertEquals(PublicationState.PUBLISHED, completed.publicationState)
+        assertFalse(completed.recoverable)
+        Unit
+    }
+
+    @Test
+    fun publicationPreparationIsIdempotentOnlyForTheExactIdentity() = runBlocking {
+        val taskId = createFullyReceivedIncoming(12)
+        val first = requireNotNull(
+            repository.preparePublication(
+                taskId,
+                "publication-12",
+                PublicationBackend.MEDIA_STORE,
+                "content://media/root",
+                5,
+            ),
+        )
+        val repeated = requireNotNull(
+            repository.preparePublication(
+                taskId,
+                "publication-12",
+                PublicationBackend.MEDIA_STORE,
+                "content://media/root",
+                6,
+            ),
+        )
+        assertEquals(first.publicationId, repeated.publicationId)
+        assertEquals(first.revision, repeated.revision)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.preparePublication(
+                    taskId,
+                    "publication-12",
+                    PublicationBackend.MEDIA_STORE,
+                    "content://media/other",
+                    6,
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.preparePublication(
+                    taskId,
+                    "publication-12",
+                    PublicationBackend.SAF_TREE,
+                    "content://media/root",
+                    6,
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.preparePublication(
+                    taskId,
+                    "publication-other",
+                    PublicationBackend.MEDIA_STORE,
+                    "content://media/root",
+                    6,
+                )
+            }
+        }
+        Unit
+    }
+
+    @Test
+    fun activePublicationMustCancelAndCleanBeforeTransferCancellation() = runBlocking {
+        val taskId = createFullyReceivedIncoming(13)
+        repository.preparePublication(
+            taskId,
+            "publication-13",
+            PublicationBackend.MEDIA_STORE,
+            "content://media/root",
+            5,
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.transition(taskId, TransferJobState.CANCELLED, 6) }
+        }
+
+        val journal = RoomPublicationJournal(database, "content://media/root") { 6L }
+        val current = requireNotNull(journal.load("publication-13"))
+        val cancelled = current.copy(
+            files = current.files.map { it.copy(state = CoordinatorPublicationFileState.ABORTED) },
+            state = CoordinatorPublicationState.CANCELLED,
+            cancelRequested = true,
+            cleanupPending = false,
+            revision = current.revision + 1L,
+        )
+        assertTrue(journal.compareAndSet("publication-13", current.revision, cancelled))
+        assertTrue(requireNotNull(repository.find(taskId)).cleanupPending)
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.transition(taskId, TransferJobState.CANCELLED, 7) }
+        }
+
+        val cleaned = requireNotNull(repository.markCleanupComplete(taskId, "publication-13", 7))
+        assertFalse(cleaned.cleanupPending)
+        val terminal = requireNotNull(repository.transition(taskId, TransferJobState.CANCELLED, 8))
+        assertEquals(TransferJobState.CANCELLED, terminal.state)
+        assertEquals(PublicationState.CANCELLED, terminal.publicationState)
+        Unit
+    }
+
+    @Test
+    fun cancelledPartialCleanupClearsAndLegacyUnverifiedJobsLoadForRecovery() = runBlocking {
+        val partialTaskId = createFullyReceivedIncoming(14)
+        repository.preparePublication(
+            partialTaskId,
+            "publication-14",
+            PublicationBackend.MEDIA_STORE,
+            "content://media/root",
+            5,
+        )
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE transfer_jobs SET publication_state = 'PARTIAL', " +
+                "publication_cancel_requested = 1, cleanup_pending = 1, revision = revision + 1 " +
+                "WHERE task_id = ?",
+            arrayOf(partialTaskId),
+        )
+        val cleaned = requireNotNull(repository.markCleanupComplete(partialTaskId, "publication-14", 6))
+        assertFalse(cleaned.cleanupPending)
+        assertEquals(PublicationState.PARTIAL, cleaned.publicationState)
+        assertTrue(cleaned.publicationCancelRequested)
+
+        val legacyTaskId = taskId(15)
+        database.transferJobDao().insert(
+            TransferJobEntity(
+                taskId = legacyTaskId,
+                peerId = "0123456789abcdef",
+                direction = TransferDirection.INCOMING.name,
+                state = TransferJobState.COMPLETED.name,
+                manifestJson = TransferManifestCodec.normalize(manifest(legacyTaskId, 10)).json,
+                totalBytes = 10,
+                transferredBytes = 10,
+                createdAtEpochMillis = 1,
+                updatedAtEpochMillis = 1,
+                recoverable = false,
+                failureReason = null,
+                publicationState = PublicationState.LEGACY_UNVERIFIED.name,
+            ),
+        )
+        assertTrue(repository.loadRecoveryWork().any { it.taskId == legacyTaskId })
+        Unit
+    }
+
+    @Test
+    fun corruptV4CheckpointAndPublicationFieldsAreQuarantined() = runBlocking {
+        val taskId = taskId(11)
+        repository.createIncoming(taskId, "0123456789abcdef", manifest(taskId, 10), true, 1)
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE transfer_jobs SET transferred_bytes = 5, publication_state = 'PREPARED', " +
+                "publication_id = 'publication-11', publication_backend = NULL, " +
+                "publication_root_token = 'content://root', revision = -1 WHERE task_id = ?",
+            arrayOf(taskId),
+        )
+
+        assertNull(repository.find(taskId))
+        val quarantined = requireNotNull(database.transferJobDao().findRaw(taskId))
+        assertEquals("QUARANTINED", quarantined.state)
+        assertNull(quarantined.checkpointJson)
+        assertNull(quarantined.publicationId)
+        assertNull(quarantined.publicationRootToken)
+        Unit
+    }
+
+    @Test
     fun rejectsInvalidIdentifiersManifestSecretsAndTimestamps() = runBlocking {
         val taskId = taskId(7)
         assertThrows(IllegalArgumentException::class.java) {
@@ -232,6 +498,21 @@ class RoomTransferJobRepositoryTest {
             runBlocking { repository.createOutgoing(taskId, "0123456789abcdef", manifest(taskId, 1), true, 0) }
         }
         Unit
+    }
+
+    private suspend fun createFullyReceivedIncoming(seed: Int, size: Long = 10L): String {
+        val taskId = taskId(seed)
+        repository.createIncoming(taskId, "0123456789abcdef", manifest(taskId, size), true, 1)
+        repository.transition(taskId, TransferJobState.QUEUED, 2)
+        repository.transition(taskId, TransferJobState.TRANSFERRING, 3)
+        val initial = requireNotNull(repository.find(taskId)?.checkpointJson)
+        val completed = initial
+            .replace("\"committedOffset\":0", "\"committedOffset\":$size")
+            .replace("\"completed\":false", "\"completed\":true")
+            .replace("\"nextSequence\":0", "\"nextSequence\":1")
+            .replace("\"transferredBytes\":0", "\"transferredBytes\":$size")
+        repository.updateReceiveCheckpoint(taskId, completed, 4)
+        return taskId
     }
 
     private fun createVersionTwoDatabase(context: Context, name: String) {

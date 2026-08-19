@@ -28,4 +28,13 @@ data class TransferJob(
     val updatedAtEpochMillis: Long,
     val recoverable: Boolean,
     val failureReason: String?,
+    val checkpointJson: String? = null,
+    val publicationState: PublicationState = PublicationState.NONE,
+    val publicationId: String? = null,
+    val publicationBackend: PublicationBackend? = null,
+    val publicationRootToken: String? = null,
+    val publicationError: String? = null,
+    val publicationCancelRequested: Boolean = false,
+    val cleanupPending: Boolean = false,
+    val revision: Long = 0,
 )

@@ -48,10 +48,22 @@ android {
     }
 
     sourceSets {
+        debug {
+            assets.srcDir file('schemas')
+        }
         test {
             resources.srcDir rootProject.file('test/fixtures')
+            resources.srcDir file('schemas')
+            assets.srcDir file('schemas')
+        }
+        androidTest {
+            assets.srcDir file('schemas')
         }
     }
+}
+
+ksp {
+    arg("room.schemaLocation", file("$projectDir/schemas").path)
 }
 
 dependencies {

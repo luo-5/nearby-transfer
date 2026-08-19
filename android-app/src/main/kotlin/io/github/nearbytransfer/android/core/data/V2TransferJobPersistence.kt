@@ -43,6 +43,11 @@ object V2TransferJobPersistence {
     }
 
     @JvmStatic
+    fun listRecoveryWork(context: Context): List<TransferJob> = withRepository(context) {
+        it.loadRecoveryWork()
+    }
+
+    @JvmStatic
     fun transition(
         context: Context,
         taskId: String,
@@ -51,11 +56,7 @@ object V2TransferJobPersistence {
         failureReason: String?,
         recoverable: Boolean?,
     ): TransferJob? {
-        val state = try {
-            TransferJobState.valueOf(newState)
-        } catch (error: IllegalArgumentException) {
-            throw IllegalArgumentException("Unknown transfer state.", error)
-        }
+        val state = parseEnum<TransferJobState>(newState, "Unknown transfer state.")
         return withRepository(context) {
             it.transition(taskId, state, nowEpochMillis, failureReason, recoverable)
         }
@@ -69,6 +70,53 @@ object V2TransferJobPersistence {
         nowEpochMillis: Long,
     ): TransferJob? = withRepository(context) {
         it.updateProgress(taskId, transferredBytes, nowEpochMillis)
+    }
+
+    @JvmStatic
+    fun updateReceiveCheckpoint(
+        context: Context,
+        taskId: String,
+        candidateCheckpointJson: String,
+        nowEpochMillis: Long,
+    ): TransferJob? = withRepository(context) {
+        it.updateReceiveCheckpoint(taskId, candidateCheckpointJson, nowEpochMillis)
+    }
+
+    @JvmStatic
+    fun preparePublication(
+        context: Context,
+        taskId: String,
+        publicationId: String,
+        publicationBackend: String,
+        publicationRootToken: String,
+        nowEpochMillis: Long,
+    ): TransferJob? {
+        val backend = parseEnum<PublicationBackend>(publicationBackend, "Unknown publication backend.")
+        return withRepository(context) {
+            it.preparePublication(
+                taskId,
+                publicationId,
+                backend,
+                publicationRootToken,
+                nowEpochMillis,
+            )
+        }
+    }
+
+    @JvmStatic
+    fun finalizePublication(
+        context: Context,
+        taskId: String,
+        publicationId: String,
+        nowEpochMillis: Long,
+    ): TransferJob? = withRepository(context) {
+        it.finalizePublication(taskId, publicationId, nowEpochMillis)
+    }
+
+    private inline fun <reified T : Enum<T>> parseEnum(value: String, message: String): T = try {
+        enumValueOf<T>(value)
+    } catch (error: IllegalArgumentException) {
+        throw IllegalArgumentException(message, error)
     }
 
     private fun <T> withRepository(

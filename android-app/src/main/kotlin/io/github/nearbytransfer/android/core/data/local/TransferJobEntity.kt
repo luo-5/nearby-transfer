@@ -6,10 +6,12 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * Public, non-secret persisted state for a protocol-v2 transfer.
+ * Public transfer metadata and app-private recovery capabilities for a protocol-v2 transfer.
  *
- * Session keys, plaintext, local source paths, destination paths, nonces and
- * authentication material must never be added to this entity.
+ * Session keys, plaintext, arbitrary local source/destination paths, nonces and
+ * authentication material must never be added. A bounded opaque publication
+ * scope token may be stored only because it is required to resume publication;
+ * it must not be logged or sent over the network and is scrubbed on quarantine.
  */
 @Entity(
     tableName = "transfer_jobs",
@@ -17,6 +19,7 @@ import androidx.room.PrimaryKey
         Index(value = ["peer_id"]),
         Index(value = ["state"]),
         Index(value = ["updated_at_epoch_millis"]),
+        Index(value = ["publication_id"], unique = true),
     ],
 )
 data class TransferJobEntity(
@@ -40,4 +43,22 @@ data class TransferJobEntity(
     val recoverable: Boolean,
     @ColumnInfo(name = "failure_reason")
     val failureReason: String?,
+    @ColumnInfo(name = "checkpoint_json")
+    val checkpointJson: String? = null,
+    @ColumnInfo(name = "publication_state", defaultValue = "'NONE'")
+    val publicationState: String = "NONE",
+    @ColumnInfo(name = "publication_id")
+    val publicationId: String? = null,
+    @ColumnInfo(name = "publication_backend")
+    val publicationBackend: String? = null,
+    @ColumnInfo(name = "publication_root_token")
+    val publicationRootToken: String? = null,
+    @ColumnInfo(name = "publication_error")
+    val publicationError: String? = null,
+    @ColumnInfo(name = "publication_cancel_requested", defaultValue = "0")
+    val publicationCancelRequested: Boolean = false,
+    @ColumnInfo(name = "cleanup_pending", defaultValue = "0")
+    val cleanupPending: Boolean = false,
+    @ColumnInfo(defaultValue = "0")
+    val revision: Long = 0,
 )
