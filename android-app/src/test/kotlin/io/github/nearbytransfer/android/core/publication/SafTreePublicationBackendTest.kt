@@ -18,6 +18,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicInteger
+import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -266,7 +267,11 @@ class SafTreePublicationBackendTest {
             }
             assertArrayEquals(bytes, provider.bytesAt(relativePath))
             assertTrue(provider.countNamed(failedName) > 0)
-            assertTrue(ownershipRecords().isNotEmpty())
+            ownershipRecord(key).also { record ->
+                assertEquals("PUBLISHED", record.json.getString("phase"))
+                assertTrue(record.json.getBoolean("stagingCleanupPending"))
+                assertNotNull(record.json.optString(documentIdField(stage)).takeIf(String::isNotEmpty))
+            }
 
             val restarted = SafTreePublicationBackend(context, context.contentResolver, treeUri)
             assertEquals(BackendObjectState.PUBLISHED, restarted.publish(key, allocated.targetToken!!).state)
@@ -293,7 +298,7 @@ class SafTreePublicationBackendTest {
             backend.abort(key, allocated.targetToken)
         }
         assertArrayEquals(bytes, provider.bytes(moved))
-        assertTrue(ownershipRecords().isNotEmpty())
+        assertOwnershipRecordExists(key)
     }
 
     @Test
@@ -320,11 +325,77 @@ class SafTreePublicationBackendTest {
             backend.abort(key, allocated.targetToken)
         }
         assertArrayEquals(bytes, provider.bytes(moved))
-        assertTrue(ownershipRecords().isNotEmpty())
+        assertOwnershipRecordExists(key)
     }
 
     @Test
-    fun renameReturningNewDocumentIdRemainsProvablyPublished() {
+    fun documentIdQueryUncertaintyMakesAbortFailClosedAndRetainsExactRecord() {
+        DocumentQueryFault.entries.forEachIndexed { index, fault ->
+            val bytes = "abort query fault $fault".toByteArray()
+            val key = PublicationFileKey("publication-abort-query-$fault", index)
+            val path = "query-abort/$index.bin"
+            val allocated = backend.allocate(key, path, bytes.size.toLong(), sha256(bytes))
+            backend.write(key, allocated.targetToken!!, TrackingSource(path, bytes.size.toLong(), bytes))
+            val before = ownershipRecord(key)
+            val payloadDocumentId = before.json.getString("payloadDocumentId")
+            provider.failNextDocumentQuery(payloadDocumentId, fault)
+
+            assertThrows(IOException::class.java) {
+                backend.abort(key, allocated.targetToken)
+            }
+            assertOwnershipRecordUnchanged(key, before)
+            assertTrue(provider.documentExists(payloadDocumentId))
+        }
+    }
+
+    @Test
+    fun documentIdQueryUncertaintyMakesPublishedCleanupFailClosedAndRetainsExactRecord() {
+        DocumentQueryFault.entries.forEachIndexed { index, fault ->
+            val bytes = "cleanup query fault $fault".toByteArray()
+            val key = PublicationFileKey("publication-cleanup-query-$fault", index)
+            val path = "query-cleanup/$index.bin"
+            val allocated = backend.allocate(key, path, bytes.size.toLong(), sha256(bytes))
+            backend.write(key, allocated.targetToken!!, TrackingSource(path, bytes.size.toLong(), bytes))
+            val payloadDocumentId = ownershipRecord(key).json.getString("payloadDocumentId")
+            provider.failDocumentQueryAfterNextRename(payloadDocumentId, fault)
+
+            assertThrows(PublicationException::class.java) {
+                backend.publish(key, allocated.targetToken!!)
+            }
+            assertArrayEquals(bytes, provider.bytesAt(path))
+            ownershipRecord(key).also { retained ->
+                assertEquals("PUBLISHED", retained.json.getString("phase"))
+                assertTrue(retained.json.getBoolean("stagingCleanupPending"))
+                assertEquals(payloadDocumentId, retained.json.getString("payloadDocumentId"))
+            }
+
+            val restarted = SafTreePublicationBackend(context, context.contentResolver, treeUri)
+            assertEquals(BackendObjectState.PUBLISHED, restarted.publish(key, allocated.targetToken!!).state)
+        }
+    }
+
+    @Test
+    fun publishedCleanupConfirmsDeletionWhenProviderThrowsAfterSideEffect() {
+        val bytes = "cleanup after delete side effect".toByteArray()
+        val key = PublicationFileKey("publication-cleanup-delete-side-effect", 0)
+        val path = "cleanup/delete-side-effect.bin"
+        val allocated = backend.allocate(key, path, bytes.size.toLong(), sha256(bytes))
+        backend.write(key, allocated.targetToken!!, TrackingSource(path, bytes.size.toLong(), bytes))
+        provider.throwAfterDeletingName = "payload.part"
+
+        assertEquals(BackendObjectState.PUBLISHED, backend.publish(key, allocated.targetToken!!).state)
+        ownershipRecord(key).also { record ->
+            assertEquals("PUBLISHED", record.json.getString("phase"))
+            assertFalse(record.json.getBoolean("stagingCleanupPending"))
+            assertTrue(record.json.isNull("payloadDocumentId"))
+            assertTrue(record.json.isNull("markerDocumentId"))
+            assertTrue(record.json.isNull("fileDirectoryDocumentId"))
+        }
+        assertArrayEquals(bytes, provider.bytesAt(path))
+    }
+
+    @Test
+    fun renameReturningNewDocumentIdFailsClosedAndRetainsOwnership() {
         val bytes = "provider changes rename id".toByteArray()
         val key = PublicationFileKey("publication-renamed-id", 0)
         val allocated = backend.allocate(key, "renamed-id.bin", bytes.size.toLong(), sha256(bytes))
@@ -333,12 +404,47 @@ class SafTreePublicationBackendTest {
             allocated.targetToken!!,
             TrackingSource("renamed-id.bin", bytes.size.toLong(), bytes),
         )
+        val before = ownershipRecord(key)
         provider.renameChangesDocumentId = true
 
-        assertEquals(BackendObjectState.PUBLISHED, backend.publish(key, allocated.targetToken!!).state)
-        val restarted = SafTreePublicationBackend(context, context.contentResolver, treeUri)
-        assertEquals(BackendObjectState.PUBLISHED, restarted.inspect(key).state)
+        assertThrows(PublicationConflictException::class.java) {
+            backend.publish(key, allocated.targetToken!!)
+        }
+        ownershipRecord(key).also { retained ->
+            assertEquals(before.preferenceKey, retained.preferenceKey)
+            assertEquals("PUBLISHING", retained.json.getString("phase"))
+            assertTrue(retained.json.getString("temporaryDocumentId").isNotEmpty())
+            assertTrue(retained.json.isNull("publishedDocumentId"))
+            assertFalse(provider.documentExists(retained.json.getString("temporaryDocumentId")))
+        }
         assertArrayEquals(bytes, provider.bytesAt("renamed-id.bin"))
+    }
+
+    @Test
+    fun renameChangingDocumentIdThenThrowingFailsClosedAndRetainsOwnership() {
+        val bytes = "provider changes id then throws".toByteArray()
+        val key = PublicationFileKey("publication-renamed-id-crash", 0)
+        val path = "renamed-id-crash.bin"
+        val allocated = backend.allocate(key, path, bytes.size.toLong(), sha256(bytes))
+        backend.write(key, allocated.targetToken!!, TrackingSource(path, bytes.size.toLong(), bytes))
+        val before = ownershipRecord(key)
+        provider.renameChangesDocumentId = true
+        provider.throwAfterNextRename = true
+
+        assertThrows(PublicationException::class.java) {
+            backend.publish(key, allocated.targetToken!!)
+        }
+        ownershipRecord(key).also { retained ->
+            assertEquals(before.preferenceKey, retained.preferenceKey)
+            assertEquals("PUBLISHING", retained.json.getString("phase"))
+            assertTrue(retained.json.getString("temporaryDocumentId").isNotEmpty())
+            assertTrue(retained.json.isNull("publishedDocumentId"))
+            assertFalse(provider.documentExists(retained.json.getString("temporaryDocumentId")))
+        }
+        assertArrayEquals(bytes, provider.bytesAt(path))
+        val restarted = SafTreePublicationBackend(context, context.contentResolver, treeUri)
+        assertEquals(BackendObjectState.CONFLICT, restarted.inspect(key).state)
+        assertOwnershipRecordExists(key)
     }
 
     @Test
@@ -372,8 +478,45 @@ class SafTreePublicationBackendTest {
         }
     }
 
+    private data class StoredOwnershipRecord(
+        val preferenceKey: String,
+        val encoded: String,
+        val json: JSONObject,
+    )
+
     private fun ownershipRecords() =
         context.getSharedPreferences("nearby_transfer_saf_publication_v1", Context.MODE_PRIVATE).all
+
+    private fun ownershipRecord(key: PublicationFileKey): StoredOwnershipRecord {
+        val matches = ownershipRecords().mapNotNull { (preferenceKey, value) ->
+            val encoded = value as? String ?: return@mapNotNull null
+            val json = JSONObject(encoded)
+            if (json.getString("publicationId") == key.publicationId && json.getInt("fileIndex") == key.fileIndex) {
+                StoredOwnershipRecord(preferenceKey, encoded, json)
+            } else {
+                null
+            }
+        }
+        assertEquals("Expected exactly one ownership record for $key", 1, matches.size)
+        return matches.single()
+    }
+
+    private fun assertOwnershipRecordExists(key: PublicationFileKey) {
+        ownershipRecord(key)
+    }
+
+    private fun assertOwnershipRecordUnchanged(key: PublicationFileKey, before: StoredOwnershipRecord) {
+        val after = ownershipRecord(key)
+        assertEquals(before.preferenceKey, after.preferenceKey)
+        assertEquals(before.encoded, after.encoded)
+    }
+
+    private fun documentIdField(stage: String) = when (stage) {
+        "payload" -> "payloadDocumentId"
+        "marker" -> "markerDocumentId"
+        "directory" -> "fileDirectoryDocumentId"
+        else -> error("Unknown stage $stage")
+    }
 
     private class TrackingSource(
         override val relativePath: String,
@@ -413,6 +556,8 @@ class SafTreePublicationBackendTest {
         var renameChangesDocumentId = false
         var throwBeforeDeletingName: String? = null
         var throwAfterDeletingName: String? = null
+        private var nextDocumentQueryFault: Pair<String, DocumentQueryFault>? = null
+        private var documentQueryFaultAfterRename: Pair<String, DocumentQueryFault>? = null
 
         override fun onCreate(): Boolean {
             nodes[ROOT_ID] = Node(
@@ -442,9 +587,24 @@ class SafTreePublicationBackendTest {
             }
         }
 
-        override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
+        override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor? {
             val columns = projection?.map { it }?.toTypedArray() ?: DOCUMENT_COLUMNS
-            return MatrixCursor(columns).apply { addNode(requireNode(documentId), columns) }
+            val fault = nextDocumentQueryFault?.takeIf { it.first == documentId }?.also {
+                nextDocumentQueryFault = null
+            }?.second
+            return when (fault) {
+                DocumentQueryFault.NULL_CURSOR -> null
+                DocumentQueryFault.EMPTY_CURSOR -> MatrixCursor(columns)
+                DocumentQueryFault.TEMPORARY_EXCEPTION -> throw IOException("simulated temporary document query failure")
+                null -> nodes[documentId]?.let { node ->
+                    MatrixCursor(columns).apply { addNode(node, columns) }
+                } ?: object : MatrixCursor(columns) {
+                    init { addRow(arrayOfNulls<Any?>(columns.size)) }
+                    override fun onMove(oldPosition: Int, newPosition: Int): Boolean {
+                        throw java.io.FileNotFoundException(documentId)
+                    }
+                }
+            }
         }
 
         override fun queryChildDocuments(
@@ -509,6 +669,10 @@ class SafTreePublicationBackendTest {
                 replacementId
             } else {
                 documentId
+            }
+            documentQueryFaultAfterRename?.let { pending ->
+                nextDocumentQueryFault = pending
+                documentQueryFaultAfterRename = null
             }
             if (throwAfterNextRename) {
                 throwAfterNextRename = false
@@ -593,10 +757,19 @@ class SafTreePublicationBackendTest {
             return moveOnlyNamed(node.name, newParentId, newName)
         }
 
+        fun failNextDocumentQuery(documentId: String, fault: DocumentQueryFault) {
+            nextDocumentQueryFault = documentId to fault
+        }
+
+        fun failDocumentQueryAfterNextRename(documentId: String, fault: DocumentQueryFault) {
+            documentQueryFaultAfterRename = documentId to fault
+        }
+
         fun lastNameStartingWith(prefix: String): String =
             nodes.values.last { it.name.startsWith(prefix) }.name
 
         fun countNamed(name: String): Int = nodes.values.count { it.name == name }
+        fun documentExists(documentId: String): Boolean = documentId in nodes
 
         fun exists(relativePath: String): Boolean = nodeAt(relativePath) != null
         fun countAt(relativePath: String): Int {
@@ -655,6 +828,12 @@ class SafTreePublicationBackendTest {
                 DocumentsContract.Root.COLUMN_FLAGS,
             )
         }
+    }
+
+    private enum class DocumentQueryFault {
+        NULL_CURSOR,
+        EMPTY_CURSOR,
+        TEMPORARY_EXCEPTION,
     }
 
     companion object {

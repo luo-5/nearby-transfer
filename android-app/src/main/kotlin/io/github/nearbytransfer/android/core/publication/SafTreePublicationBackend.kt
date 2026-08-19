@@ -184,13 +184,13 @@ class SafTreePublicationBackend(
                 throw PublicationException("SAF provider does not support recoverable rename", error)
             } ?: throw PublicationException("SAF provider refused rename publication")
             val renamedDocument = queryDocument(renamed)
-                ?: throw PublicationException("Provider hid the renamed destination")
             val finalDocument = findChild(destination.parent, destination.leafName)
                 ?: throw PublicationException("Provider did not expose the requested final name")
-            if (renamedDocument.documentId != finalDocument.documentId ||
+            if (renamedDocument.documentId != temporary.documentId ||
+                finalDocument.documentId != temporary.documentId ||
                 renamedDocument.name != destination.leafName
             ) {
-                throw PublicationConflictException("Renamed SAF destination identity changed")
+                throw PublicationConflictException("SAF provider did not preserve owned destination identity")
             }
             requireMatch(record, digestDocument(finalDocument.uri), "Published SAF content is corrupt")
             record = record.copy(
@@ -628,7 +628,7 @@ class SafTreePublicationBackend(
     private fun createExact(parent: Uri, mimeType: String, name: String): Document {
         val uri = DocumentsContract.createDocument(resolver, parent, mimeType, name)
             ?: throw IOException("Provider refused to create $name")
-        val created = queryDocument(uri) ?: throw IOException("Provider hid newly created $name")
+        val created = queryDocument(uri)
         if (created.name != name) {
             deleteBestEffort(created.uri)
             throw PublicationConflictException("Provider changed requested name $name")
@@ -661,11 +661,13 @@ class SafTreePublicationBackend(
         } ?: throw IOException("Provider returned no child cursor")
     }
 
-    private fun queryDocument(uri: Uri): Document? =
+    private fun queryDocument(uri: Uri): Document =
         resolver.query(uri, PROJECTION, Bundle.EMPTY, null)?.use { cursor ->
-            if (!cursor.moveToFirst()) null
-            else document(cursor.getString(0), cursor.getString(1), cursor.getString(2))
-        }
+            if (!cursor.moveToFirst()) {
+                throw IOException("Provider returned an empty document cursor")
+            }
+            document(cursor.getString(0), cursor.getString(1), cursor.getString(2))
+        } ?: throw IOException("Provider returned no document cursor")
 
     private fun queryDocumentById(documentId: String): Document? = try {
         queryDocument(DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId))

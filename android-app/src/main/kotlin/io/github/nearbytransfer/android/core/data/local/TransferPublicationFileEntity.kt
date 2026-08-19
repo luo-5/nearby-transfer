@@ -60,4 +60,3 @@ data class TransferPublicationFileEntity(
     @ColumnInfo(name = "failure_reason")
     val failureReason: String?,
 )
-

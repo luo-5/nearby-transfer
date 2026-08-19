@@ -418,4 +418,3 @@ class V2PublicationCoordinatorTest {
             .joinToString("") { "%02x".format(it) }
     }
 }
-

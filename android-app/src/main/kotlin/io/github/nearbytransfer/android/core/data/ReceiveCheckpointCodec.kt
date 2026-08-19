@@ -375,4 +375,3 @@ internal object ReceiveCheckpointCodec {
         }
     }
 }
-

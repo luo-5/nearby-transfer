@@ -449,6 +449,3 @@ class V2PublicationCoordinator(
         const val MAX_CAS_ATTEMPTS = 100
     }
 }
-
-
-

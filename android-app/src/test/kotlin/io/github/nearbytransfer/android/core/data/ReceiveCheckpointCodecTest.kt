@@ -362,4 +362,3 @@ class ReceiveCheckpointCodecTest {
         }
     """.trimIndent()
 }
-
