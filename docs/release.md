@@ -41,8 +41,8 @@ The NSIS installer remains the Windows release target and is produced by `.githu
 The Android project currently builds a debug APK with the native LAN discovery and encrypted transfer MVP. GitHub Actions installs Android SDK 35 and runs:
 
 ```bash
-gradle :android-app:testDebugUnitTest
-gradle :android-app:assembleDebug
+./gradlew :android-app:testDebugUnitTest
+./gradlew :android-app:assembleDebug
 ```
 
 The debug APK is intended for local testing. Release APK/AAB signing should be configured before public Android distribution.

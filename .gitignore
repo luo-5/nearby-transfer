@@ -6,7 +6,9 @@ release/
 nearby-transfer-dist/
 android-app/build/
 .gradle/
+.gradle-user/
 .gradle-user-home/
+.kotlin/
 .cache/
 .tmp/
 dist-test/

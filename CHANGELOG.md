@@ -14,6 +14,29 @@ All notable changes to Nearby Transfer will be documented in this file.
 - Added a narrow desktop pairing IPC facade that keeps private keys and remote-confirmation acceptance in the main process.
 - Documented the v1.0 module boundaries, trust model, migration policy, and planned authenticated message families.
 
+### Secure transfer and recovery
+
+- Added strict v2 wire framing, authenticated transfer messages, encrypted chunk readers and writers, and shared desktop/Android test vectors.
+- Added durable transfer source manifests, monotonic checkpoints, resumable stream sessions, and persistent desktop transfer jobs.
+- Added no-overwrite receive planning, safe receive-root validation, symlink rejection, and a single-concurrency desktop scheduler foundation.
+- Hardened legacy desktop and Android request parsing, connection lifecycle, pending-transfer bounds, and concurrent destination allocation.
+
+### Android migration
+
+- Added Room-backed trusted peers, resumable transfer jobs, publication journals, and tested schema migrations.
+- Added restart-safe staging access, recoverable MediaStore and SAF publication, startup recovery, and cancellation-aware cleanup.
+- Added signed v2 discovery and pairing services while keeping the Compose migration shell isolated behind a build flag.
+
+### Device management
+
+- Added signed LAN pairing sessions, persistent trust records, permission grants, revocation, display-name editing, and trusted-device controls on desktop and Android.
+- Added stricter discovery identity binding and resilient multicast interface selection across desktop and Android.
+
+### Quality and maintenance
+
+- Added deterministic failure, lifecycle, concurrency, corruption, migration, and recovery tests across Node and Android JVM suites.
+- Added a reproducible Gradle Wrapper, CI unit-test gates, dependency updates, least-privilege workflow permissions, and repository agent guidance.
+
 ## 0.2.0 - Unreleased
 
 ### Security and reliability

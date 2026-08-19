@@ -2,7 +2,14 @@
 
 Nearby Transfer is an encrypted local-network file transfer app for nearby devices. The current targets are Linux and Windows through Electron, plus an Android client as a separate app that reuses the same protocol.
 
-## Current MVP
+## Current Status
+
+The v0.2 desktop and Android transfer flow remains usable while protocol v2 and the v1.0
+architecture are developed on the `next/1.0` branch. Protocol-v2 persistence, pairing,
+encrypted chunking, recovery, and migration foundations are present, but v1.0 is not yet a
+release candidate.
+
+### v0.2 Transfer Flow
 
 - Finds other running app instances on the same LAN with UDP multicast.
 - Sends files directly between devices without a relay server.
@@ -69,8 +76,16 @@ The Windows NSIS installer requires Wine when cross-building from Linux, or a na
 
 ## Build Android APK
 
+On Windows:
+
+```powershell
+.\gradlew.bat :android-app:assembleDebug
+```
+
+On Linux and macOS:
+
 ```bash
-gradle :android-app:assembleDebug
+./gradlew :android-app:assembleDebug
 ```
 
 The Android project is a native client under `android-app/` that reuses the same discovery and encrypted transfer protocol. See `docs/android.md` for Android compatibility notes.
