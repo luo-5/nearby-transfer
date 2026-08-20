@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.OpenableColumns;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -26,7 +27,6 @@ import android.widget.TextView;
 
 import java.io.File;
 import java.text.DateFormat;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -40,6 +40,9 @@ public class MainActivity extends Activity {
     private static final int REQUEST_NEARBY_WIFI = 1002;
     private static final int REQUEST_SAVE_TREE = 1003;
     private static final int REQUEST_STORAGE_WRITE = 1004;
+    private static final int TAB_TRANSFER = 0;
+    private static final int TAB_DEVICES = 1;
+    private static final int TAB_SETTINGS = 2;
     private static final String PREFS_NAME = "nearby-transfer";
     private static final String PREF_SAVE_TREE_URI = "saveTreeUri";
 
@@ -59,10 +62,13 @@ public class MainActivity extends Activity {
     private static final int COLOR_DISABLED = Color.rgb(148, 163, 184);
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final ArrayDeque<String> logs = new ArrayDeque<>();
+    private final BoundedLogBuffer logs = new BoundedLogBuffer(80);
     private final Object coreLifecycleLock = new Object();
     private volatile boolean activityDestroyed;
     private boolean coreStarting;
+    private boolean hasPendingPairingAction;
+    private boolean logFollowLatest = true;
+    private int selectedTab = TAB_TRANSFER;
 
     private DeviceConfig device;
     private HttpTransferServer transferServer;
@@ -81,12 +87,25 @@ public class MainActivity extends Activity {
     private TextView selectedFileText;
     private TextView statusText;
     private TextView logText;
+    private ScrollView contentScroll;
+    private ScrollView logScroll;
     private LinearLayout peersLayout;
     private LinearLayout v2PeersLayout;
     private LinearLayout v2SessionsLayout;
     private LinearLayout trustedPeersLayout;
+    private LinearLayout progressCard;
+    private LinearLayout localDetailsLayout;
+    private LinearLayout transferSection;
+    private LinearLayout devicesSection;
+    private LinearLayout settingsSection;
     private TextView v2StatusText;
+    private TextView v2SessionTitle;
     private TextView trustedPeersStatusText;
+    private TextView transferTab;
+    private TextView devicesTab;
+    private TextView settingsTab;
+    private Button localDetailsButton;
+    private Button resetSaveButton;
     private Button sendButton;
     private ProgressBar transferProgress;
     private TextView progressTitleText;
@@ -189,47 +208,68 @@ public class MainActivity extends Activity {
     }
 
     private void buildUi() {
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setFillViewport(true);
-        scrollView.setBackgroundColor(COLOR_BG);
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+        screen.setBackgroundColor(COLOR_BG);
+
+        contentScroll = new ScrollView(this);
+        contentScroll.setFillViewport(true);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(18), dp(18), dp(28));
-        scrollView.addView(root, new ScrollView.LayoutParams(
+        root.setPadding(dp(12), 0, dp(12), dp(20));
+        contentScroll.addView(root, new ScrollView.LayoutParams(
             ScrollView.LayoutParams.MATCH_PARENT,
             ScrollView.LayoutParams.WRAP_CONTENT
         ));
 
-        LinearLayout hero = cardGradient(COLOR_NAVY, COLOR_PRIMARY_DARK);
-        hero.setPadding(dp(20), dp(20), dp(20), dp(20));
-        TextView eyebrow = pill("Nearby Transfer", Color.argb(46, 255, 255, 255), Color.WHITE);
-        TextView title = text("附近传输", 34, Color.WHITE, Typeface.BOLD);
-        title.setPadding(0, dp(14), 0, 0);
-        TextView subtitle = text("点对点加密传文件，不经过云端。", 15, Color.rgb(210, 245, 240), Typeface.NORMAL);
-        subtitle.setPadding(0, dp(6), 0, 0);
-        statusText = pill("正在启动...", Color.argb(42, 255, 255, 255), Color.WHITE);
+        LinearLayout appHeader = new LinearLayout(this);
+        appHeader.setOrientation(LinearLayout.VERTICAL);
+        appHeader.setPadding(dp(16), dp(12), dp(16), dp(10));
+        TextView title = text("Nearby Transfer", 26, COLOR_TEXT, Typeface.BOLD);
+        statusText = text("正在启动...", 13, COLOR_MUTED, Typeface.NORMAL);
+        statusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        statusText.setPadding(dp(12), dp(9), dp(12), dp(9));
+        statusText.setBackground(roundedStroke(COLOR_SURFACE, dp(8), COLOR_BORDER, 1));
         LinearLayout.LayoutParams statusParams = matchWrap();
-        statusParams.setMargins(0, dp(16), 0, 0);
-        hero.addView(eyebrow, wrapContent());
-        hero.addView(title, matchWrap());
-        hero.addView(subtitle, matchWrap());
-        hero.addView(statusText, statusParams);
+        statusParams.setMargins(0, dp(8), 0, 0);
+        appHeader.addView(title, matchWrap());
+        appHeader.addView(statusText, statusParams);
+        screen.addView(appHeader, matchWrap());
 
-        LinearLayout quickStats = new LinearLayout(this);
-        quickStats.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams quickStatsParams = matchWrap();
-        quickStatsParams.setMargins(0, dp(16), 0, 0);
-        quickStats.addView(heroMetric("LAN", "本地连接"), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        LinearLayout.LayoutParams metricMiddle = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        metricMiddle.setMargins(dp(8), 0, dp(8), 0);
-        quickStats.addView(heroMetric("AES", "端到端加密"), metricMiddle);
-        quickStats.addView(heroMetric("SHA", "完整校验"), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        hero.addView(quickStats, quickStatsParams);
-        root.addView(hero, cardParams());
+        LinearLayout navigation = new LinearLayout(this);
+        navigation.setOrientation(LinearLayout.HORIZONTAL);
+        navigation.setPadding(dp(4), dp(4), dp(4), dp(4));
+        navigation.setBackground(roundedStroke(COLOR_SURFACE, dp(8), COLOR_BORDER, 1));
+        transferTab = navigationTab("传输", TAB_TRANSFER);
+        devicesTab = navigationTab("设备", TAB_DEVICES);
+        settingsTab = navigationTab("设置", TAB_SETTINGS);
+        navigation.addView(transferTab, new LinearLayout.LayoutParams(0, dp(44), 1));
+        LinearLayout.LayoutParams devicesTabParams = new LinearLayout.LayoutParams(0, dp(44), 1);
+        devicesTabParams.setMargins(dp(4), 0, dp(4), 0);
+        navigation.addView(devicesTab, devicesTabParams);
+        navigation.addView(settingsTab, new LinearLayout.LayoutParams(0, dp(44), 1));
+        LinearLayout.LayoutParams navigationParams = matchWrap();
+        navigationParams.setMargins(dp(12), 0, dp(12), dp(10));
+        screen.addView(navigation, navigationParams);
+        screen.addView(contentScroll, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1
+        ));
+
+        transferSection = new LinearLayout(this);
+        transferSection.setOrientation(LinearLayout.VERTICAL);
+        devicesSection = new LinearLayout(this);
+        devicesSection.setOrientation(LinearLayout.VERTICAL);
+        settingsSection = new LinearLayout(this);
+        settingsSection.setOrientation(LinearLayout.VERTICAL);
+        root.addView(transferSection, matchWrap());
+        root.addView(devicesSection, matchWrap());
+        root.addView(settingsSection, matchWrap());
 
         LinearLayout fileCard = card(COLOR_SURFACE);
-        addCardHeader(fileCard, "发送文件", "选择文件，再选中附近设备即可开始。");
+        addSectionTitle(fileCard, "发送文件");
         Button chooseButton = new Button(this);
         chooseButton.setText("选择要发送的文件");
         chooseButton.setAllCaps(false);
@@ -238,22 +278,13 @@ public class MainActivity extends Activity {
         fileCard.addView(chooseButton, matchWrap());
 
         selectedFileText = text("未选择文件。", 15, COLOR_TEXT, Typeface.NORMAL);
-        selectedFileText.setPadding(dp(14), dp(12), dp(14), dp(12));
-        selectedFileText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+        selectedFileText.setMaxLines(2);
+        selectedFileText.setEllipsize(TextUtils.TruncateAt.END);
+        selectedFileText.setPadding(dp(12), dp(10), dp(12), dp(10));
+        selectedFileText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
         LinearLayout.LayoutParams selectedFileParams = matchWrap();
         selectedFileParams.setMargins(0, dp(12), 0, dp(12));
         fileCard.addView(selectedFileText, selectedFileParams);
-
-        LinearLayout sendTips = new LinearLayout(this);
-        sendTips.setOrientation(LinearLayout.HORIZONTAL);
-        sendTips.addView(chip("1 选文件"), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        LinearLayout.LayoutParams chipMiddle = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        chipMiddle.setMargins(dp(8), 0, dp(8), 0);
-        sendTips.addView(chip("2 选设备"), chipMiddle);
-        sendTips.addView(chip("3 确认发送"), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        LinearLayout.LayoutParams tipsParams = matchWrap();
-        tipsParams.setMargins(0, 0, 0, dp(12));
-        fileCard.addView(sendTips, tipsParams);
 
         sendButton = new Button(this);
         sendButton.setText("发送到选中设备");
@@ -261,16 +292,16 @@ public class MainActivity extends Activity {
         sendButton.setEnabled(false);
         styleButton(sendButton, true);
         sendButton.setOnClickListener(v -> sendSelectedFile());
-        fileCard.addView(sendButton, matchWrap());
-        root.addView(fileCard, cardParams());
+        transferSection.addView(fileCard, cardParams());
 
-        LinearLayout progressCard = card(COLOR_SURFACE);
-        addCardHeader(progressCard, "传输进度", "查看当前文件进度、速率和状态。");
+        progressCard = card(COLOR_SURFACE);
+        addSectionTitle(progressCard, "传输进度");
 
         LinearLayout progressHeader = new LinearLayout(this);
         progressHeader.setOrientation(LinearLayout.HORIZONTAL);
         progressHeader.setGravity(Gravity.CENTER_VERTICAL);
         progressTitleText = text("暂无传输", 17, COLOR_TEXT, Typeface.BOLD);
+        progressTitleText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         progressPercentText = pill("0%", COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
         progressHeader.addView(progressTitleText, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         progressHeader.addView(progressPercentText, wrapContent());
@@ -285,17 +316,17 @@ public class MainActivity extends Activity {
         progressCard.addView(transferProgress, progressParams);
 
         progressDetailText = text("等待发送或接收文件。", 14, COLOR_MUTED, Typeface.NORMAL);
-        progressDetailText.setPadding(dp(14), dp(12), dp(14), dp(12));
-        progressDetailText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+        progressDetailText.setPadding(dp(12), dp(10), dp(12), dp(10));
+        progressDetailText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
         progressSpeedText = pill("速率 -", COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
         progressCard.addView(progressDetailText, matchWrap());
         LinearLayout.LayoutParams speedParams = wrapContent();
         speedParams.setMargins(0, dp(10), 0, 0);
         progressCard.addView(progressSpeedText, speedParams);
-        root.addView(progressCard, cardParams());
+        progressCard.setVisibility(View.GONE);
 
         LinearLayout peerCard = card(COLOR_SURFACE);
-        addCardHeader(peerCard, "附近设备", "同一 Wi-Fi 下的设备会自动出现。");
+        addSectionTitle(peerCard, "附近设备");
         Button refreshButton = new Button(this);
         refreshButton.setText("立即刷新附近设备");
         refreshButton.setAllCaps(false);
@@ -322,16 +353,21 @@ public class MainActivity extends Activity {
         peersLayout.setOrientation(LinearLayout.VERTICAL);
         peersLayout.setPadding(0, dp(10), 0, 0);
         peerCard.addView(peersLayout, matchWrap());
-        root.addView(peerCard, cardParams());
+        LinearLayout.LayoutParams sendButtonParams = matchWrap();
+        sendButtonParams.setMargins(0, dp(4), 0, 0);
+        peerCard.addView(sendButton, sendButtonParams);
+        transferSection.addView(peerCard, cardParams());
+        transferSection.addView(progressCard, cardParams());
 
         LinearLayout v2Card = card(COLOR_SURFACE);
-        addCardHeader(v2Card, "安全配对（协议 v2）", "先核对六位配对码，再把设备保存为可信设备。当前不传输文件。");
+        addSectionTitle(v2Card, "安全配对");
         v2StatusText = text("正在启动协议 v2 安全配对…", 14, COLOR_MUTED, Typeface.NORMAL);
-        v2StatusText.setPadding(dp(14), dp(12), dp(14), dp(12));
-        v2StatusText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+        v2StatusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        v2StatusText.setPadding(dp(12), dp(10), dp(12), dp(10));
+        v2StatusText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
         v2Card.addView(v2StatusText, matchWrap());
         Button v2RefreshButton = new Button(this);
-        v2RefreshButton.setText("刷新可安全配对的设备");
+        v2RefreshButton.setText("刷新配对与可信设备");
         v2RefreshButton.setAllCaps(false);
         styleButton(v2RefreshButton, false);
         v2RefreshButton.setOnClickListener(v -> {
@@ -339,6 +375,7 @@ public class MainActivity extends Activity {
                 v2StatusText.setText("正在发送协议 v2 发现公告…");
                 v2PairingController.announceNow();
                 v2PeersLayout.postDelayed(this::renderV2Peers, 2500);
+                refreshTrustedPeers();
             } else {
                 v2StatusText.setText("安全配对服务尚未启动，正在检查权限…");
                 requestPermissionsThenStart();
@@ -350,15 +387,19 @@ public class MainActivity extends Activity {
         v2PeersLayout = new LinearLayout(this);
         v2PeersLayout.setOrientation(LinearLayout.VERTICAL);
         v2PeersLayout.setPadding(0, dp(10), 0, 0);
+        v2PeersLayout.setVisibility(View.GONE);
         v2Card.addView(v2PeersLayout, matchWrap());
-        TextView v2SessionTitle = text("正在进行的配对", 15, COLOR_TEXT, Typeface.BOLD);
+        v2SessionTitle = text("正在进行的配对", 15, COLOR_TEXT, Typeface.BOLD);
         LinearLayout.LayoutParams v2SessionTitleParams = matchWrap();
         v2SessionTitleParams.setMargins(0, dp(14), 0, 0);
         v2Card.addView(v2SessionTitle, v2SessionTitleParams);
         v2SessionsLayout = new LinearLayout(this);
         v2SessionsLayout.setOrientation(LinearLayout.VERTICAL);
         v2SessionsLayout.setPadding(0, dp(8), 0, 0);
+        v2SessionsLayout.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         v2Card.addView(v2SessionsLayout, matchWrap());
+        v2SessionTitle.setVisibility(View.GONE);
+        v2SessionsLayout.setVisibility(View.GONE);
 
         TextView trustedPeersTitle = text("可信设备", 15, COLOR_TEXT, Typeface.BOLD);
         LinearLayout.LayoutParams trustedPeersTitleParams = matchWrap();
@@ -367,64 +408,84 @@ public class MainActivity extends Activity {
         trustedPeersStatusText = text("正在读取可信设备…", 13, COLOR_MUTED, Typeface.NORMAL);
         trustedPeersStatusText.setPadding(0, dp(6), 0, 0);
         v2Card.addView(trustedPeersStatusText, matchWrap());
-        Button trustedPeersRefreshButton = new Button(this);
-        trustedPeersRefreshButton.setText("刷新可信设备");
-        trustedPeersRefreshButton.setAllCaps(false);
-        styleButton(trustedPeersRefreshButton, false);
-        trustedPeersRefreshButton.setOnClickListener(v -> refreshTrustedPeers());
-        LinearLayout.LayoutParams trustedPeersRefreshParams = matchWrap();
-        trustedPeersRefreshParams.setMargins(0, dp(8), 0, 0);
-        v2Card.addView(trustedPeersRefreshButton, trustedPeersRefreshParams);
         trustedPeersLayout = new LinearLayout(this);
         trustedPeersLayout.setOrientation(LinearLayout.VERTICAL);
         trustedPeersLayout.setPadding(0, dp(8), 0, 0);
         v2Card.addView(trustedPeersLayout, matchWrap());
-        root.addView(v2Card, cardParams());
+        devicesSection.addView(v2Card, cardParams());
 
         LinearLayout localCard = card(COLOR_SURFACE);
-        addCardHeader(localCard, "本机与保存", "确认本机身份、指纹和接收目录。");
+        addSectionTitle(localCard, "本机与保存");
+        localDetailsButton = new Button(this);
+        localDetailsButton.setText("展开设置");
+        localDetailsButton.setContentDescription("展开本机与保存设置");
+        localDetailsButton.setAllCaps(false);
+        styleButton(localDetailsButton, false);
+        localDetailsButton.setOnClickListener(v -> toggleLocalDetails());
+        localCard.addView(localDetailsButton, matchWrap());
+        localDetailsLayout = new LinearLayout(this);
+        localDetailsLayout.setOrientation(LinearLayout.VERTICAL);
+        localDetailsLayout.setVisibility(View.GONE);
         deviceText = text("正在生成本机密钥...", 14, COLOR_TEXT, Typeface.NORMAL);
-        deviceText.setPadding(dp(14), dp(12), dp(14), dp(12));
-        deviceText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+        deviceText.setPadding(dp(12), dp(10), dp(12), dp(10));
+        deviceText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
         saveText = text("保存目录：-", 14, COLOR_MUTED, Typeface.NORMAL);
-        saveText.setPadding(dp(14), dp(12), dp(14), dp(12));
-        saveText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+        saveText.setPadding(dp(12), dp(10), dp(12), dp(10));
+        saveText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
         saveModeText = pill("保存模式：-", COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
         Button changeSaveButton = new Button(this);
         changeSaveButton.setText("更改保存位置");
         changeSaveButton.setAllCaps(false);
         styleButton(changeSaveButton, false);
         changeSaveButton.setOnClickListener(v -> chooseSaveDirectory());
-        Button resetSaveButton = new Button(this);
+        resetSaveButton = new Button(this);
         resetSaveButton.setText("恢复默认下载目录");
         resetSaveButton.setAllCaps(false);
+        resetSaveButton.setVisibility(View.GONE);
         styleButton(resetSaveButton, false);
         resetSaveButton.setOnClickListener(v -> resetSaveDirectory());
-        localCard.addView(deviceText, matchWrap());
+        LinearLayout.LayoutParams deviceParams = matchWrap();
+        deviceParams.setMargins(0, dp(10), 0, 0);
+        localDetailsLayout.addView(deviceText, deviceParams);
         LinearLayout.LayoutParams saveTextParams = matchWrap();
         saveTextParams.setMargins(0, dp(10), 0, dp(10));
-        localCard.addView(saveText, saveTextParams);
-        localCard.addView(saveModeText, wrapContent());
+        localDetailsLayout.addView(saveText, saveTextParams);
+        localDetailsLayout.addView(saveModeText, wrapContent());
         LinearLayout.LayoutParams changeSaveParams = matchWrap();
         changeSaveParams.setMargins(0, dp(12), 0, 0);
-        localCard.addView(changeSaveButton, changeSaveParams);
+        localDetailsLayout.addView(changeSaveButton, changeSaveParams);
         LinearLayout.LayoutParams resetSaveParams = matchWrap();
         resetSaveParams.setMargins(0, dp(10), 0, 0);
-        localCard.addView(resetSaveButton, resetSaveParams);
-        root.addView(localCard, cardParams());
+        localDetailsLayout.addView(resetSaveButton, resetSaveParams);
+        localCard.addView(localDetailsLayout, matchWrap());
+        settingsSection.addView(localCard, cardParams());
 
         LinearLayout logCard = card(COLOR_SURFACE);
-        addCardHeader(logCard, "日志", "最近的传输和发现状态。");
+        addSectionTitle(logCard, "日志");
+        logScroll = new ScrollView(this);
+        logScroll.setFillViewport(true);
+        logScroll.setNestedScrollingEnabled(true);
+        logScroll.setOnScrollChangeListener((view, scrollX, scrollY, oldScrollX, oldScrollY) ->
+            logFollowLatest = isLogScrolledToBottom()
+        );
+        logScroll.setBackground(roundedStroke(Color.rgb(15, 23, 42), dp(8), Color.rgb(30, 41, 59), 1));
         logText = text("暂无日志。", 13, COLOR_MUTED, Typeface.NORMAL);
         logText.setTextIsSelectable(true);
         logText.setLineSpacing(dp(2), 1.0f);
-        logText.setPadding(dp(14), dp(12), dp(14), dp(12));
-        logText.setBackground(roundedStroke(Color.rgb(15, 23, 42), dp(18), Color.rgb(30, 41, 59), 1));
+        logText.setPadding(dp(12), dp(10), dp(12), dp(10));
         logText.setTextColor(Color.rgb(203, 213, 225));
-        logCard.addView(logText, matchWrap());
-        root.addView(logCard, cardParams());
+        logScroll.addView(logText, new ScrollView.LayoutParams(
+            ScrollView.LayoutParams.MATCH_PARENT,
+            ScrollView.LayoutParams.WRAP_CONTENT
+        ));
+        logCard.addView(logScroll, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(168)
+        ));
+        settingsSection.addView(logCard, cardParams());
 
-        setContentView(scrollView);
+        setContentView(screen);
+        selectTab(TAB_TRANSFER);
     }
 
     private void requestPermissionsThenStart() {
@@ -510,9 +571,19 @@ public class MainActivity extends Activity {
 
                     @Override public void onSessionChanged(V2PairingSessionStore.Session session) {
                         renderV2Sessions();
+                        if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION
+                            || session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
+                            setPendingPairingAction(true);
+                        }
                         appendLog("协议 v2 配对状态：" + pairingStatusLabel(session.status));
                         if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
                             v2StatusText.setText("双方已确认配对码；请点击“保存信任”。");
+                            if (selectedTab != TAB_DEVICES) {
+                                statusText.setText("安全配对待确认，请打开“设备”页。");
+                            }
+                        } else if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION
+                            && selectedTab != TAB_DEVICES) {
+                            statusText.setText("收到安全配对请求，请打开“设备”页确认。");
                         } else if (session.status == V2PairingSessionStore.Status.COMPLETED) {
                             refreshTrustedPeers();
                         }
@@ -696,6 +767,14 @@ public class MainActivity extends Activity {
     private void renderSaveTarget() {
         saveText.setText("保存目录：" + (saveTarget == null ? "-" : saveTarget.displayName()));
         saveModeText.setText("保存模式：" + saveModeTextFor(saveTarget));
+        resetSaveButton.setVisibility(saveTarget instanceof TreeUriSaveTarget ? View.VISIBLE : View.GONE);
+    }
+
+    private void toggleLocalDetails() {
+        boolean expanding = localDetailsLayout.getVisibility() != View.VISIBLE;
+        localDetailsLayout.setVisibility(expanding ? View.VISIBLE : View.GONE);
+        localDetailsButton.setText(expanding ? "收起设置" : "展开设置");
+        localDetailsButton.setContentDescription(expanding ? "收起本机与保存设置" : "展开本机与保存设置");
     }
 
     private String saveModeTextFor(SaveTarget target) {
@@ -794,6 +873,7 @@ public class MainActivity extends Activity {
         sendButton.setEnabled(false);
         transferActive = true;
         styleButton(sendButton, true);
+        progressCard.setVisibility(View.VISIBLE);
         statusText.setText("正在准备发送...");
         progressTitleText.setText("正在准备发送");
         progressDetailText.setText(selectedFile.name + "\n正在计算校验值...");
@@ -873,34 +953,27 @@ public class MainActivity extends Activity {
     private void renderTrustedPeers() {
         if (trustedPeersLayout == null || activityDestroyed) return;
         trustedPeersLayout.removeAllViews();
-        if (trustedPeers.isEmpty()) {
-            TextView empty = text("暂无可信设备。完成协议 v2 安全配对后，设备会显示在这里。", 13, COLOR_MUTED, Typeface.NORMAL);
-            empty.setPadding(dp(14), dp(14), dp(14), dp(14));
-            empty.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
-            trustedPeersLayout.addView(empty, matchWrap());
+        List<V2TrustedPeerPersistence.TrustedPeerSummary> currentTrustedPeers = new ArrayList<>();
+        for (V2TrustedPeerPersistence.TrustedPeerSummary peer : trustedPeers) {
+            if ("TRUSTED".equals(peer.getTrustStatus().name())) currentTrustedPeers.add(peer);
+        }
+        trustedPeersLayout.setVisibility(currentTrustedPeers.isEmpty() ? View.GONE : View.VISIBLE);
+        if (currentTrustedPeers.isEmpty()) {
             return;
         }
 
-        for (V2TrustedPeerPersistence.TrustedPeerSummary peer : trustedPeers) {
-            boolean trusted = "TRUSTED".equals(peer.getTrustStatus().name());
+        for (V2TrustedPeerPersistence.TrustedPeerSummary peer : currentTrustedPeers) {
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
-            item.setPadding(dp(14), dp(14), dp(14), dp(14));
-            item.setBackground(roundedStroke(
-                trusted ? COLOR_PRIMARY_SOFT : COLOR_SURFACE_TINT,
-                dp(18),
-                trusted ? Color.rgb(153, 246, 228) : COLOR_BORDER,
-                1
-            ));
+            item.setPadding(dp(12), dp(12), dp(12), dp(12));
+            item.setBackground(roundedStroke(COLOR_PRIMARY_SOFT, dp(8), Color.rgb(153, 246, 228), 1));
 
             String name = displayNameOrFallback(peer.getDisplayName());
-            String state = trusted ? "已信任" : "信任已移除";
-            item.addView(text(name + "  ·  " + state, 15, trusted ? COLOR_TEXT : COLOR_MUTED, Typeface.BOLD), matchWrap());
+            item.addView(text(name + "  ·  已信任", 15, COLOR_TEXT, Typeface.BOLD), matchWrap());
             TextView details = text(
                 "指纹：" + shortFingerprint(peer.getFingerprint())
                     + "\n配对时间：" + formatTrustedPeerTime(peer.getPairedAtEpochMillis())
-                    + "\n最近变更：" + formatTrustedPeerTime(peer.getUpdatedAtEpochMillis())
-                    + (trusted && peer.getCanTransfer() ? "\n权限：可传输文件" : ""),
+                    + (peer.getCanTransfer() ? "\n权限：可传输文件" : ""),
                 12,
                 COLOR_MUTED,
                 Typeface.NORMAL
@@ -909,14 +982,11 @@ public class MainActivity extends Activity {
             item.addView(details, matchWrap());
 
             Button revokeButton = new Button(this);
-            revokeButton.setText(trusted ? "移除信任" : "信任已移除");
+            revokeButton.setText("移除信任");
             revokeButton.setAllCaps(false);
-            revokeButton.setEnabled(trusted);
             styleButton(revokeButton, false);
-            if (trusted) {
-                revokeButton.setTextColor(COLOR_DANGER);
-                revokeButton.setOnClickListener(v -> confirmRevokeTrustedPeer(peer, revokeButton));
-            }
+            revokeButton.setTextColor(COLOR_DANGER);
+            revokeButton.setOnClickListener(v -> confirmRevokeTrustedPeer(peer, revokeButton));
             item.addView(revokeButton, matchWrap());
 
             LinearLayout.LayoutParams params = matchWrap();
@@ -982,10 +1052,7 @@ public class MainActivity extends Activity {
         for (V2TrustedPeerPersistence.TrustedPeerSummary peer : peers) {
             if ("TRUSTED".equals(peer.getTrustStatus().name())) trustedCount += 1;
         }
-        int revokedCount = peers.size() - trustedCount;
-        return revokedCount == 0
-            ? "共 " + trustedCount + " 台可信设备。"
-            : "可信 " + trustedCount + " 台，已移除 " + revokedCount + " 台。";
+        return "共 " + trustedCount + " 台可信设备。";
     }
 
     private static String displayNameOrFallback(String displayName) {
@@ -1023,17 +1090,15 @@ public class MainActivity extends Activity {
         }
         v2PeersLayout.removeAllViews();
         if (v2Peers.isEmpty()) {
-            TextView empty = text("尚未发现支持协议 v2 安全配对的设备。\n请在对端也打开新版应用，然后点击刷新。", 14, COLOR_MUTED, Typeface.NORMAL);
-            empty.setPadding(dp(14), dp(14), dp(14), dp(14));
-            empty.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
-            v2PeersLayout.addView(empty, matchWrap());
+            v2PeersLayout.setVisibility(View.GONE);
             return;
         }
+        v2PeersLayout.setVisibility(View.VISIBLE);
         for (V2DiscoveryService.Peer peer : v2Peers) {
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
             item.setPadding(dp(14), dp(14), dp(14), dp(14));
-            item.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(18), COLOR_BORDER, 1));
+            item.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
             item.addView(text(peer.deviceName + "  ·  " + peer.fingerprint, 15, COLOR_TEXT, Typeface.BOLD), matchWrap());
             TextView endpoint = text(peer.host + ":" + peer.port + "\n仅在双方核对相同的六位配对码后保存信任。", 12, COLOR_MUTED, Typeface.NORMAL);
             endpoint.setPadding(0, dp(5), 0, dp(10));
@@ -1056,17 +1121,32 @@ public class MainActivity extends Activity {
     private void renderV2Sessions() {
         if (v2SessionsLayout == null) return;
         v2SessionsLayout.removeAllViews();
-        List<V2PairingSessionStore.Session> sessions = v2PairingController == null
-            ? new ArrayList<>() : v2PairingController.listSessions();
+        List<V2PairingSessionStore.Session> sessions = new ArrayList<>();
+        if (v2PairingController != null) {
+            for (V2PairingSessionStore.Session session : v2PairingController.listSessions()) {
+                if (!isTerminalPairingStatus(session.status)) sessions.add(session);
+            }
+        }
+        boolean requiresLocalAction = false;
+        for (V2PairingSessionStore.Session session : sessions) {
+            if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION
+                || session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
+                requiresLocalAction = true;
+                break;
+            }
+        }
+        setPendingPairingAction(requiresLocalAction);
+        boolean hasActiveSessions = !sessions.isEmpty();
+        v2SessionTitle.setVisibility(hasActiveSessions ? View.VISIBLE : View.GONE);
+        v2SessionsLayout.setVisibility(hasActiveSessions ? View.VISIBLE : View.GONE);
         if (sessions.isEmpty()) {
-            v2SessionsLayout.addView(text("暂无正在进行的配对。", 13, COLOR_MUTED, Typeface.NORMAL), matchWrap());
             return;
         }
         for (V2PairingSessionStore.Session session : sessions) {
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
             item.setPadding(dp(14), dp(14), dp(14), dp(14));
-            item.setBackground(roundedStroke(COLOR_PRIMARY_SOFT, dp(18), Color.rgb(153, 246, 228), 1));
+            item.setBackground(roundedStroke(COLOR_PRIMARY_SOFT, dp(8), Color.rgb(153, 246, 228), 1));
             String peerName = session.peerOffer == null ? "正在建立连接" : session.peerOffer.identity.deviceName;
             item.addView(text(peerName + " · " + pairingStatusLabel(session.status), 15, COLOR_TEXT, Typeface.BOLD), matchWrap());
             TextView code = text(session.pairingCode == null ? "等待身份验证…" : "请与对方核对配对码：" + session.pairingCode, 17, COLOR_PRIMARY_DARK, Typeface.BOLD);
@@ -1114,11 +1194,10 @@ public class MainActivity extends Activity {
     private void renderPeers() {
         peersLayout.removeAllViews();
         if (peers.isEmpty()) {
-            TextView empty = text("雷达正在扫描局域网...\n请确认对方设备在同一 Wi-Fi 且应用保持前台。", 14, COLOR_MUTED, Typeface.NORMAL);
+            TextView empty = text("正在扫描局域网设备…", 13, COLOR_MUTED, Typeface.NORMAL);
             empty.setGravity(Gravity.CENTER);
-            empty.setLineSpacing(dp(3), 1.0f);
-            empty.setPadding(dp(18), dp(22), dp(18), dp(22));
-            empty.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(22), COLOR_BORDER, 1));
+            empty.setPadding(dp(12), dp(12), dp(12), dp(12));
+            empty.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
             peersLayout.addView(empty, matchWrap());
             return;
         }
@@ -1130,9 +1209,12 @@ public class MainActivity extends Activity {
             item.setGravity(Gravity.CENTER_VERTICAL);
             item.setPadding(dp(14), dp(14), dp(14), dp(14));
             item.setClickable(true);
+            item.setFocusable(true);
+            item.setSelected(selected);
+            item.setContentDescription(peer.deviceName + (selected ? "，已选择" : "，可用"));
             item.setBackground(selected
-                ? roundedStroke(COLOR_PRIMARY_SOFT, dp(22), COLOR_PRIMARY, 2)
-                : roundedStroke(COLOR_SURFACE_TINT, dp(22), COLOR_BORDER, 1));
+                ? roundedStroke(COLOR_PRIMARY_SOFT, dp(8), COLOR_PRIMARY, 2)
+                : roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
 
             TextView avatar = text(peer.deviceName.isEmpty() ? "?" : peer.deviceName.substring(0, 1).toUpperCase(Locale.ROOT), 18, selected ? Color.WHITE : COLOR_PRIMARY_DARK, Typeface.BOLD);
             avatar.setGravity(Gravity.CENTER);
@@ -1185,6 +1267,10 @@ public class MainActivity extends Activity {
         if (transferActive) {
             return;
         }
+        if (hasPendingPairingAction && selectedTab != TAB_DEVICES) {
+            statusText.setText("安全配对待确认，请打开“设备”页。");
+            return;
+        }
         if (selectedFile == null) {
             statusText.setText("请选择文件。");
         } else if (selectedPeer == null) {
@@ -1199,6 +1285,7 @@ public class MainActivity extends Activity {
             statusText.setText(event.detail == null ? "系统事件" : event.detail);
             return;
         }
+        progressCard.setVisibility(View.VISIBLE);
 
         long now = System.currentTimeMillis();
         boolean newTransfer = activeTransferId == null || !activeTransferId.equals(event.transferId);
@@ -1291,59 +1378,86 @@ public class MainActivity extends Activity {
     }
 
     private void appendLog(String message) {
-        while (logs.size() >= 80) {
-            logs.removeFirst();
+        boolean keepAtBottom = logFollowLatest;
+        if (!logs.add(message)) return;
+        logText.setText(logs.render());
+        if (keepAtBottom) {
+            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         }
-        logs.addLast(message);
-        StringBuilder builder = new StringBuilder();
-        for (String line : logs) {
-            builder.append(line).append('\n');
-        }
-        logText.setText(builder.toString().trim());
     }
 
-    private void addCardHeader(LinearLayout parent, String title, String subtitle) {
-        TextView label = pill("NEARBY", COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
-        TextView titleText = text(title, 20, COLOR_TEXT, Typeface.BOLD);
-        titleText.setPadding(0, dp(10), 0, 0);
-        TextView subtitleText = text(subtitle, 14, COLOR_MUTED, Typeface.NORMAL);
-        subtitleText.setPadding(0, dp(5), 0, dp(16));
-        parent.addView(label, wrapContent());
+    private static boolean isTerminalPairingStatus(V2PairingSessionStore.Status status) {
+        return status == V2PairingSessionStore.Status.COMPLETED
+            || status == V2PairingSessionStore.Status.CANCELLED
+            || status == V2PairingSessionStore.Status.EXPIRED;
+    }
+
+    private void setPendingPairingAction(boolean pending) {
+        boolean changed = hasPendingPairingAction != pending;
+        hasPendingPairingAction = pending;
+        if (devicesTab != null) {
+            devicesTab.setText(pending ? "设备 · 待确认" : "设备");
+            devicesTab.setContentDescription(pending ? "设备，有待确认的安全配对" : "设备");
+        }
+        if (changed && !pending && !transferActive) {
+            renderSendState();
+        }
+    }
+
+    private boolean isLogScrolledToBottom() {
+        if (logScroll == null || logScroll.getChildCount() == 0 || logScroll.getHeight() == 0) return true;
+        View content = logScroll.getChildAt(0);
+        int remaining = content.getBottom() - (logScroll.getScrollY() + logScroll.getHeight());
+        return remaining <= dp(24);
+    }
+
+    private TextView navigationTab(String label, int tab) {
+        TextView view = text(label, 15, COLOR_MUTED, Typeface.BOLD);
+        view.setGravity(Gravity.CENTER);
+        view.setClickable(true);
+        view.setFocusable(true);
+        view.setOnClickListener(ignored -> selectTab(tab));
+        return view;
+    }
+
+    private void selectTab(int tab) {
+        selectedTab = tab;
+        boolean showTransfer = tab == TAB_TRANSFER;
+        boolean showDevices = tab == TAB_DEVICES;
+        transferSection.setVisibility(showTransfer ? View.VISIBLE : View.GONE);
+        devicesSection.setVisibility(showDevices ? View.VISIBLE : View.GONE);
+        settingsSection.setVisibility(tab == TAB_SETTINGS ? View.VISIBLE : View.GONE);
+        styleNavigationTab(transferTab, showTransfer);
+        styleNavigationTab(devicesTab, showDevices);
+        styleNavigationTab(settingsTab, tab == TAB_SETTINGS);
+        contentScroll.post(() -> contentScroll.scrollTo(0, 0));
+        if (tab == TAB_SETTINGS && logScroll != null && logFollowLatest) {
+            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+        }
+        if (tab != TAB_DEVICES && hasPendingPairingAction && !transferActive) {
+            statusText.setText("安全配对待确认，请打开“设备”页。");
+        }
+    }
+
+    private void styleNavigationTab(TextView tab, boolean selected) {
+        tab.setSelected(selected);
+        tab.setTextColor(selected ? Color.WHITE : COLOR_MUTED);
+        tab.setBackground(rounded(selected ? COLOR_NAVY : Color.TRANSPARENT, dp(6)));
+    }
+
+    private void addSectionTitle(LinearLayout parent, String title) {
+        TextView titleText = text(title, 18, COLOR_TEXT, Typeface.BOLD);
+        titleText.setPadding(0, 0, 0, dp(12));
         parent.addView(titleText, matchWrap());
-        parent.addView(subtitleText, matchWrap());
     }
 
     private LinearLayout card(int color) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        card.setBackground(rounded(color, dp(28)));
-        card.setElevation(dp(4));
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        card.setBackground(roundedStroke(color, dp(8), COLOR_BORDER, 1));
+        card.setElevation(dp(1));
         return card;
-    }
-
-    private LinearLayout cardGradient(int startColor, int endColor) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackground(gradient(startColor, endColor, dp(30)));
-        card.setElevation(dp(6));
-        return card;
-    }
-
-    private LinearLayout heroMetric(String value, String label) {
-        LinearLayout metric = new LinearLayout(this);
-        metric.setOrientation(LinearLayout.VERTICAL);
-        metric.setGravity(Gravity.CENTER);
-        metric.setPadding(dp(8), dp(10), dp(8), dp(10));
-        metric.setBackground(rounded(Color.rgb(219, 234, 254), dp(18)));
-        TextView valueText = text(value, 16, Color.rgb(6, 95, 70), Typeface.BOLD);
-        valueText.setGravity(Gravity.CENTER);
-        TextView labelText = text(label, 12, Color.rgb(6, 95, 70), Typeface.BOLD);
-        labelText.setGravity(Gravity.CENTER);
-        labelText.setPadding(0, dp(3), 0, 0);
-        metric.addView(valueText, matchWrap());
-        metric.addView(labelText, matchWrap());
-        return metric;
     }
 
     private TextView pill(String value, int background, int textColor) {
@@ -1351,14 +1465,6 @@ public class MainActivity extends Activity {
         view.setGravity(Gravity.CENTER);
         view.setPadding(dp(12), dp(7), dp(12), dp(7));
         view.setBackground(rounded(background, dp(999)));
-        return view;
-    }
-
-    private TextView chip(String value) {
-        TextView view = text(value, 12, COLOR_PRIMARY_DARK, Typeface.BOLD);
-        view.setGravity(Gravity.CENTER);
-        view.setPadding(dp(10), dp(8), dp(10), dp(8));
-        view.setBackground(roundedStroke(COLOR_PRIMARY_SOFT, dp(16), Color.rgb(153, 246, 228), 1));
         return view;
     }
 
@@ -1376,7 +1482,7 @@ public class MainActivity extends Activity {
         int background = !enabled ? COLOR_DISABLED : primary ? COLOR_NAVY : COLOR_PRIMARY_SOFT;
         int textColor = primary || !enabled ? Color.WHITE : COLOR_PRIMARY_DARK;
         button.setTextColor(textColor);
-        button.setBackground(rounded(background, dp(18)));
+        button.setBackground(rounded(background, dp(8)));
         button.setPadding(dp(14), dp(12), dp(14), dp(12));
     }
 
@@ -1392,12 +1498,6 @@ public class MainActivity extends Activity {
     private GradientDrawable rounded(int color, int radius) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(color);
-        drawable.setCornerRadius(radius);
-        return drawable;
-    }
-
-    private GradientDrawable gradient(int startColor, int endColor, int radius) {
-        GradientDrawable drawable = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[] { startColor, endColor });
         drawable.setCornerRadius(radius);
         return drawable;
     }
@@ -1424,7 +1524,7 @@ public class MainActivity extends Activity {
 
     private LinearLayout.LayoutParams cardParams() {
         LinearLayout.LayoutParams params = matchWrap();
-        params.setMargins(0, 0, 0, dp(14));
+        params.setMargins(0, 0, 0, dp(10));
         return params;
     }
 

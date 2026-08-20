@@ -26,6 +26,7 @@ All notable changes to Nearby Transfer will be documented in this file.
 - Added Room-backed trusted peers, resumable transfer jobs, publication journals, and tested schema migrations.
 - Added restart-safe staging access, recoverable MediaStore and SAF publication, startup recovery, and cancellation-aware cleanup.
 - Added signed v2 discovery and pairing services while keeping the Compose migration shell isolated behind a build flag.
+- Split the Android launcher into focused transfer, device, and settings views, with compact state-driven panels and a bounded scrolling diagnostics log.
 
 ### Device management
 
