@@ -2,14 +2,15 @@
 
 This document is the handoff point for the large v1.0 rewrite. The repository
 is intentionally still a Draft PR and the production transfer composition roots
-are not enabled yet.
+are not enabled yet. For UI-specific work, start with
+[docs/ui-handoff.md](ui-handoff.md).
 
 ## Repository state
 
 - Upstream: `https://github.com/luo-5/nearby-transfer`
 - Working branch: `next/1.0`
 - Draft PR: `https://github.com/luo-5/nearby-transfer/pull/9`
-- Latest pushed commit: `aa00759`
+- Latest pushed commit: see `git log -1 --oneline` on `next/1.0`
 - Protocol: v2, intentionally incompatible with v0.x
 - Required commit trailer for future commits:
 
@@ -45,6 +46,12 @@ Commit `aa00759` adds the receiver-authoritative resumability foundation:
   encoder is not yet connected to `V2IncomingTransferCoordinator`.
 - Legacy persisted outgoing jobs are migrated so unfinished empty files are not
   incorrectly marked complete.
+
+The Android production shell also has a first UI cleanup pass: compact
+Transfer/Devices/Settings navigation, collapsed local settings, stateful peer
+rows, hidden-until-needed progress, and a fixed-height bounded scrolling log.
+The detailed UI contract, remaining cleanup work, and screenshot acceptance
+matrix are in [docs/ui-handoff.md](ui-handoff.md).
 
 ## Verification already run
 
