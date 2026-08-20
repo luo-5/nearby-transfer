@@ -4,7 +4,8 @@ This guide describes how to build Nearby Transfer from source for Linux, Windows
 
 ## Prerequisites
 
-- Node.js 20 or newer for the desktop app.
+- Node.js 24 or newer for the desktop app. Protocol-v2 persistence uses the built-in
+  `node:sqlite` module.
 - npm for installing desktop dependencies.
 - Java 17 for Android builds.
 - Android SDK platform 35 and build tools 35.0.0 for Android builds.

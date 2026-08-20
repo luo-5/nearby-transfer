@@ -19,7 +19,7 @@ These instructions apply to the entire repository.
 
 ## Development Environment
 
-- Use Node.js 20 or newer and install desktop dependencies with `npm ci`.
+- Use Node.js 24 or newer and install desktop dependencies with `npm ci`.
 - Use Java 17, Android SDK platform 35, and the checked-in Gradle Wrapper for Android work.
 - Do not depend on a globally installed Gradle distribution.
 - Keep source files in their existing language and style. Do not introduce a formatter that
