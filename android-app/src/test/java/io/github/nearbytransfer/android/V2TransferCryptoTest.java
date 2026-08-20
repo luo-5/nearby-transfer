@@ -17,6 +17,23 @@ import static org.junit.Assert.fail;
 
 public class V2TransferCryptoTest {
     @Test
+    public void senderEphemeralPublicKeyRoundTripsCanonicalWireEncoding() throws Exception {
+        KeyPair pair = CryptoUtil.generateX25519KeyPair();
+        String pem = CryptoUtil.toPublicPem(pair.getPublic());
+        String encoded = V2TransferCrypto.encodeSenderEphemeralPublicKey(pem);
+
+        assertEquals(32, Base64.getUrlDecoder().decode(encoded).length);
+        assertFalse(encoded.contains("="));
+        assertEquals(pem, V2TransferCrypto.decodeSenderEphemeralPublicKey(encoded));
+
+        assertFailure(() -> V2TransferCrypto.decodeSenderEphemeralPublicKey(encoded + "="));
+        assertFailure(() -> V2TransferCrypto.decodeSenderEphemeralPublicKey("AA"));
+        assertFailure(() -> V2TransferCrypto.encodeSenderEphemeralPublicKey(
+            CryptoUtil.toPublicPem(CryptoUtil.generateEd25519KeyPair().getPublic())
+        ));
+    }
+
+    @Test
     public void matchesSharedNodeVectorInBothDirections() throws Exception {
         JSONObject vector = loadVector();
         byte[] senderKey = deriveSenderKey(vector);

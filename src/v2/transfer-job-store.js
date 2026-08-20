@@ -209,6 +209,75 @@ class TransferJobStore {
     return this._requireJob(taskId);
   }
 
+  getOutgoingCheckpoint(taskId) {
+    assertValidTaskId(taskId);
+    const job = this._requireJob(taskId);
+    if (job.direction !== JOB_DIRECTION.OUTGOING) {
+      throw new Error('Outgoing checkpoints are only available for outgoing transfers');
+    }
+    return this._readOutgoingCheckpoint(taskId, job.manifest);
+  }
+
+  advanceOutgoingCheckpoint(taskId, checkpoint, now = Date.now()) {
+    assertValidTaskId(taskId);
+    assertTimestamp(now, 'Checkpoint time');
+
+    let committed;
+    this._withImmediateTransaction(() => {
+      const job = this._requireJob(taskId);
+      if (job.direction !== JOB_DIRECTION.OUTGOING) {
+        throw new Error('Outgoing checkpoints can only advance outgoing transfers');
+      }
+      if (job.status !== JOB_STATUS.TRANSFERRING) {
+        throw new Error('Outgoing checkpoints can only advance while transferring');
+      }
+      assertJobTimestamp(now, job.createdAt, 'Checkpoint time');
+      this._requireActiveTransferPeer(job.peerDeviceId);
+      const persistedAt = Math.max(now, job.updatedAt);
+
+      const current = this._readOutgoingCheckpoint(taskId, job.manifest);
+      const candidate = normalizeOutgoingCheckpoint(checkpoint, current.files);
+      assertMonotonicOutgoingCheckpoint(current, candidate);
+
+      const updateFile = this.database.prepare(`
+        UPDATE transfer_job_files
+        SET transferred_bytes = ?, completed = ?, updated_at = ?
+        WHERE task_id = ? AND relative_path = ? AND expected_bytes = ?
+      `);
+      for (const file of candidate.files) {
+        const result = updateFile.run(
+          file.committedOffset,
+          file.completed ? 1 : 0,
+          persistedAt,
+          taskId,
+          file.path,
+          file.size
+        );
+        if (result.changes !== 1) {
+          throw new Error('Outgoing checkpoint file metadata changed during commit');
+        }
+      }
+
+      const completedFiles = candidate.files.reduce(
+        (count, file) => count + (file.completed ? 1 : 0),
+        0
+      );
+      this.database.prepare(`
+        UPDATE transfer_jobs
+        SET transferred_bytes = ?, completed_files = ?, checkpoint_next_sequence = ?, updated_at = ?
+        WHERE task_id = ?
+      `).run(
+        candidate.totalTransferred,
+        completedFiles,
+        candidate.nextSequence,
+        persistedAt,
+        taskId
+      );
+      committed = candidate;
+    });
+    return committed;
+  }
+
   complete(taskId, now = Date.now()) {
     const job = this._requireJob(taskId);
     if (job.status !== JOB_STATUS.TRANSFERRING) {
@@ -217,7 +286,7 @@ class TransferJobStore {
     this._requireActiveTransferPeer(job.peerDeviceId);
     const remaining = this.database.prepare(`
       SELECT COUNT(*) AS count FROM transfer_job_files
-      WHERE task_id = ? AND transferred_bytes != expected_bytes
+      WHERE task_id = ? AND completed != 1
     `).get(taskId).count;
     if (remaining !== 0) {
       throw new Error('All manifest files must be fully transferred before completion');
@@ -264,6 +333,65 @@ class TransferJobStore {
       sha256: row.sha256,
       completed: row.completed === 1
     }));
+  }
+
+  _readOutgoingCheckpoint(taskId, manifest) {
+    const row = this.database.prepare(`
+      SELECT checkpoint_next_sequence, transferred_bytes, completed_files
+      FROM transfer_jobs WHERE task_id = ?
+    `).get(taskId);
+    if (!row) {
+      throw new Error('Transfer task was not found');
+    }
+    assertProgressValue(row.checkpoint_next_sequence, 'Outgoing checkpoint sequence');
+    const expectedFiles = manifest.entries.filter((entry) => entry.kind === 'file');
+    const persistedFiles = this.database.prepare(`
+      SELECT relative_path, expected_bytes, transferred_bytes, sha256, completed
+      FROM transfer_job_files WHERE task_id = ?
+    `).all(taskId);
+    if (persistedFiles.length !== expectedFiles.length) {
+      throw new Error('Persisted outgoing checkpoint file list does not match its manifest');
+    }
+    const persistedByPath = new Map(persistedFiles.map((file) => [file.relative_path, file]));
+    const files = expectedFiles.map((expected) => {
+      const file = persistedByPath.get(expected.path);
+      if (!file) {
+        throw new Error('Persisted outgoing checkpoint file list does not match its manifest');
+      }
+      if (file.relative_path !== expected.path || file.expected_bytes !== expected.size ||
+          file.sha256 !== expected.sha256) {
+        throw new Error('Persisted outgoing checkpoint file metadata does not match its manifest');
+      }
+      assertProgressValue(file.transferred_bytes, 'Persisted outgoing checkpoint offset');
+      if (file.transferred_bytes > file.expected_bytes || ![0, 1].includes(file.completed)) {
+        throw new RangeError('Persisted outgoing checkpoint file progress is invalid');
+      }
+      const completed = file.completed === 1;
+      if ((completed && file.transferred_bytes !== file.expected_bytes) ||
+          (!completed && file.expected_bytes !== 0 && file.transferred_bytes === file.expected_bytes)) {
+        throw new Error('Persisted outgoing checkpoint completion marker is inconsistent');
+      }
+      return {
+        path: file.relative_path,
+        size: file.expected_bytes,
+        committedOffset: file.transferred_bytes,
+        completed
+      };
+    });
+    const totalTransferred = files.reduce(
+      (total, file) => checkedProgressAdd(total, file.committedOffset, 'Outgoing checkpoint total'),
+      0
+    );
+    const completedFiles = files.reduce((total, file) => total + (file.completed ? 1 : 0), 0);
+    if (row.transferred_bytes !== totalTransferred || row.completed_files !== completedFiles) {
+      throw new Error('Persisted outgoing checkpoint aggregate does not match its file progress');
+    }
+    validateContiguousOutgoingCheckpoint(files);
+    return {
+      files,
+      totalTransferred,
+      nextSequence: row.checkpoint_next_sequence
+    };
   }
 
   close() {
@@ -321,7 +449,7 @@ class TransferJobStore {
           file.path,
           file.size,
           file.sha256,
-          file.size === 0 ? 1 : 0,
+          0,
           now
         );
       }
@@ -524,6 +652,7 @@ class TransferJobStore {
           total_bytes INTEGER NOT NULL CHECK(total_bytes >= 0),
           transferred_bytes INTEGER NOT NULL CHECK(transferred_bytes >= 0 AND transferred_bytes <= total_bytes),
           completed_files INTEGER NOT NULL CHECK(completed_files >= 0 AND completed_files <= total_files),
+          checkpoint_next_sequence INTEGER NOT NULL DEFAULT 0 CHECK(checkpoint_next_sequence >= 0),
           diagnostic_code TEXT,
           error_message TEXT,
           retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count >= 0),
@@ -575,6 +704,28 @@ class TransferJobStore {
       if (!columns.has('source_mapping_version')) {
         this.database.exec('ALTER TABLE transfer_jobs ADD COLUMN source_mapping_version INTEGER NOT NULL DEFAULT 0 CHECK(source_mapping_version IN (0, 1))');
       }
+      if (!columns.has('checkpoint_next_sequence')) {
+        this.database.exec('ALTER TABLE transfer_jobs ADD COLUMN checkpoint_next_sequence INTEGER NOT NULL DEFAULT 0 CHECK(checkpoint_next_sequence >= 0)');
+        // Older builds marked empty files complete at queue time. Protocol v2
+        // requires the receiver's durable acknowledgement even for empty files.
+        this.database.exec(`
+          UPDATE transfer_job_files
+          SET completed = 0
+          WHERE expected_bytes = 0
+            AND task_id IN (
+              SELECT task_id FROM transfer_jobs
+              WHERE direction = 'outgoing' AND status != 'completed'
+            )
+        `);
+        this.database.exec(`
+          UPDATE transfer_jobs
+          SET completed_files = (
+            SELECT COUNT(*) FROM transfer_job_files
+            WHERE transfer_job_files.task_id = transfer_jobs.task_id AND completed = 1
+          )
+          WHERE direction = 'outgoing' AND status != 'completed'
+        `);
+      }
       this.database.prepare(`
         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)
       `).run(Date.now());
@@ -583,6 +734,9 @@ class TransferJobStore {
       `).run(Date.now());
       this.database.prepare(`
         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, ?)
+      `).run(Date.now());
+      this.database.prepare(`
+        INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (6, ?)
       `).run(Date.now());
     });
   }
@@ -599,6 +753,7 @@ class TransferJobStore {
     if (row.completed_files > row.total_files || row.transferred_bytes > row.total_bytes) {
       throw new RangeError('Persisted transfer progress exceeds its declared total');
     }
+    assertProgressValue(row.checkpoint_next_sequence, 'Outgoing checkpoint sequence');
     if (!Number.isSafeInteger(row.retry_count) || row.retry_count < 0) {
       throw new RangeError('Persisted transfer retry count is invalid');
     }
@@ -794,8 +949,9 @@ function validatePersistedFiles(job, rows) {
     if (row.transferred_bytes > row.expected_bytes || ![0, 1].includes(row.completed)) {
       throw new RangeError('Persisted transfer file progress is invalid');
     }
-    const completed = row.transferred_bytes === row.expected_bytes;
-    if (completed !== (row.completed === 1)) {
+    const completed = row.completed === 1;
+    if ((completed && row.transferred_bytes !== row.expected_bytes) ||
+        (!completed && row.expected_bytes !== 0 && row.transferred_bytes === row.expected_bytes)) {
       throw new Error('Persisted transfer file completion marker is inconsistent');
     }
     assertTimestamp(row.updated_at, 'Persisted file update time');
@@ -810,6 +966,119 @@ function validatePersistedFiles(job, rows) {
     }
   }
   return { transferredBytes, completedFiles, updatedAt };
+}
+
+function normalizeOutgoingCheckpoint(checkpoint, expectedFiles) {
+  assertPlainCheckpointObject(checkpoint, 'Outgoing checkpoint');
+  assertExactCheckpointKeys(
+    checkpoint,
+    ['files', 'totalTransferred', 'nextSequence'],
+    'Outgoing checkpoint'
+  );
+  if (!Array.isArray(checkpoint.files) || checkpoint.files.length !== expectedFiles.length) {
+    throw new Error('Outgoing checkpoint file list does not match the transfer manifest');
+  }
+  assertProgressValue(checkpoint.totalTransferred, 'Outgoing checkpoint total transferred');
+  assertProgressValue(checkpoint.nextSequence, 'Outgoing checkpoint sequence');
+
+  let totalTransferred = 0;
+  const files = checkpoint.files.map((file, index) => {
+    assertPlainCheckpointObject(file, 'Outgoing checkpoint file');
+    assertExactCheckpointKeys(
+      file,
+      ['path', 'size', 'committedOffset', 'completed'],
+      'Outgoing checkpoint file'
+    );
+    const expected = expectedFiles[index];
+    if (file.path !== expected.path || file.size !== expected.size) {
+      throw new Error('Outgoing checkpoint file list does not match the transfer manifest');
+    }
+    assertProgressValue(file.committedOffset, 'Outgoing checkpoint committed offset');
+    if (file.committedOffset > file.size) {
+      throw new RangeError('Outgoing checkpoint committed offset exceeds the manifest file size');
+    }
+    if (typeof file.completed !== 'boolean') {
+      throw new TypeError('Outgoing checkpoint completed marker must be a boolean');
+    }
+    if ((file.completed && file.committedOffset !== file.size) ||
+        (!file.completed && file.size !== 0 && file.committedOffset === file.size)) {
+      throw new Error('Outgoing checkpoint file completion marker is inconsistent');
+    }
+    totalTransferred = checkedProgressAdd(
+      totalTransferred,
+      file.committedOffset,
+      'Outgoing checkpoint total'
+    );
+    return {
+      path: file.path,
+      size: file.size,
+      committedOffset: file.committedOffset,
+      completed: file.completed
+    };
+  });
+  validateContiguousOutgoingCheckpoint(files);
+  if (checkpoint.totalTransferred !== totalTransferred) {
+    throw new Error('Outgoing checkpoint total transferred must equal committed file offsets');
+  }
+  return { files, totalTransferred, nextSequence: checkpoint.nextSequence };
+}
+
+function assertMonotonicOutgoingCheckpoint(previous, candidate) {
+  if (candidate.totalTransferred < previous.totalTransferred) {
+    throw new Error('Outgoing checkpoint total transferred must not move backwards');
+  }
+  if (candidate.nextSequence < previous.nextSequence) {
+    throw new Error('Outgoing checkpoint sequence must not move backwards');
+  }
+  for (let index = 0; index < previous.files.length; index += 1) {
+    const before = previous.files[index];
+    const after = candidate.files[index];
+    if (after.committedOffset < before.committedOffset) {
+      throw new Error('Outgoing checkpoint file offsets must not move backwards');
+    }
+    if (before.completed && !after.completed) {
+      throw new Error('Outgoing checkpoint completion markers must not move backwards');
+    }
+  }
+}
+
+function validateContiguousOutgoingCheckpoint(files) {
+  let foundIncomplete = false;
+  for (const file of files) {
+    if (!foundIncomplete) {
+      if (!file.completed) foundIncomplete = true;
+    } else if (file.completed || file.committedOffset !== 0) {
+      throw new Error('Outgoing checkpoint progress must be contiguous in manifest order');
+    }
+  }
+}
+
+function checkedProgressAdd(left, right, label) {
+  if (left > Number.MAX_SAFE_INTEGER - right) {
+    throw new RangeError(`${label} exceeds the safe integer range`);
+  }
+  return left + right;
+}
+
+function assertPlainCheckpointObject(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+}
+
+function assertExactCheckpointKeys(value, expected, label) {
+  const expectedKeys = new Set(expected);
+  for (const key of expected) {
+    if (!Object.hasOwn(value, key)) {
+      throw new TypeError(`${label} is missing ${key}`);
+    }
+  }
+  for (const key of Object.keys(value)) {
+    if (!expectedKeys.has(key)) {
+      throw new TypeError(`${label} contains an unsupported field: ${key}`);
+    }
+  }
 }
 
 function assertStatus(status) {

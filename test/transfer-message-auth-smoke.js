@@ -182,9 +182,31 @@ function testControlCheckpointsRemainEnforced() {
     checkpoint
   }), true);
 
+  assert.strictEqual(verifyTransferMessage(TYPE_TRANSFER_PROGRESS, {
+    ...progress,
+    sessionId: Buffer.alloc(16, 0x33).toString('base64url')
+  }, signer.publicKey, { now: fixture.validationNow, checkpoint }), false);
+
+  const zeroProgress = signTransferMessage(TYPE_TRANSFER_PROGRESS, {
+    ...progressInput,
+    path: '资料/empty.bin',
+    fileSize: 0,
+    committedOffset: 0,
+    completed: true,
+    totalTransferred: 0
+  }, signer.privateKey, { now: fixture.validationNow });
+  assert.strictEqual(verifyTransferMessage(TYPE_TRANSFER_PROGRESS, zeroProgress, signer.publicKey, {
+    now: fixture.validationNow
+  }), true);
+  assert.strictEqual(verifyTransferMessage(TYPE_TRANSFER_PROGRESS, {
+    ...zeroProgress,
+    completed: false
+  }, signer.publicKey, { now: fixture.validationNow }), false);
+
   const regressedInput = {
     ...progressInput,
     committedOffset: 4,
+    completed: false,
     totalTransferred: 4
   };
   const regressed = signTransferMessage(TYPE_TRANSFER_PROGRESS, regressedInput, signer.privateKey, {

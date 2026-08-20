@@ -165,10 +165,10 @@ function validateDecision(message, now) {
     'protocolVersion',
     'type',
     'taskId',
+    'sessionId',
     'senderDeviceId',
     'receiverDeviceId',
     'decision',
-    'sessionId',
     'issuedAt',
     'expiresAt',
     'signature'
@@ -267,6 +267,7 @@ function validateResume(message, now, checkpoint) {
     'protocolVersion',
     'type',
     'taskId',
+    'sessionId',
     'senderDeviceId',
     'receiverDeviceId',
     'manifestHash',
@@ -279,6 +280,7 @@ function validateResume(message, now, checkpoint) {
   ], 'Transfer resume');
   assertProtocolEnvelope(message, TYPE_TRANSFER_RESUME, 'Transfer resume');
   assertValidTaskId(message.taskId);
+  assertValidSessionId(message.sessionId);
   assertRoute(message.senderDeviceId, message.receiverDeviceId);
   assertManifestHash(message.manifestHash);
   const files = normalizeResumeFiles(message.files);
@@ -302,6 +304,7 @@ function validateResume(message, now, checkpoint) {
     protocolVersion: PROTOCOL_VERSION,
     type: TYPE_TRANSFER_RESUME,
     taskId: message.taskId,
+    sessionId: message.sessionId,
     senderDeviceId: message.senderDeviceId,
     receiverDeviceId: message.receiverDeviceId,
     manifestHash: message.manifestHash,
@@ -322,12 +325,14 @@ function validateProgress(message, now, checkpoint) {
     'protocolVersion',
     'type',
     'taskId',
+    'sessionId',
     'senderDeviceId',
     'receiverDeviceId',
     'manifestHash',
     'path',
     'fileSize',
     'committedOffset',
+    'completed',
     'nextSequence',
     'totalTransferred',
     'issuedAt',
@@ -336,6 +341,7 @@ function validateProgress(message, now, checkpoint) {
   ], 'Transfer progress acknowledgement');
   assertProtocolEnvelope(message, TYPE_TRANSFER_PROGRESS, 'Transfer progress acknowledgement');
   assertValidTaskId(message.taskId);
+  assertValidSessionId(message.sessionId);
   assertRoute(message.senderDeviceId, message.receiverDeviceId);
   assertManifestHash(message.manifestHash);
   assertValidRelativePath(message.path);
@@ -343,6 +349,13 @@ function validateProgress(message, now, checkpoint) {
   assertNonNegativeSafeInteger(message.committedOffset, 'Transfer progress committed offset');
   if (message.committedOffset > message.fileSize) {
     throw new RangeError('Transfer progress committed offset exceeds the file size');
+  }
+  assertBoolean(message.completed, 'Transfer progress completed');
+  if (message.completed && message.committedOffset !== message.fileSize) {
+    throw new TypeError('Completed transfer progress must commit the entire file');
+  }
+  if (!message.completed && message.fileSize > 0 && message.committedOffset === message.fileSize) {
+    throw new TypeError('Fully committed non-empty transfer progress must be completed');
   }
   assertSequence(message.nextSequence, 'Transfer progress next sequence');
   assertNonNegativeSafeInteger(message.totalTransferred, 'Transfer progress total transferred');
@@ -357,12 +370,14 @@ function validateProgress(message, now, checkpoint) {
     protocolVersion: PROTOCOL_VERSION,
     type: TYPE_TRANSFER_PROGRESS,
     taskId: message.taskId,
+    sessionId: message.sessionId,
     senderDeviceId: message.senderDeviceId,
     receiverDeviceId: message.receiverDeviceId,
     manifestHash: message.manifestHash,
     path: message.path,
     fileSize: message.fileSize,
     committedOffset: message.committedOffset,
+    completed: message.completed,
     nextSequence: message.nextSequence,
     totalTransferred: message.totalTransferred,
     issuedAt: message.issuedAt,
@@ -381,7 +396,7 @@ function normalizeResumeFiles(files) {
   const seenWindowsPaths = new Set();
   const normalized = files.map((file) => {
     assertPlainObject(file, 'Transfer resume file');
-    assertExactKeys(file, ['path', 'size', 'committedOffset'], 'Transfer resume file');
+    assertExactKeys(file, ['path', 'size', 'committedOffset', 'completed'], 'Transfer resume file');
     assertValidRelativePath(file.path);
     const windowsPath = file.path.split('/').map((component) => component.toUpperCase()).join('/');
     if (seenPaths.has(file.path) || seenWindowsPaths.has(windowsPath)) {
@@ -394,7 +409,19 @@ function normalizeResumeFiles(files) {
     if (file.committedOffset > file.size) {
       throw new RangeError('Transfer resume committed offset exceeds the file size');
     }
-    return { path: file.path, size: file.size, committedOffset: file.committedOffset };
+    assertBoolean(file.completed, 'Transfer resume file completed');
+    if (file.completed && file.committedOffset !== file.size) {
+      throw new TypeError('Completed transfer resume file must commit its entire size');
+    }
+    if (!file.completed && file.size > 0 && file.committedOffset === file.size) {
+      throw new TypeError('Fully committed non-empty transfer resume file must be completed');
+    }
+    return {
+      path: file.path,
+      size: file.size,
+      committedOffset: file.committedOffset,
+      completed: file.completed
+    };
   });
   normalized.sort((left, right) => compareCodeUnits(left.path, right.path));
   return normalized;
@@ -439,9 +466,12 @@ function assertMonotonicControl(checkpoint, next) {
     if (current.committedOffset < prior.committedOffset) {
       throw new RangeError(`Transfer control committed offset moved backwards for ${path}`);
     }
+    if (prior.completed && !current.completed) {
+      throw new RangeError(`Transfer control completion moved backwards for ${path}`);
+    }
     const delta = current.committedOffset - prior.committedOffset;
     committedDelta = checkedAdd(committedDelta, delta, 'Transfer control committed delta');
-    if (delta > 0) changedFiles += 1;
+    if (delta > 0 || current.completed !== prior.completed) changedFiles += 1;
   }
   if (next.type === TYPE_TRANSFER_RESUME && previousOffsets.size !== nextOffsets.size) {
     throw new TypeError('Transfer resume file set must remain stable');
@@ -505,7 +535,8 @@ function controlOffsets(message) {
   return new Map([[message.path, {
     path: message.path,
     size: message.fileSize,
-    committedOffset: message.committedOffset
+    committedOffset: message.committedOffset,
+    completed: message.completed
   }]]);
 }
 
@@ -528,7 +559,12 @@ function advanceTransferControlCheckpoint(type, message, options = {}) {
     : normalized.type === TYPE_TRANSFER_RESUME
       ? normalized.files
       : previous.files.map((file) => file.path === normalized.path
-        ? { path: file.path, size: file.size, committedOffset: normalized.committedOffset }
+        ? {
+            path: file.path,
+            size: file.size,
+            committedOffset: normalized.committedOffset,
+            completed: normalized.completed
+          }
         : file);
   return normalizeControlCheckpoint({
     taskId: normalized.taskId,
@@ -648,6 +684,12 @@ function assertSequence(value, label) {
 function assertNonNegativeSafeInteger(value, label) {
   if (!Number.isSafeInteger(value) || value < 0 || value > MAX_SAFE_INTEGER) {
     throw new TypeError(`${label} must be a non-negative safe integer`);
+  }
+}
+
+function assertBoolean(value, label) {
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${label} must be a boolean`);
   }
 }
 

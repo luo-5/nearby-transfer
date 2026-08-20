@@ -64,6 +64,24 @@ internal object ReceiveCheckpointCodec {
         )
     }
 
+    /** Builds a canonical checkpoint from typed receiver progress and revalidates it fully. */
+    fun fromProgress(
+        manifestJson: String,
+        files: List<FileCheckpoint>,
+        nextSequence: Long,
+    ): NormalizedCheckpoint {
+        requireSequence(nextSequence)
+        val manifest = bindManifest(manifestJson)
+        val snapshot = files.toList()
+        val candidate = normalized(
+            manifest = manifest,
+            files = snapshot,
+            nextSequence = nextSequence,
+            transferredBytes = checkedOffsetSum(snapshot),
+        )
+        return normalize(manifestJson, candidate.json)
+    }
+
     /** Parses, validates against the manifest, and emits deterministic canonical JSON. */
     fun normalize(manifestJson: String, checkpointJson: String): NormalizedCheckpoint {
         val manifest = bindManifest(manifestJson)

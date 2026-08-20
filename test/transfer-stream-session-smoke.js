@@ -10,18 +10,21 @@ const {
   CONTROL_TYPES,
   FRAME_KIND_CHUNK,
   FRAME_KIND_CONTROL,
+  FRAME_KIND_PROGRESS,
   MUX_PREFIX_BYTES,
   StreamEnvelopeDecoder,
   createTransferStreamSession,
   encodeStreamEnvelope
 } = require('../src/v2/transfer-stream-session');
 const { encodeFrame: encodeChunkFrame } = require('../src/v2/transfer-chunk-frame');
+const { MAX_ENCODED_BYTES: MAX_CONTROL_FRAME_BYTES } = require('../src/v2/signed-stream-control');
 
 const PEER_A = 'desktop-peer-a';
 const PEER_B = 'desktop-peer-b';
 
 async function main() {
   await testNormalFragmentedMultiFileFlow();
+  await testSenderWaitsForDurableProgressCommit();
   await testReverseDirectionFlow();
   await testMultipleFramesInOnePacket();
   await testBackpressureAndSerializedWrites();
@@ -75,6 +78,48 @@ async function testNormalFragmentedMultiFileFlow() {
   assertNoSessionListeners(pair.left);
   assertNoSessionListeners(pair.right);
   assert.ok(!JSON.stringify(sent).includes('sourcePath'));
+}
+
+async function testSenderWaitsForDurableProgressCommit() {
+  const taskId = createTaskId();
+  const pair = createMemoryPair();
+  const writer = createRecordingWriter();
+  let releaseFirstCommit;
+  let firstCommitStarted;
+  const firstCommit = new Promise((resolve) => { firstCommitStarted = resolve; });
+  const commitGate = new Promise((resolve) => { releaseFirstCommit = resolve; });
+  let commits = 0;
+  const sender = createTransferStreamSession({
+    ...baseConfig('sender', pair.left, taskId, PEER_A, PEER_B),
+    chunkReader: makeReader([
+      chunk(taskId, 'a.bin', 0, 0, Buffer.from('one')),
+      chunk(taskId, 'a.bin', 3, 1, Buffer.from('two'))
+    ], { returned: 0 }),
+    async commitProgress(progress, sentChunk) {
+      commits += 1;
+      assert.strictEqual(progress.nextSequence, sentChunk.sequence + 1);
+      if (commits === 1) {
+        firstCommitStarted();
+        await commitGate;
+      }
+    }
+  });
+  const receiver = createTransferStreamSession({
+    ...baseConfig('receiver', pair.right, taskId, PEER_B, PEER_A),
+    chunkWriter: writer
+  });
+
+  const senderDone = sender.start();
+  const receiverDone = receiver.start();
+  await firstCommit;
+  await sleep(20);
+  assert.strictEqual(writer.received.length, 1, 'a second chunk must wait for durable progress persistence');
+  releaseFirstCommit();
+  const [senderResult, receiverResult] = await Promise.all([senderDone, receiverDone]);
+  assert.strictEqual(senderResult.state, 'completed');
+  assert.strictEqual(receiverResult.state, 'completed');
+  assert.strictEqual(writer.received.length, 2);
+  assert.strictEqual(commits, 2);
 }
 
 
@@ -593,7 +638,22 @@ async function testDataAfterCompletion() {
 
 async function testBoundedMuxHeader() {
   assert.throws(() => encodeStreamEnvelope(99, Buffer.of(1)), /kind/i);
+  assert.ok(Buffer.isBuffer(encodeStreamEnvelope(FRAME_KIND_PROGRESS, Buffer.of(1))));
   assert.throws(() => encodeStreamEnvelope(FRAME_KIND_CONTROL, Buffer.alloc(0)), /length/i);
+  assert.throws(
+    () => encodeStreamEnvelope(FRAME_KIND_CONTROL, Buffer.alloc(MAX_CONTROL_FRAME_BYTES + 1)),
+    /bound/i
+  );
+
+  const oversizedControl = Buffer.alloc(MUX_PREFIX_BYTES);
+  Buffer.from('NTV2MUX1').copy(oversizedControl);
+  oversizedControl.writeUInt8(1, 8);
+  oversizedControl.writeUInt8(FRAME_KIND_CONTROL, 9);
+  oversizedControl.writeUInt32BE(MAX_CONTROL_FRAME_BYTES + 1, 12);
+  await assert.rejects(
+    new StreamEnvelopeDecoder().push(oversizedControl, async () => {}),
+    /bound/i
+  );
 
   const malicious = Buffer.alloc(MUX_PREFIX_BYTES);
   Buffer.from('NTV2MUX1').copy(malicious);
@@ -642,6 +702,11 @@ function baseConfig(role, stream, taskId, localPeerId, remotePeerId) {
     encodeControl,
     decodeControl,
     verifyControl: async () => true,
+    encodeProgress: async (progress) => Buffer.from(canonicalJson(progress), 'utf8'),
+    decodeProgress: async (encoded) => JSON.parse(Buffer.from(encoded).toString('utf8')),
+    commitProgress: async (progress, sentChunk) => {
+      assert.strictEqual(progress.nextSequence, sentChunk.sequence + 1);
+    },
     handshakeTimeoutMs: 500,
     idleTimeoutMs: 500,
     writeTimeoutMs: 500,

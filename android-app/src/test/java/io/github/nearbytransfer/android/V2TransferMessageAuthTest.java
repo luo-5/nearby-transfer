@@ -184,6 +184,42 @@ public class V2TransferMessageAuthTest {
         V2TransferMessageAuth.verify(
             V2TransferMessage.TYPE_PROGRESS, progressA, publicKeyPem, now, checkpoint
         );
+
+        JSONObject completeProgress = V2TransferMessageAuth.signedCopy(
+            V2TransferMessage.TYPE_PROGRESS,
+            fixture.getJSONObject("vectors").getJSONObject("transferProgress").getJSONObject("message"),
+            privateKeyPem
+        );
+        V2TransferMessageAuth.verify(
+            V2TransferMessage.TYPE_PROGRESS, completeProgress, publicKeyPem, now
+        );
+        JSONObject changedSession = copy(completeProgress);
+        changedSession.put(
+            "sessionId",
+            Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16])
+        );
+        assertFailure(() -> V2TransferMessageAuth.verify(
+            V2TransferMessage.TYPE_PROGRESS, changedSession, publicKeyPem, now
+        ));
+        JSONObject zeroProgressInput = copy(
+            fixture.getJSONObject("vectors").getJSONObject("transferProgress").getJSONObject("message")
+        );
+        zeroProgressInput.put("path", "资料/empty.bin");
+        zeroProgressInput.put("fileSize", 0L);
+        zeroProgressInput.put("committedOffset", 0L);
+        zeroProgressInput.put("completed", true);
+        zeroProgressInput.put("totalTransferred", 0L);
+        JSONObject zeroProgress = V2TransferMessageAuth.signedCopy(
+            V2TransferMessage.TYPE_PROGRESS, zeroProgressInput, privateKeyPem
+        );
+        V2TransferMessageAuth.verify(
+            V2TransferMessage.TYPE_PROGRESS, zeroProgress, publicKeyPem, now
+        );
+        JSONObject changedCompleted = copy(zeroProgress);
+        changedCompleted.put("completed", false);
+        assertFailure(() -> V2TransferMessageAuth.verify(
+            V2TransferMessage.TYPE_PROGRESS, changedCompleted, publicKeyPem, now
+        ));
         checkpoint = V2TransferMessage.advanceCheckpoint(
             V2TransferMessage.TYPE_PROGRESS, progressA, now, checkpoint
         );

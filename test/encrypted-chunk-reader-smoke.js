@@ -18,6 +18,7 @@ async function main() {
   try {
     await testMultipleFilesResumeAndDecrypt(root);
     await testResumeAndSequenceBoundaries(root);
+    await testCanonicalResumeCheckpoint(root);
     await testEarlyTerminationCleanup(root);
     await testAbortCleanup(root);
     await testOutputOwnershipAndPlaintextWiping(root);
@@ -126,6 +127,76 @@ async function testResumeAndSequenceBoundaries(root) {
     chunkSize: 4,
     startSequence: MAX_SEQUENCE
   }), /sequence/i);
+}
+
+async function testCanonicalResumeCheckpoint(root) {
+  const folder = path.join(root, 'checkpoint');
+  fs.mkdirSync(folder);
+  const alpha = path.join(folder, 'alpha.bin');
+  const beta = path.join(folder, 'beta.bin');
+  const empty = path.join(folder, 'empty.bin');
+  fs.writeFileSync(alpha, Buffer.from('abcdefgh'));
+  fs.writeFileSync(beta, Buffer.from('ijkl'));
+  fs.writeFileSync(empty, Buffer.alloc(0));
+  const prepared = await buildTransferSourceManifest([alpha, beta, empty], { taskId: TASK_ID });
+  const files = prepared.manifest.entries.filter((entry) => entry.kind === 'file');
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const checkpoint = {
+    files: [
+      { path: 'alpha.bin', size: byPath.get('alpha.bin').size, committedOffset: 8, completed: true },
+      { path: 'beta.bin', size: byPath.get('beta.bin').size, committedOffset: 0, completed: false },
+      { path: 'empty.bin', size: 0, committedOffset: 0, completed: false }
+    ],
+    nextSequence: 7,
+    totalTransferred: 8
+  };
+  const chunks = await collect(createEncryptedChunkReader({
+    manifest: prepared.manifest,
+    sourceFiles: prepared.files,
+    sessionKey: SESSION_KEY,
+    resumeCheckpoint: checkpoint,
+    chunkSize: 4
+  }));
+  assert.deepStrictEqual(chunks.map((chunk) => [chunk.path, chunk.sequence, chunk.plainLength]), [
+    ['beta.bin', 7, 4],
+    ['empty.bin', 8, 0]
+  ]);
+
+  const complete = {
+    files: checkpoint.files.map((file) => ({ ...file, committedOffset: file.size, completed: true })),
+    nextSequence: 9,
+    totalTransferred: 12
+  };
+  assert.deepStrictEqual(await collect(createEncryptedChunkReader({
+    manifest: prepared.manifest,
+    sourceFiles: prepared.files,
+    sessionKey: SESSION_KEY,
+    resumeCheckpoint: complete,
+    chunkSize: 4
+  })), [], 'completed empty files must not emit another marker chunk');
+
+  for (const invalid of [
+    { ...checkpoint, totalTransferred: 7 },
+    { ...checkpoint, files: checkpoint.files.map((file, index) => index === 1 ? { ...file, completed: true } : file) },
+    { ...checkpoint, files: checkpoint.files.map((file, index) => index === 1 ? { ...file, committedOffset: 4, completed: true } : file) },
+    { ...checkpoint, files: checkpoint.files.map((file, index) => index === 2 ? { ...file, completed: true } : file) }
+  ]) {
+    assert.throws(() => createEncryptedChunkReader({
+      manifest: prepared.manifest,
+      sourceFiles: prepared.files,
+      sessionKey: SESSION_KEY,
+      resumeCheckpoint: invalid,
+      chunkSize: 4
+    }), /checkpoint|completion|prefix|total transferred/i);
+  }
+  assert.throws(() => createEncryptedChunkReader({
+    manifest: prepared.manifest,
+    sourceFiles: prepared.files,
+    sessionKey: SESSION_KEY,
+    resumeCheckpoint: checkpoint,
+    startSequence: 7,
+    chunkSize: 4
+  }), /cannot be combined/i);
 }
 
 async function testEarlyTerminationCleanup(root) {

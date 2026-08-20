@@ -2,6 +2,7 @@
 
 const {
   DIAGNOSTIC_CODE,
+  JOB_DIRECTION,
   JOB_STATUS
 } = require('./transfer-job-store');
 
@@ -13,7 +14,7 @@ const SUPPORTED_DIAGNOSTIC_CODES = new Set(Object.values(DIAGNOSTIC_CODE));
  * The executor contract is deliberately small so the scheduler does not know
  * how a LAN connection or a TransferStreamSession is created:
  *
- *   await executorFactory({ job, signal, reportFileProgress })
+ *   await executorFactory({ job, checkpoint, signal, commitRemoteCheckpoint })
  *   executor.done       Promise which resolves on success or rejects on error
  *   executor.pause()    Promise which resolves after the stream is paused
  *   executor.resume()   Promise which resolves after the stream is resumed
@@ -158,7 +159,8 @@ class DesktopTransferScheduler {
   async _pump() {
     if (!this._running || this._active) return;
     const job = this.transferJobStore.list({ includeTerminal: false })
-      .find((candidate) => candidate.status === JOB_STATUS.QUEUED && candidate.recoverable !== false);
+      .find((candidate) => candidate.direction === JOB_DIRECTION.OUTGOING &&
+        candidate.status === JOB_STATUS.QUEUED && candidate.recoverable !== false);
     if (!job) return;
 
     let started;
@@ -193,32 +195,22 @@ class DesktopTransferScheduler {
 
   async _createExecutor(active) {
     try {
+      const checkpoint = this.transferJobStore.getOutgoingCheckpoint(active.job.taskId);
       const executor = await this.executorFactory({
         job: active.job,
+        checkpoint,
         signal: active.controller.signal,
-        reportFileProgress: (relativePath, transferredBytes, now) => {
+        commitRemoteCheckpoint: (candidate, now) => {
           if (this._active !== active || active.job.status !== JOB_STATUS.TRANSFERRING) {
-            throw new Error('Transfer executor reported progress for an inactive job');
+            throw new Error('Transfer executor committed a checkpoint for an inactive job');
           }
-          active.job = this.transferJobStore.recordFileProgress(
+          const committed = this.transferJobStore.advanceOutgoingCheckpoint(
             active.job.taskId,
-            relativePath,
-            transferredBytes,
+            candidate,
             now
           );
-          return active.job;
-        },
-        recordFileProgress: (relativePath, transferredBytes, now) => {
-          if (this._active !== active || active.job.status !== JOB_STATUS.TRANSFERRING) {
-            throw new Error('Transfer executor reported progress for an inactive job');
-          }
-          active.job = this.transferJobStore.recordFileProgress(
-            active.job.taskId,
-            relativePath,
-            transferredBytes,
-            now
-          );
-          return active.job;
+          active.job = this.transferJobStore.get(active.job.taskId);
+          return committed;
         }
       });
       assertExecutor(executor);

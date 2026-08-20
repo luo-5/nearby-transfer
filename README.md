@@ -48,6 +48,10 @@ npm test
 
 See [`docs/build.md`](docs/build.md) for complete Linux, Windows, and Android build steps, signing notes, and release artifact guidance.
 
+For the v1.0 rewrite plan, current implementation boundary, and moving the
+working directory to another computer, see
+[`docs/next-version-handoff.md`](docs/next-version-handoff.md).
+
 ## Build Linux Packages
 
 ```bash

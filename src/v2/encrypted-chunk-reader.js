@@ -19,6 +19,7 @@ const SOURCE_FILE_KEYS = ['path', 'sha256', 'size', 'sourcePath'];
 const INPUT_KEYS = [
   'chunkSize',
   'manifest',
+  'resumeCheckpoint',
   'resumeOffsets',
   'sessionKey',
   'signal',
@@ -90,24 +91,22 @@ function normalizeInput(input) {
   assertSessionKey(input.sessionKey);
   const chunkSize = input.chunkSize === undefined ? DEFAULT_CHUNK_SIZE : input.chunkSize;
   assertSafeInteger(chunkSize, 1, MAX_CHUNK_BYTES, 'Encrypted chunk size');
-  const startSequence = input.startSequence === undefined ? 0 : input.startSequence;
-  assertSafeInteger(startSequence, 0, MAX_SEQUENCE, 'Encrypted chunk starting sequence');
   const signal = normalizeAbortSignal(input.signal);
 
   const manifestFiles = manifest.entries.filter((entry) => entry.kind === 'file');
   const sourceFiles = normalizeSourceFiles(input.sourceFiles, manifestFiles);
-  const resumeOffsets = normalizeResumeOffsets(input.resumeOffsets, manifestFiles);
-  assertResumeAlignment(sourceFiles, resumeOffsets, chunkSize);
-  assertSequenceCapacity(sourceFiles, resumeOffsets, chunkSize, startSequence);
+  const resume = normalizeResumeState(input, manifestFiles);
+  assertResumeAlignment(sourceFiles, resume.files, chunkSize);
+  assertSequenceCapacity(sourceFiles, resume.files, chunkSize, resume.nextSequence);
   const sessionKey = Buffer.from(input.sessionKey);
 
   return Object.freeze({
     manifest,
     sourceFiles,
-    resumeOffsets,
+    resumeFiles: resume.files,
     sessionKey,
     chunkSize,
-    startSequence,
+    startSequence: resume.nextSequence,
     signal
   });
 }
@@ -118,8 +117,9 @@ async function* readEncryptedChunks(config, releaseSessionKey) {
     throwIfAborted(config.signal);
     for (const source of config.sourceFiles) {
       throwIfAborted(config.signal);
-      const resumeOffset = config.resumeOffsets.get(source.path);
-      if (resumeOffset === source.size && source.size !== 0) continue;
+      const resume = config.resumeFiles.get(source.path);
+      const resumeOffset = resume.committedOffset;
+      if (resume.completed) continue;
 
       let handle;
       let closePromise;
@@ -420,9 +420,85 @@ function normalizeResumeOffsets(resumeOffsets, manifestFiles) {
   return normalized;
 }
 
-function assertResumeAlignment(sourceFiles, resumeOffsets, chunkSize) {
+function normalizeResumeState(input, manifestFiles) {
+  if (input.resumeCheckpoint !== undefined) {
+    if (input.resumeOffsets !== undefined || input.startSequence !== undefined) {
+      throw new TypeError('A transfer resume checkpoint cannot be combined with legacy resume fields');
+    }
+    return normalizeResumeCheckpoint(input.resumeCheckpoint, manifestFiles);
+  }
+
+  const offsets = normalizeResumeOffsets(input.resumeOffsets, manifestFiles);
+  const nextSequence = input.startSequence === undefined ? 0 : input.startSequence;
+  assertSafeInteger(nextSequence, 0, MAX_SEQUENCE, 'Encrypted chunk starting sequence');
+  return Object.freeze({
+    files: new Map(manifestFiles.map((entry) => {
+      const committedOffset = offsets.get(entry.path);
+      return [entry.path, Object.freeze({
+        path: entry.path,
+        size: entry.size,
+        committedOffset,
+        completed: entry.size > 0 && committedOffset === entry.size
+      })];
+    })),
+    nextSequence
+  });
+}
+
+function normalizeResumeCheckpoint(checkpoint, manifestFiles) {
+  assertPlainObject(checkpoint, 'Transfer resume checkpoint');
+  assertExactKeys(checkpoint, ['files', 'nextSequence', 'totalTransferred'], 'Transfer resume checkpoint');
+  assertSafeInteger(checkpoint.nextSequence, 0, MAX_SEQUENCE, 'Transfer resume next sequence');
+  assertSafeInteger(checkpoint.totalTransferred, 0, Number.MAX_SAFE_INTEGER, 'Transfer resume total transferred');
+  if (!Array.isArray(checkpoint.files) || checkpoint.files.length !== manifestFiles.length) {
+    throw new TypeError('Transfer resume checkpoint must contain every manifest file exactly once');
+  }
+
+  const manifestByPath = new Map(manifestFiles.map((entry) => [entry.path, entry]));
+  const normalized = new Map();
+  let totalTransferred = 0;
+  let incompleteSeen = false;
+  for (const file of checkpoint.files) {
+    assertPlainObject(file, 'Transfer resume checkpoint file');
+    assertExactKeys(file, ['committedOffset', 'completed', 'path', 'size'], 'Transfer resume checkpoint file');
+    const manifestEntry = manifestByPath.get(file.path);
+    if (!manifestEntry || normalized.has(file.path) || file.size !== manifestEntry.size) {
+      throw new TypeError('Transfer resume checkpoint contains a missing, duplicate, unknown, or mismatched file');
+    }
+    assertSafeInteger(file.committedOffset, 0, file.size, `Transfer resume offset for ${file.path}`);
+    if (typeof file.completed !== 'boolean') {
+      throw new TypeError(`Transfer resume completion flag for ${file.path} must be boolean`);
+    }
+    if (file.completed && file.committedOffset !== file.size) {
+      throw new TypeError(`Transfer resume completion flag for ${file.path} conflicts with its committed offset`);
+    }
+    if (!file.completed && file.size > 0 && file.committedOffset === file.size) {
+      throw new TypeError(`Transfer resume completion flag for ${file.path} conflicts with its committed offset`);
+    }
+    if (incompleteSeen && (file.committedOffset !== 0 || file.completed)) {
+      throw new TypeError('Transfer resume checkpoint must describe a contiguous manifest prefix');
+    }
+    if (!file.completed) incompleteSeen = true;
+    totalTransferred += file.committedOffset;
+    if (!Number.isSafeInteger(totalTransferred)) {
+      throw new RangeError('Transfer resume total transferred exceeds safe integer precision');
+    }
+    normalized.set(file.path, Object.freeze({
+      path: file.path,
+      size: file.size,
+      committedOffset: file.committedOffset,
+      completed: file.completed
+    }));
+  }
+  if (totalTransferred !== checkpoint.totalTransferred) {
+    throw new TypeError('Transfer resume total transferred does not match its file checkpoints');
+  }
+  return Object.freeze({ files: normalized, nextSequence: checkpoint.nextSequence });
+}
+
+function assertResumeAlignment(sourceFiles, resumeFiles, chunkSize) {
   for (const source of sourceFiles) {
-    const offset = resumeOffsets.get(source.path);
+    const offset = resumeFiles.get(source.path).committedOffset;
     if (offset !== source.size && offset % chunkSize !== 0) {
       throw new RangeError(
         `Transfer resume offset for ${source.path} must be chunk-aligned or equal the file size`
@@ -431,11 +507,13 @@ function assertResumeAlignment(sourceFiles, resumeOffsets, chunkSize) {
   }
 }
 
-function assertSequenceCapacity(sourceFiles, resumeOffsets, chunkSize, startSequence) {
+function assertSequenceCapacity(sourceFiles, resumeFiles, chunkSize, startSequence) {
   let count = 0n;
   const chunkSizeBigInt = BigInt(chunkSize);
   for (const source of sourceFiles) {
-    const remaining = BigInt(source.size - resumeOffsets.get(source.path));
+    const resume = resumeFiles.get(source.path);
+    if (resume.completed) continue;
+    const remaining = BigInt(source.size - resume.committedOffset);
     const fileChunks = source.size === 0
       ? 1n
       : (remaining + chunkSizeBigInt - 1n) / chunkSizeBigInt;

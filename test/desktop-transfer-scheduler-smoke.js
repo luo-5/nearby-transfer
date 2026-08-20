@@ -25,6 +25,7 @@ const TASK_F = 'JicpKissLS4vMDEyMzQ1Ng';
 const TASK_G = 'KCorLC0uLzAxMjM0NTY3OA';
 const TASK_H = 'KywtLi8wMTIzNDU2Nzg5Og';
 const TASK_I = 'LC0uLzAxMjM0NTY3ODk6Ow';
+const TASK_J = 'LS4vMDEyMzQ1Njc4OTo7PA';
 
 function identity(name) {
   const signing = createKeyPair('ed25519');
@@ -52,6 +53,22 @@ function sourceMapping(dir, fileName = 'file.txt') {
     size: 1,
     sha256: HASH
   }];
+}
+
+function initialCheckpoint(fileName) {
+  return {
+    files: [{ path: fileName, size: 1, committedOffset: 0, completed: false }],
+    totalTransferred: 0,
+    nextSequence: 0
+  };
+}
+
+function completedCheckpoint(fileName) {
+  return {
+    files: [{ path: fileName, size: 1, committedOffset: 1, completed: true }],
+    totalTransferred: 1,
+    nextSequence: 1
+  };
 }
 
 function deferred() {
@@ -91,9 +108,9 @@ async function testQueueAndCompletion(jobs, peer, dir) {
   let closeCalls = 0;
   const scheduler = createDesktopTransferScheduler({
     transferJobStore: jobs,
-    executorFactory: async ({ job, reportFileProgress }) => {
+    executorFactory: async ({ job, checkpoint, commitRemoteCheckpoint }) => {
       started.push(job.taskId);
-      executors.push({ job, reportFileProgress });
+      executors.push({ job, checkpoint, commitRemoteCheckpoint });
       return {
         done: job.taskId === TASK_A ? firstDone.promise : secondDone.promise,
         close: async () => { closeCalls += 1; },
@@ -106,13 +123,21 @@ async function testQueueAndCompletion(jobs, peer, dir) {
 
   await scheduler.start();
   assert.deepStrictEqual(started, [TASK_A]);
+  assert.deepStrictEqual(executors[0].checkpoint, initialCheckpoint(`${TASK_A}.txt`));
   assert.strictEqual(scheduler.getActiveJob().status, JOB_STATUS.TRANSFERRING);
   assert.strictEqual(jobs.get(TASK_B).status, JOB_STATUS.QUEUED);
-  await executors[0].reportFileProgress(`${TASK_A}.txt`, 1);
+  assert.deepStrictEqual(
+    executors[0].commitRemoteCheckpoint(completedCheckpoint(`${TASK_A}.txt`), 1760000000003),
+    completedCheckpoint(`${TASK_A}.txt`)
+  );
   firstDone.resolve();
   await eventually(() => started.length === 2, 'the second queued task should start after the first completes');
   assert.strictEqual(jobs.get(TASK_A).status, JOB_STATUS.COMPLETED, JSON.stringify(jobs.get(TASK_A)));
   assert.strictEqual(jobs.get(TASK_B).status, JOB_STATUS.TRANSFERRING);
+  assert.throws(
+    () => executors[0].commitRemoteCheckpoint(completedCheckpoint(`${TASK_A}.txt`)),
+    /inactive job/
+  );
   await scheduler.cancel(TASK_B);
   assert.strictEqual(closeCalls, 2, 'completed and cancelled executors must both be closed');
   await scheduler.stop();
@@ -164,11 +189,14 @@ async function testFailureRetryAndLateCompletion(jobs, peer, dir) {
   const firstDone = deferred();
   const secondDone = deferred();
   const started = [];
+  const contexts = [];
   let closeCalls = 0;
   const scheduler = createDesktopTransferScheduler({
     transferJobStore: jobs,
-    executorFactory: async ({ job }) => {
+    executorFactory: async (context) => {
+      const { job } = context;
       started.push(job.taskId);
+      contexts.push(context);
       return {
         done: job.taskId === TASK_D ? firstDone.promise : secondDone.promise,
         close: async () => { closeCalls += 1; },
@@ -178,12 +206,18 @@ async function testFailureRetryAndLateCompletion(jobs, peer, dir) {
   });
   queueOutgoing(jobs, peer, dir, TASK_D, 1760000000020);
   await scheduler.start();
+  contexts[0].commitRemoteCheckpoint(completedCheckpoint(`${TASK_D}.txt`), 1760000000021);
   firstDone.reject(Object.assign(new Error('socket timed out'), { code: DIAGNOSTIC_CODE.NETWORK_INTERRUPTED }));
   await eventually(() => jobs.get(TASK_D).status === JOB_STATUS.FAILED);
   assert.strictEqual(jobs.get(TASK_D).diagnosticCode, DIAGNOSTIC_CODE.NETWORK_INTERRUPTED);
   const retried = await scheduler.retry(TASK_D);
   assert.strictEqual(retried.status, JOB_STATUS.QUEUED);
   await eventually(() => started.length === 2);
+  assert.deepStrictEqual(
+    contexts[1].checkpoint,
+    completedCheckpoint(`${TASK_D}.txt`),
+    'retry must receive the last receiver-durable checkpoint'
+  );
   firstDone.resolve();
   assert.strictEqual(jobs.get(TASK_D).status, JOB_STATUS.TRANSFERRING);
   await scheduler.cancel(TASK_D);
@@ -227,12 +261,12 @@ async function testStopAndMissingSources(jobs, peer, dir) {
 
 async function testPauseCompletionRace(jobs, peer, dir) {
   const done = deferred();
-  let reportFileProgress;
+  let commitRemoteCheckpoint;
   let closeCalls = 0;
   const scheduler = createDesktopTransferScheduler({
     transferJobStore: jobs,
     executorFactory: async (context) => {
-      reportFileProgress = context.reportFileProgress;
+      commitRemoteCheckpoint = context.commitRemoteCheckpoint;
       return {
         done: done.promise,
         pause: async () => {
@@ -247,7 +281,7 @@ async function testPauseCompletionRace(jobs, peer, dir) {
   queueOutgoing(jobs, peer, dir, TASK_G, 1760000000040);
 
   await scheduler.start();
-  await reportFileProgress(`${TASK_G}.txt`, 1);
+  commitRemoteCheckpoint(completedCheckpoint(`${TASK_G}.txt`), 1760000000041);
   const result = await scheduler.pause(TASK_G);
   assert.strictEqual(result.status, JOB_STATUS.COMPLETED);
   assert.strictEqual(jobs.get(TASK_G).status, JOB_STATUS.COMPLETED);
@@ -260,13 +294,13 @@ async function testCleanupFailureStillPumps(jobs, peer, dir) {
   const firstDone = deferred();
   const secondDone = deferred();
   const started = [];
-  const progress = new Map();
+  const checkpoints = new Map();
   let firstCloseCalls = 0;
   const scheduler = createDesktopTransferScheduler({
     transferJobStore: jobs,
-    executorFactory: async ({ job, reportFileProgress }) => {
+    executorFactory: async ({ job, commitRemoteCheckpoint }) => {
       started.push(job.taskId);
-      progress.set(job.taskId, reportFileProgress);
+      checkpoints.set(job.taskId, commitRemoteCheckpoint);
       return {
         done: job.taskId === TASK_H ? firstDone.promise : secondDone.promise,
         close: async () => {
@@ -283,7 +317,7 @@ async function testCleanupFailureStillPumps(jobs, peer, dir) {
   queueOutgoing(jobs, peer, dir, TASK_I, 1760000000051);
 
   await scheduler.start();
-  await progress.get(TASK_H)(`${TASK_H}.txt`, 1);
+  checkpoints.get(TASK_H)(completedCheckpoint(`${TASK_H}.txt`), 1760000000052);
   firstDone.resolve();
   await eventually(() => started.length === 2, 'cleanup failure must not block the next queued task');
   assert.strictEqual(jobs.get(TASK_H).status, JOB_STATUS.COMPLETED);
@@ -291,6 +325,23 @@ async function testCleanupFailureStillPumps(jobs, peer, dir) {
   assert.strictEqual(scheduler.getActiveJob().taskId, TASK_I);
   await scheduler.cancel(TASK_I);
   assert.strictEqual(jobs.get(TASK_I).status, JOB_STATUS.CANCELLED);
+  await scheduler.stop();
+}
+
+async function testIgnoresIncomingQueue(jobs, peer) {
+  jobs.receivePending({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_J), now: 1760000000060 });
+  jobs.approveIncoming(TASK_J, 1760000000061);
+  let factoryCalls = 0;
+  const scheduler = createDesktopTransferScheduler({
+    transferJobStore: jobs,
+    executorFactory: async () => {
+      factoryCalls += 1;
+      return { done: new Promise(() => {}) };
+    }
+  });
+  await scheduler.start();
+  assert.strictEqual(factoryCalls, 0, 'desktop outgoing scheduler must ignore incoming jobs');
+  assert.strictEqual(scheduler.getActiveJob(), null);
   await scheduler.stop();
 }
 
@@ -309,6 +360,7 @@ async function main() {
     await testStopAndMissingSources(jobs, peer, tempDir);
     await testPauseCompletionRace(jobs, peer, tempDir);
     await testCleanupFailureStillPumps(jobs, peer, tempDir);
+    await testIgnoresIncomingQueue(jobs, peer);
     console.log('desktop transfer scheduler smoke tests passed');
   } finally {
     if (jobs) jobs.close();

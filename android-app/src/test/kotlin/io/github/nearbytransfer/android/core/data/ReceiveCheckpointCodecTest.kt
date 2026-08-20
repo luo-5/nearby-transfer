@@ -67,6 +67,35 @@ class ReceiveCheckpointCodecTest {
     }
 
     @Test
+    fun buildsCanonicalCheckpointFromTypedReceiverProgress() {
+        val checkpoint = ReceiveCheckpointCodec.fromProgress(
+            manifestJson = manifest(),
+            files = listOf(
+                ReceiveCheckpointCodec.FileCheckpoint("a.txt", 4, true),
+                ReceiveCheckpointCodec.FileCheckpoint("b.txt", 2, false),
+                ReceiveCheckpointCodec.FileCheckpoint("c.txt", 0, false),
+            ),
+            nextSequence = 7,
+        )
+
+        assertEquals(6, checkpoint.transferredBytes)
+        assertEquals(7, checkpoint.nextSequence)
+        assertEquals(checkpoint, ReceiveCheckpointCodec.normalize(manifest(), checkpoint.json))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            ReceiveCheckpointCodec.fromProgress(
+                manifestJson = manifest(),
+                files = listOf(
+                    ReceiveCheckpointCodec.FileCheckpoint("a.txt", 2, false),
+                    ReceiveCheckpointCodec.FileCheckpoint("b.txt", 1, false),
+                    ReceiveCheckpointCodec.FileCheckpoint("c.txt", 0, false),
+                ),
+                nextSequence = 8,
+            )
+        }
+    }
+
+    @Test
     fun acceptsCompletedPrefixAndOneCurrentPartialFile() {
         ReceiveCheckpointCodec.normalize(
             manifest(),

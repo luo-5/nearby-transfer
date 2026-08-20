@@ -32,6 +32,7 @@ final class V2TransferCrypto {
     private static final Pattern DEVICE_ID_PATTERN = Pattern.compile("^[a-f0-9]{16}$");
     private static final Pattern TASK_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{22}$");
     private static final Pattern SHA256_PATTERN = Pattern.compile("^[a-f0-9]{64}$");
+    private static final Pattern BASE64URL_PATTERN = Pattern.compile("^[A-Za-z0-9_-]+$");
     private static final Pattern BASE64_PATTERN = Pattern.compile(
         "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
     );
@@ -44,6 +45,39 @@ final class V2TransferCrypto {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private V2TransferCrypto() {}
+
+    static String encodeSenderEphemeralPublicKey(String publicKeyPem) {
+        byte[] der = readCanonicalPem(
+            publicKeyPem,
+            "PUBLIC KEY",
+            X25519_PUBLIC_DER_PREFIX,
+            KEY_BYTES,
+            "Sender ephemeral X25519 public key"
+        );
+        byte[] raw = Arrays.copyOfRange(der, X25519_PUBLIC_DER_PREFIX.length, der.length);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
+    }
+
+    static String decodeSenderEphemeralPublicKey(String encoded) {
+        if (encoded == null || !BASE64URL_PATTERN.matcher(encoded).matches()) {
+            throw new IllegalArgumentException("Sender ephemeral public key must use unpadded base64url");
+        }
+        byte[] raw;
+        try {
+            raw = Base64.getUrlDecoder().decode(encoded);
+        } catch (IllegalArgumentException error) {
+            throw new IllegalArgumentException("Sender ephemeral public key must use valid base64url", error);
+        }
+        String canonical = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
+        if (raw.length != KEY_BYTES || !canonical.equals(encoded)) {
+            throw new IllegalArgumentException("Sender ephemeral public key must contain exactly 32 canonical bytes");
+        }
+        byte[] der = new byte[X25519_PUBLIC_DER_PREFIX.length + raw.length];
+        System.arraycopy(X25519_PUBLIC_DER_PREFIX, 0, der, 0, X25519_PUBLIC_DER_PREFIX.length);
+        System.arraycopy(raw, 0, der, X25519_PUBLIC_DER_PREFIX.length, raw.length);
+        String body = Base64.getMimeEncoder(64, new byte[] { '\n' }).encodeToString(der);
+        return "-----BEGIN PUBLIC KEY-----\n" + body + "\n-----END PUBLIC KEY-----\n";
+    }
 
     static byte[] deriveSessionKey(
         String localPrivateKeyPem,

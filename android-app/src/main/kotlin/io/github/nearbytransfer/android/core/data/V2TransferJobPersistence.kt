@@ -8,6 +8,12 @@ import kotlinx.coroutines.runBlocking
 
 /** Java-callable facade for public transfer-job persistence. */
 object V2TransferJobPersistence {
+    data class ReceiveFileProgress(
+        val path: String,
+        val committedOffset: Long,
+        val completed: Boolean,
+    )
+
     @JvmStatic
     fun createOutgoing(
         context: Context,
@@ -80,6 +86,29 @@ object V2TransferJobPersistence {
         nowEpochMillis: Long,
     ): TransferJob? = withRepository(context) {
         it.updateReceiveCheckpoint(taskId, candidateCheckpointJson, nowEpochMillis)
+    }
+
+    @JvmStatic
+    fun updateReceiveProgress(
+        context: Context,
+        taskId: String,
+        files: List<ReceiveFileProgress>,
+        nextSequence: Long,
+        nowEpochMillis: Long,
+    ): TransferJob? = withRepository(context) { repository ->
+        val job = repository.find(taskId) ?: return@withRepository null
+        val checkpoint = ReceiveCheckpointCodec.fromProgress(
+            manifestJson = job.manifestJson,
+            files = files.map {
+                ReceiveCheckpointCodec.FileCheckpoint(
+                    path = it.path,
+                    committedOffset = it.committedOffset,
+                    completed = it.completed,
+                )
+            },
+            nextSequence = nextSequence,
+        )
+        repository.updateReceiveCheckpoint(taskId, checkpoint.json, nowEpochMillis)
     }
 
     @JvmStatic

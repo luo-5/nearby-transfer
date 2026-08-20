@@ -180,11 +180,13 @@ final class V2TransferMessage {
         final String path;
         final long size;
         final long committedOffset;
+        final boolean completed;
 
-        ResumeFile(String path, long size, long committedOffset) {
+        ResumeFile(String path, long size, long committedOffset, boolean completed) {
             this.path = path;
             this.size = size;
             this.committedOffset = committedOffset;
+            this.completed = completed;
         }
 
         JSONObject toJson() throws Exception {
@@ -192,12 +194,14 @@ final class V2TransferMessage {
             json.put("path", path);
             json.put("size", size);
             json.put("committedOffset", committedOffset);
+            json.put("completed", completed);
             return json;
         }
     }
 
     static final class Resume extends Message {
         final String taskId;
+        final String sessionId;
         final String senderDeviceId;
         final String receiverDeviceId;
         final String manifestHash;
@@ -205,11 +209,12 @@ final class V2TransferMessage {
         final long nextSequence;
         final long totalTransferred;
 
-        Resume(String taskId, String senderDeviceId, String receiverDeviceId, String manifestHash,
+        Resume(String taskId, String sessionId, String senderDeviceId, String receiverDeviceId, String manifestHash,
                List<ResumeFile> files, long nextSequence, long totalTransferred,
                long issuedAt, long expiresAt, String signature) {
             super(TYPE_RESUME, issuedAt, expiresAt, signature);
             this.taskId = taskId;
+            this.sessionId = sessionId;
             this.senderDeviceId = senderDeviceId;
             this.receiverDeviceId = receiverDeviceId;
             this.manifestHash = manifestHash;
@@ -221,6 +226,7 @@ final class V2TransferMessage {
         @Override JSONObject toJson() throws Exception {
             JSONObject json = baseEnvelope(type);
             json.put("taskId", taskId);
+            json.put("sessionId", sessionId);
             json.put("senderDeviceId", senderDeviceId);
             json.put("receiverDeviceId", receiverDeviceId);
             json.put("manifestHash", manifestHash);
@@ -238,26 +244,30 @@ final class V2TransferMessage {
 
     static final class Progress extends Message {
         final String taskId;
+        final String sessionId;
         final String senderDeviceId;
         final String receiverDeviceId;
         final String manifestHash;
         final String path;
         final long fileSize;
         final long committedOffset;
+        final boolean completed;
         final long nextSequence;
         final long totalTransferred;
 
-        Progress(String taskId, String senderDeviceId, String receiverDeviceId, String manifestHash,
-                 String path, long fileSize, long committedOffset, long nextSequence,
+        Progress(String taskId, String sessionId, String senderDeviceId, String receiverDeviceId, String manifestHash,
+                 String path, long fileSize, long committedOffset, boolean completed, long nextSequence,
                  long totalTransferred, long issuedAt, long expiresAt, String signature) {
             super(TYPE_PROGRESS, issuedAt, expiresAt, signature);
             this.taskId = taskId;
+            this.sessionId = sessionId;
             this.senderDeviceId = senderDeviceId;
             this.receiverDeviceId = receiverDeviceId;
             this.manifestHash = manifestHash;
             this.path = path;
             this.fileSize = fileSize;
             this.committedOffset = committedOffset;
+            this.completed = completed;
             this.nextSequence = nextSequence;
             this.totalTransferred = totalTransferred;
         }
@@ -265,12 +275,14 @@ final class V2TransferMessage {
         @Override JSONObject toJson() throws Exception {
             JSONObject json = baseEnvelope(type);
             json.put("taskId", taskId);
+            json.put("sessionId", sessionId);
             json.put("senderDeviceId", senderDeviceId);
             json.put("receiverDeviceId", receiverDeviceId);
             json.put("manifestHash", manifestHash);
             json.put("path", path);
             json.put("fileSize", fileSize);
             json.put("committedOffset", committedOffset);
+            json.put("completed", completed);
             json.put("nextSequence", nextSequence);
             json.put("totalTransferred", totalTransferred);
             json.put("issuedAt", issuedAt);
@@ -492,12 +504,14 @@ final class V2TransferMessage {
 
     private static Resume resumeFromJson(JSONObject json, long now) throws Exception {
         assertExactKeys(json, Arrays.asList(
-            "app", "protocolVersion", "type", "taskId", "senderDeviceId", "receiverDeviceId",
+            "app", "protocolVersion", "type", "taskId", "sessionId", "senderDeviceId", "receiverDeviceId",
             "manifestHash", "files", "nextSequence", "totalTransferred", "issuedAt", "expiresAt", "signature"
         ), "Transfer resume");
         assertProtocolEnvelope(json, TYPE_RESUME, "Transfer resume");
         String taskId = requiredString(json, "taskId", "Transfer resume");
         assertTaskId(taskId);
+        String sessionId = requiredString(json, "sessionId", "Transfer resume");
+        assertCanonicalBase64Url(sessionId, 16, "Transfer session ID");
         String sender = requiredString(json, "senderDeviceId", "Transfer resume");
         String receiver = requiredString(json, "receiverDeviceId", "Transfer resume");
         assertRoute(sender, receiver);
@@ -517,7 +531,7 @@ final class V2TransferMessage {
             Object value = array.get(index);
             if (!(value instanceof JSONObject)) throw new IllegalArgumentException("Transfer resume file must be an object");
             JSONObject file = (JSONObject) value;
-            assertExactKeys(file, Arrays.asList("path", "size", "committedOffset"), "Transfer resume file");
+            assertExactKeys(file, Arrays.asList("path", "size", "committedOffset", "completed"), "Transfer resume file");
             String path = requiredString(file, "path", "Transfer resume file");
             assertRelativePath(path);
             String windowsPath = windowsComparisonPath(path);
@@ -528,8 +542,15 @@ final class V2TransferMessage {
             if (size > MAX_FILE_SIZE_BYTES) throw new IllegalArgumentException("Transfer resume file size exceeds the maximum");
             long committedOffset = requiredNonNegativeSafeLong(file, "committedOffset", "Transfer resume committed offset");
             if (committedOffset > size) throw new IllegalArgumentException("Transfer resume committed offset exceeds the file size");
+            boolean completed = requiredBoolean(file, "completed", "Transfer resume file");
+        if (completed && committedOffset != size) {
+            throw new IllegalArgumentException("Completed transfer resume file must commit its entire size");
+        }
+        if (!completed && size > 0 && committedOffset == size) {
+            throw new IllegalArgumentException("Fully committed non-empty transfer resume file must be completed");
+        }
             committedTotal = checkedAdd(committedTotal, committedOffset, "Transfer resume committed total");
-            files.add(new ResumeFile(path, size, committedOffset));
+            files.add(new ResumeFile(path, size, committedOffset, completed));
         }
         files.sort((left, right) -> left.path.compareTo(right.path));
         long nextSequence = requiredSequence(json, "nextSequence", "Transfer resume next sequence");
@@ -542,19 +563,21 @@ final class V2TransferMessage {
         assertTimeWindow(issuedAt, expiresAt, now);
         String signature = requiredString(json, "signature", "Transfer resume");
         assertCanonicalBase64Url(signature, 64, "Transfer message signature");
-        return new Resume(taskId, sender, receiver, manifestHash, files, nextSequence, totalTransferred,
+        return new Resume(taskId, sessionId, sender, receiver, manifestHash, files, nextSequence, totalTransferred,
             issuedAt, expiresAt, signature);
     }
 
     private static Progress progressFromJson(JSONObject json, long now) throws Exception {
         assertExactKeys(json, Arrays.asList(
-            "app", "protocolVersion", "type", "taskId", "senderDeviceId", "receiverDeviceId",
-            "manifestHash", "path", "fileSize", "committedOffset", "nextSequence", "totalTransferred",
+            "app", "protocolVersion", "type", "taskId", "sessionId", "senderDeviceId", "receiverDeviceId",
+            "manifestHash", "path", "fileSize", "committedOffset", "completed", "nextSequence", "totalTransferred",
             "issuedAt", "expiresAt", "signature"
         ), "Transfer progress acknowledgement");
         assertProtocolEnvelope(json, TYPE_PROGRESS, "Transfer progress acknowledgement");
         String taskId = requiredString(json, "taskId", "Transfer progress acknowledgement");
         assertTaskId(taskId);
+        String sessionId = requiredString(json, "sessionId", "Transfer progress acknowledgement");
+        assertCanonicalBase64Url(sessionId, 16, "Transfer session ID");
         String sender = requiredString(json, "senderDeviceId", "Transfer progress acknowledgement");
         String receiver = requiredString(json, "receiverDeviceId", "Transfer progress acknowledgement");
         assertRoute(sender, receiver);
@@ -566,6 +589,13 @@ final class V2TransferMessage {
         if (fileSize > MAX_FILE_SIZE_BYTES) throw new IllegalArgumentException("Transfer progress file size exceeds the maximum");
         long committedOffset = requiredNonNegativeSafeLong(json, "committedOffset", "Transfer progress committed offset");
         if (committedOffset > fileSize) throw new IllegalArgumentException("Transfer progress committed offset exceeds the file size");
+        boolean completed = requiredBoolean(json, "completed", "Transfer progress acknowledgement");
+        if (completed && committedOffset != fileSize) {
+            throw new IllegalArgumentException("Completed transfer progress must commit the entire file");
+        }
+        if (!completed && fileSize > 0 && committedOffset == fileSize) {
+            throw new IllegalArgumentException("Fully committed non-empty transfer progress must be completed");
+        }
         long nextSequence = requiredSequence(json, "nextSequence", "Transfer progress next sequence");
         long totalTransferred = requiredNonNegativeSafeLong(json, "totalTransferred", "Transfer progress total transferred");
         if (totalTransferred < committedOffset || totalTransferred > MAX_TOTAL_SIZE_BYTES) {
@@ -576,7 +606,7 @@ final class V2TransferMessage {
         assertTimeWindow(issuedAt, expiresAt, now);
         String signature = requiredString(json, "signature", "Transfer progress acknowledgement");
         assertCanonicalBase64Url(signature, 64, "Transfer message signature");
-        return new Progress(taskId, sender, receiver, manifestHash, path, fileSize, committedOffset,
+        return new Progress(taskId, sessionId, sender, receiver, manifestHash, path, fileSize, committedOffset, completed,
             nextSequence, totalTransferred, issuedAt, expiresAt, signature);
     }
 
@@ -618,9 +648,12 @@ final class V2TransferMessage {
             if (current.committedOffset < old.committedOffset) {
                 throw new IllegalArgumentException("Transfer control committed offset must not move backwards");
             }
+            if (old.completed && !current.completed) {
+                throw new IllegalArgumentException("Transfer control completion must not move backwards");
+            }
             long delta = current.committedOffset - old.committedOffset;
             committedDelta = checkedAdd(committedDelta, delta, "Transfer control committed delta");
-            if (delta > 0) changedFiles += 1;
+            if (delta > 0 || current.completed != old.completed) changedFiles += 1;
         }
         if (next instanceof Resume && priorFiles.size() != nextFiles.size()) {
             throw new IllegalArgumentException("Transfer resume file set must remain stable");
@@ -658,7 +691,7 @@ final class V2TransferMessage {
             Progress progress = (Progress) normalized;
             for (ResumeFile file : previous.files) {
                 files.add(file.path.equals(progress.path)
-                    ? new ResumeFile(file.path, file.size, progress.committedOffset)
+                    ? new ResumeFile(file.path, file.size, progress.committedOffset, progress.completed)
                     : file);
             }
         }
@@ -680,7 +713,9 @@ final class V2TransferMessage {
             for (ResumeFile file : ((Resume) message).files) offsets.put(file.path, file);
         } else {
             Progress progress = (Progress) message;
-            offsets.put(progress.path, new ResumeFile(progress.path, progress.fileSize, progress.committedOffset));
+            offsets.put(progress.path, new ResumeFile(
+                progress.path, progress.fileSize, progress.committedOffset, progress.completed
+            ));
         }
         return offsets;
     }
@@ -926,6 +961,14 @@ final class V2TransferMessage {
 
     private static String requiredString(JSONObject json, String key, String label) {
         return requireStringValue(json.opt(key), label + " field " + key);
+    }
+
+    private static boolean requiredBoolean(JSONObject json, String key, String label) {
+        Object value = json.opt(key);
+        if (!(value instanceof Boolean)) {
+            throw new IllegalArgumentException(label + " field " + key + " must be a boolean");
+        }
+        return (Boolean) value;
     }
 
     private static String requireStringValue(Object value, String label) {

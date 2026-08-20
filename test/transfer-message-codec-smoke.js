@@ -326,7 +326,7 @@ function testResumeAndProgressModels() {
   const progressVector = fixture.vectors.transferProgress;
   const resume = clone(resumeVector.message);
 
-  const second = { path: '资料/empty.txt', size: 0, committedOffset: 0 };
+  const second = { path: '资料/empty.txt', size: 0, committedOffset: 0, completed: false };
   resume.files = [resume.files[0], second].reverse();
   const normalized = validateTransferMessage(TYPE_TRANSFER_RESUME, resume, { now: fixture.validationNow });
   assert.deepStrictEqual(normalized.files.map((file) => file.path), ['资料/empty.txt', '资料/hello.txt']);
@@ -340,8 +340,8 @@ function testResumeAndProgressModels() {
 
   const windowsDuplicate = clone(resumeVector.message);
   windowsDuplicate.files = [
-    { path: 'Folder/File.txt', size: 5, committedOffset: 0 },
-    { path: 'folder/file.TXT', size: 5, committedOffset: 0 }
+    { path: 'Folder/File.txt', size: 5, committedOffset: 0, completed: false },
+    { path: 'folder/file.TXT', size: 5, committedOffset: 0, completed: false }
   ];
   windowsDuplicate.totalTransferred = 0;
   assert.throws(
@@ -355,6 +355,13 @@ function testResumeAndProgressModels() {
   assert.throws(
     () => validateTransferMessage(TYPE_TRANSFER_RESUME, emptyFiles, { now: fixture.validationNow }),
     /bounded array/
+  );
+
+  const oldResumeSchema = clone(resumeVector.message);
+  delete oldResumeSchema.files[0].completed;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_RESUME, oldResumeSchema, { now: fixture.validationNow }),
+    /missing completed/
   );
 
   const tooManyFiles = clone(resumeVector.message);
@@ -393,6 +400,42 @@ function testResumeAndProgressModels() {
   assert.throws(
     () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, overOffset, { now: fixture.validationNow }),
     /exceeds the file size/
+  );
+
+  const incompleteCompletion = clone(progressVector.message);
+  incompleteCompletion.committedOffset -= 1;
+  incompleteCompletion.totalTransferred -= 1;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, incompleteCompletion, { now: fixture.validationNow }),
+    /commit the entire file/
+  );
+
+  const nonBooleanCompletion = clone(progressVector.message);
+  nonBooleanCompletion.completed = 1;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, nonBooleanCompletion, { now: fixture.validationNow }),
+    /must be a boolean/
+  );
+
+  const fullyCommittedIncomplete = clone(progressVector.message);
+  fullyCommittedIncomplete.completed = false;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, fullyCommittedIncomplete, { now: fixture.validationNow }),
+    /must be completed/
+  );
+
+  const oldProgressSchema = clone(progressVector.message);
+  delete oldProgressSchema.completed;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, oldProgressSchema, { now: fixture.validationNow }),
+    /missing completed/
+  );
+
+  const missingSession = clone(progressVector.message);
+  delete missingSession.sessionId;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, missingSession, { now: fixture.validationNow }),
+    /missing sessionId/
   );
 
   const tooSmallTotal = clone(progressVector.message);
@@ -489,6 +532,88 @@ function testControlMonotonicityAndStableSigning() {
   assert.strictEqual(checkpoint.totalTransferred, 80);
   assert.strictEqual(checkpoint.nextSequence, 5);
 
+  const zeroResume = {
+    ...clone(sequence.initialResume),
+    files: [{ path: '资料/empty.bin', size: 0, committedOffset: 0, completed: false }],
+    nextSequence: 0,
+    totalTransferred: 0,
+    issuedAt: sequence.progressAAfterB.issuedAt + 100,
+    expiresAt: sequence.progressAAfterB.expiresAt + 100
+  };
+  let zeroCheckpoint = advanceTransferControlCheckpoint(
+    TYPE_TRANSFER_RESUME,
+    zeroResume,
+    { now: fixture.validationNow }
+  );
+  assert.strictEqual(Object.hasOwn(zeroCheckpoint, 'sessionId'), false);
+
+  const resumedInNewSession = {
+    ...zeroResume,
+    sessionId: Buffer.alloc(SESSION_ID_BYTES, 0x33).toString('base64url'),
+    issuedAt: zeroResume.issuedAt + 100,
+    expiresAt: zeroResume.expiresAt + 100
+  };
+  zeroCheckpoint = advanceTransferControlCheckpoint(
+    TYPE_TRANSFER_RESUME,
+    resumedInNewSession,
+    { now: fixture.validationNow, checkpoint: zeroCheckpoint }
+  );
+  assert.strictEqual(Object.hasOwn(zeroCheckpoint, 'sessionId'), false);
+
+  const zeroCompleted = {
+    app: resumedInNewSession.app,
+    protocolVersion: resumedInNewSession.protocolVersion,
+    type: TYPE_TRANSFER_PROGRESS,
+    taskId: resumedInNewSession.taskId,
+    sessionId: resumedInNewSession.sessionId,
+    senderDeviceId: resumedInNewSession.senderDeviceId,
+    receiverDeviceId: resumedInNewSession.receiverDeviceId,
+    manifestHash: resumedInNewSession.manifestHash,
+    path: '资料/empty.bin',
+    fileSize: 0,
+    committedOffset: 0,
+    completed: true,
+    nextSequence: 1,
+    totalTransferred: 0,
+    issuedAt: resumedInNewSession.issuedAt + 100,
+    expiresAt: resumedInNewSession.expiresAt + 100,
+    signature: resumedInNewSession.signature
+  };
+  const completedCheckpoint = advanceTransferControlCheckpoint(
+    TYPE_TRANSFER_PROGRESS,
+    zeroCompleted,
+    { now: fixture.validationNow, checkpoint: zeroCheckpoint }
+  );
+  assert.strictEqual(completedCheckpoint.files[0].completed, true);
+  assert.strictEqual(completedCheckpoint.totalTransferred, 0);
+  assert.strictEqual(completedCheckpoint.nextSequence, 1);
+
+  const completionWithoutSequence = { ...zeroCompleted, nextSequence: 0 };
+  assert.throws(
+    () => advanceTransferControlCheckpoint(
+      TYPE_TRANSFER_PROGRESS,
+      completionWithoutSequence,
+      { now: fixture.validationNow, checkpoint: zeroCheckpoint }
+    ),
+    /sequence delta is too small/
+  );
+
+  const regressedCompletion = {
+    ...zeroCompleted,
+    completed: false,
+    nextSequence: 2,
+    issuedAt: zeroCompleted.issuedAt + 100,
+    expiresAt: zeroCompleted.expiresAt + 100
+  };
+  assert.throws(
+    () => advanceTransferControlCheckpoint(
+      TYPE_TRANSFER_PROGRESS,
+      regressedCompletion,
+      { now: fixture.validationNow, checkpoint: completedCheckpoint }
+    ),
+    /completion moved backwards/
+  );
+
   const sparsePrevious = clone(sequence.progressB);
   assert.throws(
     () => validateTransferMessage(TYPE_TRANSFER_PROGRESS, sequence.progressAAfterB, {
@@ -532,6 +657,12 @@ function testControlMonotonicityAndStableSigning() {
 
   const changedProgress = clone(fixture.vectors.transferProgress.message);
   changedProgress.totalTransferred += 1;
+  assert.notStrictEqual(
+    transferMessageSigningPayload(TYPE_TRANSFER_PROGRESS, changedProgress),
+    fixture.vectors.transferProgress.signingPayload
+  );
+  changedProgress.totalTransferred -= 1;
+  changedProgress.sessionId = Buffer.alloc(SESSION_ID_BYTES, 0x55).toString('base64url');
   assert.notStrictEqual(
     transferMessageSigningPayload(TYPE_TRANSFER_PROGRESS, changedProgress),
     fixture.vectors.transferProgress.signingPayload

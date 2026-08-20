@@ -9,10 +9,15 @@ const {
   MAX_TIMEOUT_MS,
   bootstrapOutgoingTransfer
 } = require('../src/v2/desktop-transfer-bootstrap');
-const { createTransferManifest, createTaskId } = require('../src/v2/transfer-manifest');
+const {
+  createTransferManifest,
+  createTaskId,
+  serializeTransferManifest
+} = require('../src/v2/transfer-manifest');
 const {
   TYPE_TRANSFER_DECISION,
   TYPE_TRANSFER_MANIFEST,
+  TYPE_TRANSFER_RESUME,
   decodeTransferMessage,
   encodeTransferMessage
 } = require('../src/v2/transfer-message-codec');
@@ -35,6 +40,7 @@ async function main() {
   await testRejectedDecisionReturnsNormally();
   await testTamperedSignatureFailsClosed();
   await testWrongPeerTaskAndRouteFailClosed();
+  await testInvalidResumeFailsClosed();
   await testTimeoutFailsClosedAndCleansListeners();
   await testMalformedAndExtraFramesFailClosed();
   console.log('desktop transfer bootstrap smoke tests passed');
@@ -64,11 +70,15 @@ async function testAcceptedAndCleanHandoff() {
   assert.strictEqual(signedManifest.senderDeviceId, fixture.local.deviceId);
   assert.strictEqual(signedManifest.receiverDeviceId, fixture.remote.deviceId);
 
-  writeFragments(fixture.server, decisionFrame(fixture, { decision: 'accepted' }), [3, 19]);
+  const accepted = decisionFrame(fixture, { decision: 'accepted' });
+  const resume = resumeFrame(fixture);
+  writeFragments(fixture.server, Buffer.concat([accepted, resume]), [3, 19, accepted.length + 7]);
   const decision = await bootstrap;
   assert.strictEqual(decision.decision, 'accepted');
   assert.strictEqual(decision.taskId, fixture.manifest.taskId);
   assert.strictEqual(decision.sessionId, SESSION_ID);
+  assert.deepStrictEqual(decision.checkpoint, initialCheckpoint(fixture));
+  assert.strictEqual(decision.resume.type, TYPE_TRANSFER_RESUME);
   assert.strictEqual(fixture.client.isPaused(), true);
   assert.deepStrictEqual(listenerSnapshot(fixture.client), baseline);
 
@@ -106,6 +116,7 @@ async function testAcceptedDecisionPreservesCoalescedStreamBytes() {
   const streamBytes = Buffer.from('NTV2MUX1-next-session');
   fixture.server.write(Buffer.concat([
     decisionFrame(fixture, { decision: 'accepted' }),
+    resumeFrame(fixture),
     streamBytes
   ]));
   const decision = await bootstrap;
@@ -116,6 +127,49 @@ async function testAcceptedDecisionPreservesCoalescedStreamBytes() {
   fixture.client.resume();
   assert.deepStrictEqual(await received, streamBytes);
   destroyFixture(fixture);
+}
+
+async function testInvalidResumeFailsClosed() {
+  const cases = [
+    {
+      name: 'wrong resume session',
+      frame: (fixture) => resumeFrame(fixture, { sessionId: OTHER_SESSION_ID }),
+      pattern: /resume session/i
+    },
+    {
+      name: 'wrong manifest hash',
+      frame: (fixture) => resumeFrame(fixture, { manifestHash: '0'.repeat(64) }),
+      pattern: /manifest hash/i
+    },
+    {
+      name: 'checkpoint behind local state',
+      options: (fixture) => ({
+        checkpoint: {
+          files: initialCheckpoint(fixture).files.map((file) => ({ ...file, committedOffset: file.size, completed: true })),
+          totalTransferred: fixture.manifest.totalBytes,
+          nextSequence: 1
+        }
+      }),
+      frame: (fixture) => resumeFrame(fixture),
+      pattern: /checkpoint moved backwards/i
+    }
+  ];
+  for (const testCase of cases) {
+    const fixture = createFixture();
+    const request = readOneFrame(fixture.server);
+    const bootstrap = bootstrapOutgoingTransfer({
+      ...options(fixture),
+      ...(testCase.options ? testCase.options(fixture) : {})
+    });
+    await request;
+    fixture.server.write(Buffer.concat([
+      decisionFrame(fixture, { decision: 'accepted' }),
+      testCase.frame(fixture)
+    ]));
+    await assert.rejects(bootstrap, testCase.pattern, testCase.name);
+    await waitForDestroyed(fixture.client);
+    destroyFixture(fixture);
+  }
 }
 
 async function testTamperedSignatureFailsClosed() {
@@ -328,6 +382,46 @@ function wireDecision(decision) {
     header: protocolHeader(MESSAGE_TYPES.TRANSFER_DECISION),
     payload: encodeTransferMessage(TYPE_TRANSFER_DECISION, decision, { now: NOW })
   });
+}
+
+function resumeFrame(fixture, overrides = {}) {
+  const signed = signTransferMessage(TYPE_TRANSFER_RESUME, {
+    app: APP_ID,
+    protocolVersion: PROTOCOL_VERSION,
+    type: TYPE_TRANSFER_RESUME,
+    taskId: fixture.manifest.taskId,
+    sessionId: fixture.sessionId,
+    senderDeviceId: fixture.remote.deviceId,
+    receiverDeviceId: fixture.local.deviceId,
+    manifestHash: crypto.createHash('sha256')
+      .update(serializeTransferManifest(fixture.manifest), 'utf8')
+      .digest('hex'),
+    files: initialCheckpoint(fixture).files,
+    nextSequence: 0,
+    totalTransferred: 0,
+    issuedAt: NOW,
+    expiresAt: NOW + TTL_MS,
+    ...overrides
+  }, fixture.remote.signingPrivateKey, { now: NOW });
+  return encodeWireFrame({
+    header: protocolHeader(MESSAGE_TYPES.TRANSFER_RESUME),
+    payload: encodeTransferMessage(TYPE_TRANSFER_RESUME, signed, { now: NOW })
+  });
+}
+
+function initialCheckpoint(fixture) {
+  return {
+    files: fixture.manifest.entries
+      .filter((entry) => entry.kind === 'file')
+      .map((entry) => ({
+        path: entry.path,
+        size: entry.size,
+        committedOffset: 0,
+        completed: false
+      })),
+    totalTransferred: 0,
+    nextSequence: 0
+  };
 }
 
 function protocolHeader(type) {

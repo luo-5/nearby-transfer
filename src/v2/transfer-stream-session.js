@@ -1,6 +1,7 @@
 'use strict';
 
-const { MAX_BUFFERED_BYTES: MAX_WIRE_FRAME_BYTES } = require('./wire-frame');
+const { MAX_ENCODED_BYTES: MAX_CONTROL_FRAME_BYTES } = require('./signed-stream-control');
+const { MAX_CONTROL_MESSAGE_BYTES: MAX_PROGRESS_FRAME_BYTES } = require('./transfer-message-codec');
 const {
   MAX_FRAME_BYTES: MAX_CHUNK_FRAME_BYTES,
   decodeFrame: decodeChunkFrame,
@@ -14,6 +15,7 @@ const MUX_PREFIX_BYTES = 16;
 const MUX_FLAGS = 0;
 const FRAME_KIND_CONTROL = 1;
 const FRAME_KIND_CHUNK = 2;
+const FRAME_KIND_PROGRESS = 3;
 const MAX_PEER_ID_BYTES = 128;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10 * 1000;
@@ -39,8 +41,11 @@ const TERMINAL_STATES = new Set(['completed', 'cancelled', 'failed']);
 const INPUT_KEYS = new Set([
   'chunkReader',
   'chunkWriter',
+  'commitProgress',
   'decodeControl',
+  'decodeProgress',
   'encodeControl',
+  'encodeProgress',
   'closingTimeoutMs',
   'handshakeTimeoutMs',
   'idleTimeoutMs',
@@ -82,6 +87,7 @@ class TransferStreamSession {
     this._remotePaused = false;
     this._flowWaiter = null;
     this._flowCommand = null;
+    this._progressWaiter = null;
     this._chunks = 0;
     this._ciphertextBytes = 0;
     this._decoder = new StreamEnvelopeDecoder();
@@ -218,8 +224,10 @@ class TransferStreamSession {
           this._touchIdleTimeout();
           if (kind === FRAME_KIND_CONTROL) {
             await this._handleControlPayload(payload);
-          } else {
+          } else if (kind === FRAME_KIND_CHUNK) {
             await this._handleChunkPayload(payload);
+          } else {
+            await this._handleProgressPayload(payload);
           }
         });
       })
@@ -485,7 +493,7 @@ class TransferStreamSession {
     if (frame.taskId !== this._config.taskId) {
       throw new Error('Transfer chunk taskId does not match the authenticated session');
     }
-    await this._runOperation(
+    const progress = await this._runOperation(
       () => this._config.chunkWriter.writeChunk(Object.freeze({
         taskId: frame.taskId,
         path: frame.relativePath,
@@ -498,8 +506,39 @@ class TransferStreamSession {
       })),
       'Encrypted chunk writer write'
     );
+    const encodedProgress = await this._runOperation(
+      () => this._config.encodeProgress(progress, this._progressContext('encode', frame)),
+      'Transfer progress encoding'
+    );
+    await this._sendEnvelope(
+      FRAME_KIND_PROGRESS,
+      requireBytes(encodedProgress, 'Encoded transfer progress')
+    );
     this._chunks += 1;
     this._ciphertextBytes += frame.ciphertext.length;
+  }
+
+  async _handleProgressPayload(payload) {
+    if (this._config.role !== 'sender') {
+      throw new Error('Receiver received a transfer progress acknowledgement on the bound send direction');
+    }
+    if (this._state !== 'sending' || !this._progressWaiter) {
+      throw new Error(`Transfer progress acknowledgement is unsolicited or out of order for sender state ${this._state}`);
+    }
+    const waiter = this._progressWaiter;
+    const decoded = await this._runOperation(
+      () => this._config.decodeProgress(Buffer.from(payload), this._progressContext('decode', waiter.chunk)),
+      'Transfer progress decoding'
+    );
+    await this._runOperation(
+      () => this._config.commitProgress(decoded, waiter.chunk),
+      'Transfer progress persistence'
+    );
+    if (this._progressWaiter !== waiter) {
+      throw new Error('Transfer progress acknowledgement changed while it was being persisted');
+    }
+    this._progressWaiter = null;
+    waiter.resolve(decoded);
   }
 
   async _runSender() {
@@ -520,7 +559,15 @@ class TransferStreamSession {
       await this._waitUntilFlowing();
       if (this._state !== 'sending') throw createAbortError();
       const normalized = normalizeReaderChunk(step.value, this._config.taskId);
-      await this._sendEnvelope(FRAME_KIND_CHUNK, encodeChunkFrame(normalized));
+      if (this._progressWaiter) throw new Error('Transfer sender has more than one unacknowledged chunk');
+      const progressWaiter = createDeferredProgress(normalized);
+      this._progressWaiter = progressWaiter;
+      try {
+        await this._sendEnvelope(FRAME_KIND_CHUNK, encodeChunkFrame(normalized));
+        await progressWaiter.promise;
+      } finally {
+        if (this._progressWaiter === progressWaiter) this._progressWaiter = null;
+      }
       this._chunks += 1;
       this._ciphertextBytes += normalized.ciphertext.length;
     }
@@ -541,6 +588,22 @@ class TransferStreamSession {
       toPeerId: this._config.remotePeerId,
       direction,
       ...(extra || {})
+    });
+  }
+
+  _progressContext(operation, chunk) {
+    return Object.freeze({
+      operation,
+      role: this._config.role,
+      taskId: this._config.taskId,
+      localPeerId: this._config.localPeerId,
+      remotePeerId: this._config.remotePeerId,
+      chunk: Object.freeze({
+        path: chunk.relativePath || chunk.path,
+        offset: chunk.offset,
+        sequence: chunk.sequence,
+        plainLength: chunk.plainLength
+      })
     });
   }
 
@@ -576,7 +639,7 @@ class TransferStreamSession {
         'Transfer control encoding'
       );
       const payload = requireBytes(encoded, 'Encoded transfer control frame');
-      if (payload.length === 0 || payload.length > MAX_WIRE_FRAME_BYTES) {
+      if (payload.length === 0 || payload.length > MAX_CONTROL_FRAME_BYTES) {
         throw new RangeError('Encoded transfer control frame exceeds the bounded wire-frame size');
       }
       await this._writeEnvelope(FRAME_KIND_CONTROL, payload);
@@ -645,6 +708,7 @@ class TransferStreamSession {
     if (this._settled || this._failureStarted) return;
     this._failureStarted = true;
     this._clearTimeout();
+    this._settleProgressWaiter(error);
     const cleanup = [this._stopTransferResources()];
     if (notifyPeer) {
       cleanup.push(this._runOperation(
@@ -680,6 +744,7 @@ class TransferStreamSession {
   _settleSuccess() {
     if (this._settled) return;
     this._settleFlowCommand(new Error('Transfer completed while a flow-control command was pending'));
+    this._settleProgressWaiter(new Error('Transfer completed while progress acknowledgement was pending'));
     this._wakeFlowWaiter();
     this._settled = true;
     this._state = 'completed';
@@ -691,6 +756,7 @@ class TransferStreamSession {
   _settleFailure(error, state, destroyTransport) {
     if (this._settled) return;
     this._settleFlowCommand(error);
+    this._settleProgressWaiter(error);
     this._wakeFlowWaiter();
     this._settled = true;
     this._state = state;
@@ -705,6 +771,13 @@ class TransferStreamSession {
     const command = this._flowCommand;
     this._flowCommand = null;
     command.reject(error);
+  }
+
+  _settleProgressWaiter(error) {
+    if (!this._progressWaiter) return;
+    const waiter = this._progressWaiter;
+    this._progressWaiter = null;
+    waiter.reject(error);
   }
 }
 
@@ -788,8 +861,10 @@ function decodeStreamEnvelopeHeader(prefix) {
 
 function assertEnvelopeLength(kind, length) {
   const limit = kind === FRAME_KIND_CONTROL
-    ? MAX_WIRE_FRAME_BYTES
-    : kind === FRAME_KIND_CHUNK ? MAX_CHUNK_FRAME_BYTES : null;
+    ? MAX_CONTROL_FRAME_BYTES
+    : kind === FRAME_KIND_CHUNK
+      ? MAX_CHUNK_FRAME_BYTES
+      : kind === FRAME_KIND_PROGRESS ? MAX_PROGRESS_FRAME_BYTES : null;
   if (limit === null) throw new Error('Transfer stream multiplexing frame kind is invalid');
   if (!Number.isSafeInteger(length) || length <= 0 || length > limit) {
     throw new RangeError(`Transfer stream multiplexed payload length exceeds the kind-${kind} bound`);
@@ -876,7 +951,11 @@ function normalizeInput(input) {
   for (const key of Object.keys(input)) {
     if (!INPUT_KEYS.has(key)) throw new TypeError(`Transfer stream session input contains unknown field ${key}`);
   }
-  for (const key of ['stream', 'role', 'taskId', 'localPeerId', 'remotePeerId', 'encodeControl', 'decodeControl', 'verifyControl']) {
+  for (const key of [
+    'stream', 'role', 'taskId', 'localPeerId', 'remotePeerId',
+    'encodeControl', 'decodeControl', 'verifyControl',
+    'encodeProgress', 'decodeProgress', 'commitProgress'
+  ]) {
     if (!Object.hasOwn(input, key)) throw new TypeError(`Transfer stream session input is missing ${key}`);
   }
   if (input.role !== 'sender' && input.role !== 'receiver') throw new TypeError('Transfer stream role must be sender or receiver');
@@ -885,7 +964,7 @@ function normalizeInput(input) {
   assertPeerId(input.remotePeerId, 'Remote peer ID');
   if (input.localPeerId === input.remotePeerId) throw new TypeError('Local and remote peer IDs must differ');
   assertDuplex(input.stream);
-  for (const key of ['encodeControl', 'decodeControl', 'verifyControl']) {
+  for (const key of ['encodeControl', 'decodeControl', 'verifyControl', 'encodeProgress', 'decodeProgress', 'commitProgress']) {
     if (typeof input[key] !== 'function') throw new TypeError(`${key} must be a function`);
   }
 
@@ -909,6 +988,9 @@ function normalizeInput(input) {
     encodeControl: input.encodeControl,
     decodeControl: input.decodeControl,
     verifyControl: input.verifyControl,
+    encodeProgress: input.encodeProgress,
+    decodeProgress: input.decodeProgress,
+    commitProgress: input.commitProgress,
     chunkReader: input.chunkReader,
     chunkWriter: input.chunkWriter,
     signal,
@@ -1050,6 +1132,16 @@ function createDeferredCommand(kind) {
   return { kind, promise, resolve, reject };
 }
 
+function createDeferredProgress(chunk) {
+  const deferred = createDeferredCommand('progress');
+  return Object.freeze({
+    chunk,
+    promise: deferred.promise,
+    resolve: deferred.resolve,
+    reject: deferred.reject
+  });
+}
+
 function requireBytes(value, subject) {
   if (!Buffer.isBuffer(value) && !(value instanceof Uint8Array)) {
     throw new TypeError(`${subject} must be a Buffer or Uint8Array`);
@@ -1101,6 +1193,7 @@ module.exports = {
   CONTROL_TYPES,
   FRAME_KIND_CHUNK,
   FRAME_KIND_CONTROL,
+  FRAME_KIND_PROGRESS,
   MUX_MAGIC: Buffer.from(MUX_MAGIC),
   MUX_PREFIX_BYTES,
   MUX_VERSION,

@@ -1,17 +1,20 @@
 'use strict';
 
+const crypto = require('crypto');
 const {
   APP_ID,
   MESSAGE_TYPES,
   PROTOCOL_VERSION
 } = require('./constants');
-const { normalizeTransferManifest } = require('./transfer-manifest');
+const { normalizeTransferManifest, serializeTransferManifest } = require('./transfer-manifest');
 const {
   MAX_MESSAGE_TTL_MS,
   MAX_TRANSFER_MESSAGE_BYTES,
   assertValidSessionId,
   TYPE_TRANSFER_DECISION,
   TYPE_TRANSFER_MANIFEST,
+  TYPE_TRANSFER_RESUME,
+  advanceTransferControlCheckpoint,
   decodeTransferMessage,
   encodeTransferMessage
 } = require('./transfer-message-codec');
@@ -84,11 +87,14 @@ function exchangeBootstrapFrames(config, requestFrame) {
     let settled = false;
     let writeComplete = false;
     let decision = null;
+    let resume = null;
+    let checkpoint = null;
+    let controlCheckpoint = null;
     let expectedFrameBytes = null;
     let receivedBytes = 0;
     let pumping = false;
     let completionCheck = null;
-    const chunks = [];
+    let chunks = [];
 
     const timer = setTimeout(() => {
       failClosed(new Error(`Transfer bootstrap timed out after ${config.timeoutMs} milliseconds`));
@@ -120,11 +126,16 @@ function exchangeBootstrapFrames(config, requestFrame) {
       settled = true;
       cleanup();
       stream.pause();
-      resolve(decision);
+      resolve(Object.freeze({
+        ...decision,
+        resume,
+        checkpoint,
+        controlCheckpoint
+      }));
     }
 
     function scheduleCompletion() {
-      if (settled || !writeComplete || decision === null || completionCheck !== null) return;
+      if (settled || !writeComplete || !exchangeComplete() || completionCheck !== null) return;
       completionCheck = setImmediate(() => {
         completionCheck = null;
         if (settled) return;
@@ -136,9 +147,13 @@ function exchangeBootstrapFrames(config, requestFrame) {
       });
     }
 
+    function exchangeComplete() {
+      return decision !== null && (decision.decision !== 'accepted' || resume !== null);
+    }
+
     function onReadable() {
       if (settled || pumping) return;
-      if (decision !== null) {
+      if (exchangeComplete()) {
         if (stream.readableLength > 0 && decision.decision !== 'accepted') {
           failClosed(new Error('Unexpected bytes followed the transfer decision during bootstrap'));
         } else {
@@ -149,7 +164,7 @@ function exchangeBootstrapFrames(config, requestFrame) {
 
       pumping = true;
       try {
-        while (!settled && decision === null) {
+        while (!settled && !exchangeComplete()) {
           const target = expectedFrameBytes === null ? FRAME_LENGTH_BYTES : expectedFrameBytes;
           const remaining = target - receivedBytes;
           if (remaining <= 0) {
@@ -157,8 +172,11 @@ function exchangeBootstrapFrames(config, requestFrame) {
               expectedFrameBytes = inspectFrameLength(Buffer.concat(chunks, receivedBytes));
               continue;
             }
-            acceptDecision(Buffer.concat(chunks, receivedBytes));
-            break;
+            acceptBootstrapFrame(Buffer.concat(chunks, receivedBytes));
+            expectedFrameBytes = null;
+            receivedBytes = 0;
+            chunks = [];
+            continue;
           }
 
           const chunk = stream.read(remaining);
@@ -178,6 +196,11 @@ function exchangeBootstrapFrames(config, requestFrame) {
       } finally {
         pumping = false;
       }
+    }
+
+    function acceptBootstrapFrame(encodedFrame) {
+      if (decision === null) acceptDecision(encodedFrame);
+      else acceptResume(encodedFrame);
     }
 
     function acceptDecision(encodedFrame) {
@@ -214,10 +237,54 @@ function exchangeBootstrapFrames(config, requestFrame) {
       scheduleCompletion();
     }
 
+    function acceptResume(encodedFrame) {
+      if (decision === null || decision.decision !== 'accepted') {
+        throw new Error('Transfer resume arrived before an accepted decision');
+      }
+      const frame = decodeWireFrame(encodedFrame);
+      if (frame.header.type !== MESSAGE_TYPES.TRANSFER_RESUME) {
+        throw new TypeError('Accepted transfer bootstrap expected a transfer-resume frame');
+      }
+      const receivedAt = readClock(config.clock);
+      const normalized = decodeTransferMessage(TYPE_TRANSFER_RESUME, frame.payload, { now: receivedAt });
+      if (!verifyTransferMessage(
+        TYPE_TRANSFER_RESUME,
+        normalized,
+        config.remoteSigningPublicKey,
+        { now: receivedAt }
+      )) {
+        throw new Error('Transfer resume signature verification failed');
+      }
+      if (normalized.taskId !== config.manifest.taskId) {
+        throw new Error('Transfer resume task does not match the requested transfer');
+      }
+      if (normalized.sessionId !== config.sessionId) {
+        throw new Error('Transfer resume session does not match the requested transfer');
+      }
+      if (normalized.senderDeviceId !== config.remoteDeviceId ||
+          normalized.receiverDeviceId !== config.localDeviceId) {
+        throw new Error('Transfer resume route does not match the requested transfer');
+      }
+      if (normalized.manifestHash !== config.manifestHash) {
+        throw new Error('Transfer resume manifest hash does not match the requested transfer');
+      }
+
+      const receiverCheckpoint = normalizeBootstrapCheckpoint({
+        files: normalized.files,
+        totalTransferred: normalized.totalTransferred,
+        nextSequence: normalized.nextSequence
+      }, config.manifest, 'Receiver transfer checkpoint');
+      assertCheckpointNotBehind(config.checkpoint, receiverCheckpoint);
+      controlCheckpoint = advanceTransferControlCheckpoint(TYPE_TRANSFER_RESUME, normalized, { now: receivedAt });
+      checkpoint = receiverCheckpoint;
+      resume = normalized;
+      scheduleCompletion();
+    }
+
     function onEnd() {
       onReadable();
       if (settled) return;
-      if (decision !== null && decision.decision !== 'accepted') {
+      if (exchangeComplete()) {
         scheduleCompletion();
         return;
       }
@@ -226,7 +293,7 @@ function exchangeBootstrapFrames(config, requestFrame) {
 
     function onClose() {
       if (settled) return;
-      if (decision !== null && decision.decision !== 'accepted') {
+      if (exchangeComplete()) {
         scheduleCompletion();
         return;
       }
@@ -279,7 +346,7 @@ function normalizeInput(input) {
     'manifest',
     'senderEphemeralPublicKey',
     'sessionId'
-  ], ['clock', 'ttlMs', 'timeoutMs'], 'Transfer bootstrap input');
+  ], ['checkpoint', 'clock', 'ttlMs', 'timeoutMs'], 'Transfer bootstrap input');
 
   const stream = input.stream;
   assertUsableStream(stream);
@@ -308,6 +375,12 @@ function normalizeInput(input) {
     throw new RangeError(`Transfer bootstrap timeout must be between 1 and ${MAX_TIMEOUT_MS} milliseconds`);
   }
   assertValidSessionId(input.sessionId);
+  const manifest = normalizeTransferManifest(input.manifest);
+  const checkpoint = normalizeBootstrapCheckpoint(
+    input.checkpoint === undefined ? initialCheckpoint(manifest) : input.checkpoint,
+    manifest,
+    'Local transfer checkpoint'
+  );
 
   return {
     stream,
@@ -315,13 +388,107 @@ function normalizeInput(input) {
     remoteDeviceId: remoteIdentity.deviceId,
     signingPrivateKey: input.localDevice.signingPrivateKey,
     remoteSigningPublicKey: remoteIdentity.signingPublicKey,
-    manifest: normalizeTransferManifest(input.manifest),
+    manifest,
+    manifestHash: crypto.createHash('sha256')
+      .update(serializeTransferManifest(manifest), 'utf8')
+      .digest('hex'),
+    checkpoint,
     senderEphemeralPublicKey: input.senderEphemeralPublicKey,
     sessionId: input.sessionId,
     clock,
     ttlMs,
     timeoutMs
   };
+}
+
+function initialCheckpoint(manifest) {
+  return {
+    files: manifest.entries
+      .filter((entry) => entry.kind === 'file')
+      .map((entry) => ({
+        path: entry.path,
+        size: entry.size,
+        committedOffset: 0,
+        completed: false
+      })),
+    totalTransferred: 0,
+    nextSequence: 0
+  };
+}
+
+function normalizeBootstrapCheckpoint(value, manifest, subject) {
+  assertPlainObject(value, subject);
+  assertExactKeys(value, ['files', 'totalTransferred', 'nextSequence'], [], subject);
+  if (!Array.isArray(value.files)) throw new TypeError(`${subject} files must be an array`);
+  if (!Number.isSafeInteger(value.totalTransferred) || value.totalTransferred < 0) {
+    throw new TypeError(`${subject} total transferred must be a non-negative safe integer`);
+  }
+  if (!Number.isSafeInteger(value.nextSequence) || value.nextSequence < 0) {
+    throw new TypeError(`${subject} next sequence must be a non-negative safe integer`);
+  }
+
+  const manifestFiles = manifest.entries.filter((entry) => entry.kind === 'file');
+  if (value.files.length !== manifestFiles.length) {
+    throw new TypeError(`${subject} must contain every manifest file exactly once`);
+  }
+  const byPath = new Map();
+  for (const file of value.files) {
+    assertPlainObject(file, `${subject} file`);
+    assertExactKeys(file, ['path', 'size', 'committedOffset', 'completed'], [], `${subject} file`);
+    if (typeof file.path !== 'string' || byPath.has(file.path)) {
+      throw new TypeError(`${subject} contains a duplicate or invalid file path`);
+    }
+    byPath.set(file.path, file);
+  }
+
+  let totalTransferred = 0;
+  let incompleteSeen = false;
+  const files = manifestFiles.map((expected) => {
+    const file = byPath.get(expected.path);
+    if (!file || file.size !== expected.size || !Number.isSafeInteger(file.committedOffset) ||
+        file.committedOffset < 0 || file.committedOffset > expected.size ||
+        typeof file.completed !== 'boolean') {
+      throw new TypeError(`${subject} file metadata does not match the transfer manifest`);
+    }
+    if ((file.completed && file.committedOffset !== file.size) ||
+        (!file.completed && file.size > 0 && file.committedOffset === file.size)) {
+      throw new TypeError(`${subject} contains an inconsistent file completion marker`);
+    }
+    if (incompleteSeen && (file.completed || file.committedOffset !== 0)) {
+      throw new TypeError(`${subject} must describe a contiguous manifest prefix`);
+    }
+    if (!file.completed) incompleteSeen = true;
+    if (totalTransferred > Number.MAX_SAFE_INTEGER - file.committedOffset) {
+      throw new RangeError(`${subject} total exceeds safe integer precision`);
+    }
+    totalTransferred += file.committedOffset;
+    return Object.freeze({
+      path: file.path,
+      size: file.size,
+      committedOffset: file.committedOffset,
+      completed: file.completed
+    });
+  });
+  if (byPath.size !== manifestFiles.length || totalTransferred !== value.totalTransferred) {
+    throw new TypeError(`${subject} aggregate does not match its file checkpoints`);
+  }
+  return Object.freeze({ files: Object.freeze(files), totalTransferred, nextSequence: value.nextSequence });
+}
+
+function assertCheckpointNotBehind(previous, candidate) {
+  if (candidate.totalTransferred < previous.totalTransferred ||
+      candidate.nextSequence < previous.nextSequence) {
+    throw new Error('Receiver transfer checkpoint moved backwards');
+  }
+  for (let index = 0; index < previous.files.length; index += 1) {
+    const before = previous.files[index];
+    const after = candidate.files[index];
+    if (after.path !== before.path || after.size !== before.size ||
+        after.committedOffset < before.committedOffset ||
+        (before.completed && !after.completed)) {
+      throw new Error('Receiver transfer checkpoint moved backwards or changed the manifest');
+    }
+  }
 }
 
 function assertUsableStream(stream) {

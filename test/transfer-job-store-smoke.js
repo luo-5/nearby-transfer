@@ -112,6 +112,17 @@ try {
     jobs.database.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('transfer_jobs') WHERE name = 'source_mapping_version'").get().count,
     1
   );
+  assert.strictEqual(
+    jobs.database.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('transfer_jobs') WHERE name = 'checkpoint_next_sequence'").get().count,
+    1
+  );
+  const migratedCheckpoint = jobs.getOutgoingCheckpoint(TASK_F);
+  assert.strictEqual(migratedCheckpoint.nextSequence, 0);
+  assert.strictEqual(
+    migratedCheckpoint.files.find((file) => file.path === 'empty.txt').completed,
+    false,
+    'legacy empty files must wait for a receiver-durable acknowledgement after migration'
+  );
 
   assert.throws(
     () => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_G) }),
@@ -167,8 +178,22 @@ try {
   assert.strictEqual(outgoing.sourceMappingStatus, SOURCE_MAPPING_STATUS.AVAILABLE);
   assert.strictEqual(outgoing.recoverable, true);
   assert.deepStrictEqual(outgoing.sources, sourceMappings());
-  assert.deepStrictEqual(outgoing.progress, { totalFiles: 3, completedFiles: 1, totalBytes: 12, transferredBytes: 0 });
+  assert.deepStrictEqual(outgoing.progress, { totalFiles: 3, completedFiles: 0, totalBytes: 12, transferredBytes: 0 });
   assert.strictEqual(jobs.getFiles(TASK_A)[2].completed, false);
+  const initialCheckpoint = {
+    files: [
+      { path: 'empty.txt', size: 0, committedOffset: 0, completed: false },
+      { path: 'photos/one.jpg', size: 5, committedOffset: 0, completed: false },
+      { path: 'photos/two.jpg', size: 7, committedOffset: 0, completed: false }
+    ],
+    totalTransferred: 0,
+    nextSequence: 0
+  };
+  assert.deepStrictEqual(jobs.getOutgoingCheckpoint(TASK_A), initialCheckpoint);
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, initialCheckpoint, 1760000000001),
+    /only advance while transferring/
+  );
   assert.throws(() => jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_A), sources: sourceMappings() }), /already exists/);
   assert.throws(() => jobs.queueOutgoing({ peerDeviceId: '0000000000000000', manifest: manifest(TASK_B), sources: sourceMappings() }), /not trusted/);
   assert.throws(() => jobs.pause(TASK_A, 1760000000001), /Illegal transfer job transition/);
@@ -177,15 +202,102 @@ try {
   jobs.start(TASK_A, 1760000000001);
   assert.throws(() => jobs.retry(TASK_A, 1760000000002), /Illegal transfer job transition/);
   assert.throws(() => jobs.complete(TASK_A, 1760000000002), /fully transferred/);
-  jobs.recordFileProgress(TASK_A, 'photos/one.jpg', 3, 1760000000003);
+  const partialCheckpoint = {
+    files: [
+      { path: 'empty.txt', size: 0, committedOffset: 0, completed: true },
+      { path: 'photos/one.jpg', size: 5, committedOffset: 3, completed: false },
+      { path: 'photos/two.jpg', size: 7, committedOffset: 0, completed: false }
+    ],
+    totalTransferred: 3,
+    nextSequence: 2
+  };
+  assert.deepStrictEqual(
+    jobs.advanceOutgoingCheckpoint(TASK_A, partialCheckpoint, 1760000000003),
+    partialCheckpoint
+  );
+  assert.deepStrictEqual(jobs.getOutgoingCheckpoint(TASK_A), partialCheckpoint);
   assert.strictEqual(jobs.get(TASK_A).progress.transferredBytes, 3);
   assert.strictEqual(jobs.get(TASK_A).updatedAt, 1760000000003);
   assert.throws(() => jobs.recordFileProgress(TASK_A, 'photos/one.jpg', 2), /monotonic/);
   assert.throws(() => jobs.recordFileProgress(TASK_A, 'photos/missing.jpg', 1), /not declared/);
   assert.throws(() => jobs.recordFileProgress(TASK_A, 'photos/one.jpg', 6), /exceeds/);
   assert.throws(() => jobs.recordFileProgress(TASK_A, 'photos/one.jpg', Number.MAX_SAFE_INTEGER), /exceeds/);
-  jobs.recordFileProgress(TASK_A, 'photos/one.jpg', 5, 1760000000004);
-  jobs.recordFileProgress(TASK_A, 'photos/two.jpg', 7, 1760000000005);
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, {
+      ...partialCheckpoint,
+      files: partialCheckpoint.files.map((file) => file.path === 'photos/one.jpg'
+        ? { ...file, committedOffset: 2 }
+        : file),
+      totalTransferred: 2,
+      nextSequence: 3
+    }),
+    /must not move backwards/
+  );
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, { ...partialCheckpoint, nextSequence: 1 }),
+    /sequence must not move backwards/
+  );
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, {
+      ...partialCheckpoint,
+      files: partialCheckpoint.files.map((file, index) => index === 1 ? { ...file, path: 'wrong.jpg' } : file)
+    }),
+    /file list does not match/
+  );
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, {
+      ...partialCheckpoint,
+      files: partialCheckpoint.files.slice(0, -1)
+    }),
+    /file list does not match/
+  );
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, {
+      ...partialCheckpoint,
+      files: partialCheckpoint.files.map((file, index) => index === 1 ? { ...file, size: 6 } : file)
+    }),
+    /file list does not match/
+  );
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, { ...partialCheckpoint, totalTransferred: 4 }),
+    /must equal committed file offsets/
+  );
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, {
+      ...partialCheckpoint,
+      files: partialCheckpoint.files.map((file, index) => index === 1 ? { ...file, completed: true } : file)
+    }),
+    /completion marker is inconsistent/
+  );
+
+  const finalCheckpoint = {
+    files: [
+      { path: 'empty.txt', size: 0, committedOffset: 0, completed: true },
+      { path: 'photos/one.jpg', size: 5, committedOffset: 5, completed: true },
+      { path: 'photos/two.jpg', size: 7, committedOffset: 7, completed: true }
+    ],
+    totalTransferred: 12,
+    nextSequence: 4
+  };
+  jobs.database.exec(`
+    CREATE TEMP TRIGGER force_checkpoint_rollback
+    BEFORE UPDATE OF checkpoint_next_sequence ON transfer_jobs
+    WHEN NEW.task_id = '${TASK_A}'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced checkpoint aggregate failure');
+    END;
+  `);
+  assert.throws(
+    () => jobs.advanceOutgoingCheckpoint(TASK_A, finalCheckpoint, 1760000000004),
+    /forced checkpoint aggregate failure/
+  );
+  jobs.database.exec('DROP TRIGGER force_checkpoint_rollback');
+  assert.deepStrictEqual(
+    jobs.getOutgoingCheckpoint(TASK_A),
+    partialCheckpoint,
+    'a failed aggregate write must roll back every file and the sequence'
+  );
+  jobs.advanceOutgoingCheckpoint(TASK_A, finalCheckpoint, 1760000000005);
   const completed = jobs.complete(TASK_A, 1760000000006);
   assert.strictEqual(completed.status, JOB_STATUS.COMPLETED);
   assert.strictEqual(completed.progress.completedFiles, 3);
@@ -204,6 +316,7 @@ try {
   assert.strictEqual(incoming.status, JOB_STATUS.AWAITING_APPROVAL);
   assert.strictEqual(incoming.sourceMappingStatus, SOURCE_MAPPING_STATUS.NOT_APPLICABLE);
   assert.strictEqual(incoming.sources, null);
+  assert.throws(() => jobs.getOutgoingCheckpoint(TASK_B), /only available for outgoing/);
   assert.throws(() => jobs.start(TASK_B), /Illegal transfer job transition/);
   jobs.approveIncoming(TASK_B, 1760000000011);
   jobs.start(TASK_B, 1760000000012);
@@ -250,7 +363,25 @@ try {
 
   const recoverable = jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_C), sources: sourceMappings(), now: 1760000000020 });
   jobs.start(recoverable.taskId, 1760000000021);
-  jobs.recordFileProgress(TASK_C, 'photos/one.jpg', 4, 1760000000022);
+  const recoverableCheckpoint = {
+    files: [
+      { path: 'empty.txt', size: 0, committedOffset: 0, completed: true },
+      { path: 'photos/one.jpg', size: 5, committedOffset: 4, completed: false },
+      { path: 'photos/two.jpg', size: 7, committedOffset: 0, completed: false }
+    ],
+    totalTransferred: 4,
+    nextSequence: 2
+  };
+  jobs.advanceOutgoingCheckpoint(TASK_C, recoverableCheckpoint, 1760000000022);
+  jobs.pause(TASK_C, 1760000000022);
+  assert.deepStrictEqual(jobs.getOutgoingCheckpoint(TASK_C), recoverableCheckpoint);
+  jobs.resume(TASK_C, 1760000000022);
+  assert.deepStrictEqual(jobs.getOutgoingCheckpoint(TASK_C), recoverableCheckpoint);
+  jobs.start(TASK_C, 1760000000022);
+  jobs.fail(TASK_C, DIAGNOSTIC_CODE.NETWORK_INTERRUPTED, 1760000000022, 'retry checkpoint');
+  jobs.retry(TASK_C, 1760000000022);
+  assert.deepStrictEqual(jobs.getOutgoingCheckpoint(TASK_C), recoverableCheckpoint);
+  jobs.start(TASK_C, 1760000000022);
 
   jobs.queueOutgoing({ peerDeviceId: peer.deviceId, manifest: manifest(TASK_D), sources: sourceMappings(), now: 1760000000023 });
   jobs.start(TASK_D, 1760000000024);
@@ -293,8 +424,9 @@ try {
   assert.strictEqual(afterRestart.status, JOB_STATUS.PAUSED);
   assert.strictEqual(afterRestart.diagnosticCode, DIAGNOSTIC_CODE.APP_RESTARTED);
   assert.match(afterRestart.errorMessage, /application restarted/);
-  assert.strictEqual(afterRestart.retryCount, 0);
+  assert.strictEqual(afterRestart.retryCount, 1);
   assert.strictEqual(afterRestart.progress.transferredBytes, 4);
+  assert.deepStrictEqual(reopened.getOutgoingCheckpoint(TASK_C), recoverableCheckpoint);
   assert.strictEqual(afterRestart.sourceMappingStatus, SOURCE_MAPPING_STATUS.AVAILABLE);
   assert.strictEqual(afterRestart.recoverable, true);
   assert.deepStrictEqual(afterRestart.sources, sourceMappings());
