@@ -52,6 +52,9 @@ For the v1.0 rewrite plan, current implementation boundary, and moving the
 working directory to another computer, see
 [`docs/next-version-handoff.md`](docs/next-version-handoff.md).
 
+For a one-page path index covering the handoff, UI, Android, desktop, protocol,
+and test entry points, see [`HANDOFF.md`](HANDOFF.md).
+
 ## Build Linux Packages
 
 ```bash
