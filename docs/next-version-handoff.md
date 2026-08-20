@@ -9,7 +9,7 @@ are not enabled yet.
 - Upstream: `https://github.com/luo-5/nearby-transfer`
 - Working branch: `next/1.0`
 - Draft PR: `https://github.com/luo-5/nearby-transfer/pull/9`
-- Latest pushed commit before this batch: `fd31e16`
+- Latest pushed commit: `aa00759`
 - Protocol: v2, intentionally incompatible with v0.x
 - Required commit trailer for future commits:
 
@@ -22,7 +22,7 @@ Android transfer matrix has passed.
 
 ## What is implemented in this batch
 
-The current batch adds the receiver-authoritative resumability foundation:
+Commit `aa00759` adds the receiver-authoritative resumability foundation:
 
 - Desktop SQLite stores `checkpoint_next_sequence` and a complete outgoing
   checkpoint in one transaction.
@@ -142,7 +142,7 @@ configuration only; set `JAVA_HOME` and `ANDROID_HOME` on the new computer.
 
 ## Safe handoff checklist
 
-- [ ] Commit and push the current verified batch with the Codex trailer.
+- [x] Commit and push the current verified batch with the Codex trailer.
 - [ ] Confirm the Draft PR shows the new commit and no conflicts.
 - [ ] Continue from `next/1.0`, not from an old PR branch.
 - [ ] Keep Android transfer production wiring disabled until runtime tests pass.
