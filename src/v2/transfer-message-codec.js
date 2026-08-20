@@ -24,6 +24,7 @@ const MAX_CLOCK_SKEW_MS = 30 * 1000;
 const MAX_CONTROL_MESSAGE_BYTES = 1024 * 1024;
 const MAX_RESUME_ENTRIES = MAX_TRANSFER_FILES;
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+const SESSION_ID_BYTES = 16;
 
 const DEVICE_ID_PATTERN = /^[a-f0-9]{16}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -130,6 +131,7 @@ function validateManifestEnvelope(message, now) {
     'senderDeviceId',
     'receiverDeviceId',
     'senderEphemeralPublicKey',
+    'sessionId',
     'issuedAt',
     'expiresAt',
     'signature'
@@ -138,6 +140,7 @@ function validateManifestEnvelope(message, now) {
   const manifest = normalizeTransferManifest(message.manifest);
   assertRoute(message.senderDeviceId, message.receiverDeviceId);
   assertCanonicalBase64Url(message.senderEphemeralPublicKey, 32, 'Sender ephemeral public key');
+  assertValidSessionId(message.sessionId);
   assertTimeWindow(message.issuedAt, message.expiresAt, now);
   assertCanonicalBase64Url(message.signature, 64, 'Transfer message signature');
 
@@ -149,6 +152,7 @@ function validateManifestEnvelope(message, now) {
     senderDeviceId: message.senderDeviceId,
     receiverDeviceId: message.receiverDeviceId,
     senderEphemeralPublicKey: message.senderEphemeralPublicKey,
+    sessionId: message.sessionId,
     issuedAt: message.issuedAt,
     expiresAt: message.expiresAt,
     signature: message.signature
@@ -164,6 +168,7 @@ function validateDecision(message, now) {
     'senderDeviceId',
     'receiverDeviceId',
     'decision',
+    'sessionId',
     'issuedAt',
     'expiresAt',
     'signature'
@@ -171,6 +176,7 @@ function validateDecision(message, now) {
   assertProtocolEnvelope(message, TYPE_TRANSFER_DECISION, 'Transfer decision');
   assertValidTaskId(message.taskId);
   assertRoute(message.senderDeviceId, message.receiverDeviceId);
+  assertValidSessionId(message.sessionId);
   if (typeof message.decision !== 'string' || !DECISIONS.has(message.decision)) {
     throw new TypeError('Transfer decision diagnostic is unsupported');
   }
@@ -185,6 +191,7 @@ function validateDecision(message, now) {
     senderDeviceId: message.senderDeviceId,
     receiverDeviceId: message.receiverDeviceId,
     decision: message.decision,
+    sessionId: message.sessionId,
     issuedAt: message.issuedAt,
     expiresAt: message.expiresAt,
     signature: message.signature
@@ -602,6 +609,10 @@ function assertCanonicalBase64Url(value, expectedBytes, label) {
   }
 }
 
+function assertValidSessionId(value) {
+  assertCanonicalBase64Url(value, SESSION_ID_BYTES, 'Transfer session ID');
+}
+
 function assertTimeWindow(issuedAt, expiresAt, now) {
   assertPositiveSafeInteger(issuedAt, 'Transfer message issuedAt');
   assertPositiveSafeInteger(expiresAt, 'Transfer message expiresAt');
@@ -680,12 +691,14 @@ module.exports = {
   MAX_MESSAGE_TTL_MS,
   MAX_RESUME_ENTRIES,
   MAX_TRANSFER_MESSAGE_BYTES,
+  SESSION_ID_BYTES,
   TYPE_TRANSFER_COMPLETE,
   TYPE_TRANSFER_DECISION,
   TYPE_TRANSFER_MANIFEST,
   TYPE_TRANSFER_PROGRESS,
   TYPE_TRANSFER_RESUME,
   advanceTransferControlCheckpoint,
+  assertValidSessionId,
   decodeTransferMessage,
   encodeTransferMessage,
   transferMessageSigningPayload,

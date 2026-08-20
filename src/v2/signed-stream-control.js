@@ -5,6 +5,7 @@ const { TextDecoder } = require('util');
 const { APP_ID, MESSAGE_TYPES, PROTOCOL_VERSION } = require('./constants');
 const { canonicalJson, parseCanonicalJson } = require('./canonical-json');
 const { assertValidTaskId } = require('./transfer-manifest');
+const { assertValidSessionId } = require('./transfer-message-codec');
 
 const CONTROL_PROTOCOL = 1;
 const MAX_ENCODED_BYTES = 16 * 1024;
@@ -33,6 +34,7 @@ const SIGNED_FIELDS = [
   'command',
   'controlProtocol',
   'taskId',
+  'sessionId',
   'fromDeviceId',
   'toDeviceId',
   'direction',
@@ -42,12 +44,13 @@ const SIGNED_FIELDS = [
 ];
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
-function createSignedStreamControlCodec({ localDevice, remotePeer, taskId, now = Date.now, ttlMs = DEFAULT_TTL_MS }) {
+function createSignedStreamControlCodec({ localDevice, remotePeer, taskId, sessionId, now = Date.now, ttlMs = DEFAULT_TTL_MS }) {
   const localDeviceId = readDeviceId(localDevice, 'Local device');
   const remoteIdentity = remotePeer && remotePeer.identity ? remotePeer.identity : remotePeer;
   const remoteDeviceId = readDeviceId(remoteIdentity, 'Remote peer');
   if (localDeviceId === remoteDeviceId) throw new TypeError('Local and remote device IDs must differ');
   assertValidTaskId(taskId);
+  assertValidSessionId(sessionId);
   if (typeof now !== 'function') throw new TypeError('Stream control clock must be a function');
   assertTtl(ttlMs);
 
@@ -79,6 +82,7 @@ function createSignedStreamControlCodec({ localDevice, remotePeer, taskId, now =
       command: core.type,
       controlProtocol: CONTROL_PROTOCOL,
       taskId,
+      sessionId,
       fromDeviceId: localDeviceId,
       toDeviceId: remoteDeviceId,
       direction: core.direction,
@@ -122,7 +126,7 @@ function createSignedStreamControlCodec({ localDevice, remotePeer, taskId, now =
 
     const signed = parseCanonicalJson(serialized, 'Stream control');
     inspectSignedMessage(signed);
-    assertSignedBinding(signed, remoteDeviceId, localDeviceId, taskId);
+    assertSignedBinding(signed, remoteDeviceId, localDeviceId, taskId, sessionId);
     assertFreshTimestamp(signed, readClock(now));
     if (!Number.isSafeInteger(nextRemoteSequence)) {
       throw new RangeError('Stream control remote sequence is exhausted');
@@ -214,6 +218,7 @@ function inspectSignedMessage(value) {
   }
   if (!CONTROL_COMMANDS.has(command)) throw new TypeError('Signed stream control command is unsupported');
   assertValidTaskId(value.taskId);
+  assertValidSessionId(value.sessionId);
   assertDeviceId(value.fromDeviceId, 'Signed stream control sender');
   assertDeviceId(value.toDeviceId, 'Signed stream control receiver');
   if (value.fromDeviceId === value.toDeviceId) throw new TypeError('Stream control device IDs must differ');
@@ -243,8 +248,9 @@ function assertCoreBinding(value, localDeviceId, remoteDeviceId, taskId) {
   }
 }
 
-function assertSignedBinding(value, remoteDeviceId, localDeviceId, taskId) {
+function assertSignedBinding(value, remoteDeviceId, localDeviceId, taskId, sessionId) {
   if (value.taskId !== taskId) throw new Error('Signed stream control task does not match this codec');
+  if (value.sessionId !== sessionId) throw new Error('Signed stream control session does not match this codec');
   if (value.fromDeviceId !== remoteDeviceId || value.toDeviceId !== localDeviceId) {
     throw new Error('Signed stream control identities do not match this codec');
   }
@@ -388,5 +394,6 @@ function oppositeDirection(direction) {
 }
 
 module.exports = {
+  MAX_ENCODED_BYTES,
   createSignedStreamControlCodec
 };

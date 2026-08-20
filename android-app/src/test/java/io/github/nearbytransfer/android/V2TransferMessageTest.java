@@ -11,11 +11,11 @@ import java.util.Locale;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class V2TransferMessageTest {
     private static final long MAX_SAFE_INTEGER = 9_007_199_254_740_991L;
+    private static final String OTHER_SESSION_ID = "MDEyMzQ1Njc4OTo7PD0-Pw";
 
     @Test
     public void sharedVectorsRoundTripAndSigningPayloadMatchByteForByte() throws Exception {
@@ -38,11 +38,24 @@ public class V2TransferMessageTest {
             unsigned.remove("signature");
             assertEquals(vector.getString("signingPayload"), V2TransferMessage.signingPayload(type, unsigned));
         }
-        assertTrue(V2TransferMessage.decode(
+        V2TransferMessage.ManifestEnvelope manifest = (V2TransferMessage.ManifestEnvelope) V2TransferMessage.decode(
             V2TransferMessage.TYPE_MANIFEST,
             vectors.getJSONObject("transferManifest").getString("canonicalJson").getBytes(StandardCharsets.UTF_8),
             now
-        ) instanceof V2TransferMessage.ManifestEnvelope);
+        );
+        assertEquals(
+            vectors.getJSONObject("transferManifest").getJSONObject("message").getString("sessionId"),
+            manifest.sessionId
+        );
+        V2TransferMessage.Decision decision = (V2TransferMessage.Decision) V2TransferMessage.decode(
+            V2TransferMessage.TYPE_DECISION,
+            vectors.getJSONObject("transferDecision").getString("canonicalJson").getBytes(StandardCharsets.UTF_8),
+            now
+        );
+        assertEquals(
+            vectors.getJSONObject("transferDecision").getJSONObject("message").getString("sessionId"),
+            decision.sessionId
+        );
     }
 
     @Test
@@ -58,6 +71,10 @@ public class V2TransferMessageTest {
         JSONObject missing = copy(vector.getJSONObject("message"));
         missing.remove("receiverDeviceId");
         assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_MANIFEST, missing, now));
+
+        JSONObject missingSession = copy(vector.getJSONObject("message"));
+        missingSession.remove("sessionId");
+        assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_MANIFEST, missingSession, now));
 
         JSONObject unknownManifest = copy(vector.getJSONObject("message"));
         unknownManifest.getJSONObject("manifest").put("debug", true);
@@ -95,10 +112,30 @@ public class V2TransferMessageTest {
         manifest.put("senderEphemeralPublicKey", manifest.getString("senderEphemeralPublicKey") + "=");
         assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_MANIFEST, manifest, now));
 
+        JSONObject nonCanonicalManifestSession = copy(
+            vectors.getJSONObject("transferManifest").getJSONObject("message")
+        );
+        nonCanonicalManifestSession.put(
+            "sessionId", nonCanonicalManifestSession.getString("sessionId") + "="
+        );
+        assertFailure(() -> V2TransferMessage.fromJson(
+            V2TransferMessage.TYPE_MANIFEST, nonCanonicalManifestSession, now
+        ));
+
         JSONObject nonCanonicalTask = copy(vectors.getJSONObject("transferDecision").getJSONObject("message"));
         String taskId = nonCanonicalTask.getString("taskId");
         nonCanonicalTask.put("taskId", taskId.substring(0, taskId.length() - 1) + "B");
         assertFailure(() -> V2TransferMessage.fromJson(V2TransferMessage.TYPE_DECISION, nonCanonicalTask, now));
+
+        JSONObject nonCanonicalDecisionSession = copy(
+            vectors.getJSONObject("transferDecision").getJSONObject("message")
+        );
+        nonCanonicalDecisionSession.put(
+            "sessionId", nonCanonicalDecisionSession.getString("sessionId") + "="
+        );
+        assertFailure(() -> V2TransferMessage.fromJson(
+            V2TransferMessage.TYPE_DECISION, nonCanonicalDecisionSession, now
+        ));
 
         JSONObject decision = copy(vectors.getJSONObject("transferDecision").getJSONObject("message"));
         decision.put("decision", "free-form-reason");
@@ -376,6 +413,13 @@ public class V2TransferMessageTest {
         assertNotEquals(
             vectors.getJSONObject("transferDecision").getString("signingPayload"),
             V2TransferMessage.signingPayload(V2TransferMessage.TYPE_DECISION, changedDecision)
+        );
+
+        JSONObject changedSession = copy(vectors.getJSONObject("transferDecision").getJSONObject("message"));
+        changedSession.put("sessionId", OTHER_SESSION_ID);
+        assertNotEquals(
+            vectors.getJSONObject("transferDecision").getString("signingPayload"),
+            V2TransferMessage.signingPayload(V2TransferMessage.TYPE_DECISION, changedSession)
         );
 
         JSONObject unknownUnsigned = copy(vectors.getJSONObject("transferDecision").getJSONObject("message"));

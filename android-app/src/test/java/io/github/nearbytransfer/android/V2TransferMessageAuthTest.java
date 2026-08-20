@@ -79,6 +79,7 @@ public class V2TransferMessageAuthTest {
             now
         );
         assertEquals(type, verified.type);
+        assertEquals(fixture.getString("sessionId"), ((V2TransferMessage.Decision) verified).sessionId);
     }
 
     @Test

@@ -24,6 +24,8 @@ public class V2SignedStreamControlTest {
     private static final String OTHER_ID = "3333333333333333";
     private static final String TASK_ID = "AAECAwQFBgcICQoLDA0ODw";
     private static final String OTHER_TASK_ID = "EBESExQVFhcYGRobHB0eHw";
+    private static final String SESSION_ID = "ICEiIyQlJicoKSorLC0uLw";
+    private static final String OTHER_SESSION_ID = "MDEyMzQ1Njc4OTo7PD0-Pw";
     private static final long NOW = 1_800_000_000_000L;
 
     private KeyPair aliceKeys;
@@ -83,6 +85,7 @@ public class V2SignedStreamControlTest {
         JSONObject stream = fixture.getJSONObject("streamControl");
         JSONObject core = stream.getJSONObject("core");
         String taskId = fixture.getString("taskId");
+        String sessionId = fixture.getString("sessionId");
         long now = fixture.getLong("validationNow");
 
         assertEquals(sender.getString("deviceId"), CryptoUtil.deviceIdFor(sender.getString("signingPublicKey")));
@@ -94,6 +97,7 @@ public class V2SignedStreamControlTest {
             receiver.getString("deviceId"),
             receiver.getString("signingPublicKey"),
             taskId,
+            sessionId,
             () -> now
         );
         V2SignedStreamControl.Control outgoing = new V2SignedStreamControl.Control(
@@ -112,6 +116,7 @@ public class V2SignedStreamControlTest {
             sender.getString("deviceId"),
             sender.getString("signingPublicKey"),
             taskId,
+            sessionId,
             () -> now
         );
         V2SignedStreamControl.Control decoded = decoder.decodeAndVerify(
@@ -135,6 +140,7 @@ public class V2SignedStreamControlTest {
         assertEquals(2, signed.getLong("protocolVersion"));
         assertEquals("transfer-stream-control", signed.getString("type"));
         assertEquals(1, signed.getLong("controlProtocol"));
+        assertEquals(SESSION_ID, signed.getString("sessionId"));
         assertEquals(0, signed.getLong("sequence"));
         assertEquals(NOW + V2SignedStreamControl.DEFAULT_TTL_MS, signed.getLong("expiresAt"));
 
@@ -200,18 +206,22 @@ public class V2SignedStreamControlTest {
         String otherPublicPem = CryptoUtil.toPublicPem(otherKeys.getPublic());
 
         V2SignedStreamControl.Codec wrongKey = new V2SignedStreamControl.Codec(
-            BOB_ID, bobPrivatePem, ALICE_ID, otherPublicPem, TASK_ID, clock::get
+            BOB_ID, bobPrivatePem, ALICE_ID, otherPublicPem, TASK_ID, SESSION_ID, clock::get
         );
         V2SignedStreamControl.Codec wrongPeer = new V2SignedStreamControl.Codec(
-            BOB_ID, bobPrivatePem, OTHER_ID, alicePublicPem, TASK_ID, clock::get
+            BOB_ID, bobPrivatePem, OTHER_ID, alicePublicPem, TASK_ID, SESSION_ID, clock::get
         );
         V2SignedStreamControl.Codec wrongTask = new V2SignedStreamControl.Codec(
-            BOB_ID, bobPrivatePem, ALICE_ID, alicePublicPem, OTHER_TASK_ID, clock::get
+            BOB_ID, bobPrivatePem, ALICE_ID, alicePublicPem, OTHER_TASK_ID, SESSION_ID, clock::get
+        );
+        V2SignedStreamControl.Codec wrongSession = new V2SignedStreamControl.Codec(
+            BOB_ID, bobPrivatePem, ALICE_ID, alicePublicPem, TASK_ID, OTHER_SESSION_ID, clock::get
         );
 
         assertFailure(() -> wrongKey.decodeAndVerify(payload));
         assertFailure(() -> wrongPeer.decodeAndVerify(payload));
         assertFailure(() -> wrongTask.decodeAndVerify(payload));
+        assertFailure(() -> wrongSession.decodeAndVerify(payload));
     }
 
     @Test
@@ -280,16 +290,22 @@ public class V2SignedStreamControlTest {
     @Test
     public void base64urlAndIdentityBindingsAreStrict() throws Exception {
         assertFailure(() -> new V2SignedStreamControl.Codec(
-            "AAAAAAAAAAAAAAAA", alicePrivatePem, BOB_ID, bobPublicPem, TASK_ID, clock::get
+            "AAAAAAAAAAAAAAAA", alicePrivatePem, BOB_ID, bobPublicPem, TASK_ID, SESSION_ID, clock::get
         ));
         assertFailure(() -> new V2SignedStreamControl.Codec(
-            ALICE_ID, alicePrivatePem, ALICE_ID, bobPublicPem, TASK_ID, clock::get
+            ALICE_ID, alicePrivatePem, ALICE_ID, bobPublicPem, TASK_ID, SESSION_ID, clock::get
         ));
         assertFailure(() -> new V2SignedStreamControl.Codec(
-            ALICE_ID, alicePrivatePem, BOB_ID, bobPublicPem, TASK_ID + "=", clock::get
+            ALICE_ID, alicePrivatePem, BOB_ID, bobPublicPem, TASK_ID + "=", SESSION_ID, clock::get
         ));
         assertFailure(() -> new V2SignedStreamControl.Codec(
-            ALICE_ID, alicePrivatePem, BOB_ID, bobPublicPem, "AA", clock::get
+            ALICE_ID, alicePrivatePem, BOB_ID, bobPublicPem, "AA", SESSION_ID, clock::get
+        ));
+        assertFailure(() -> new V2SignedStreamControl.Codec(
+            ALICE_ID, alicePrivatePem, BOB_ID, bobPublicPem, TASK_ID, SESSION_ID + "=", clock::get
+        ));
+        assertFailure(() -> new V2SignedStreamControl.Codec(
+            ALICE_ID, alicePrivatePem, BOB_ID, bobPublicPem, TASK_ID, "AA", clock::get
         ));
     }
 
@@ -324,6 +340,7 @@ public class V2SignedStreamControlTest {
             BOB_ID,
             bobPublicPem,
             TASK_ID,
+            SESSION_ID,
             source::get,
             ttl
         );
@@ -336,6 +353,7 @@ public class V2SignedStreamControlTest {
             ALICE_ID,
             alicePublicPem,
             TASK_ID,
+            SESSION_ID,
             source::get
         );
     }

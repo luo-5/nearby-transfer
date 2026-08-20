@@ -97,6 +97,14 @@ function testTamperingAndUnsignedInput() {
     now: fixture.validationNow
   }), false);
 
+  const changedSession = {
+    ...signed,
+    sessionId: Buffer.alloc(16, 0x7f).toString('base64url')
+  };
+  assert.strictEqual(verifyTransferMessage(vector.type, changedSession, signer.publicKey, {
+    now: fixture.validationNow
+  }), false);
+
   const changedSignature = Buffer.from(signed.signature, 'base64url');
   changedSignature[0] ^= 0x01;
   assert.strictEqual(verifyTransferMessage(vector.type, {

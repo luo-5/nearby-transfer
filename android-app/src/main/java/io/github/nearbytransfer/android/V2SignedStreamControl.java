@@ -63,6 +63,7 @@ final class V2SignedStreamControl {
         "command",
         "controlProtocol",
         "taskId",
+        "sessionId",
         "fromDeviceId",
         "toDeviceId",
         "direction",
@@ -144,6 +145,7 @@ final class V2SignedStreamControl {
         private final String remoteDeviceId;
         private final PublicKey remoteSigningPublicKey;
         private final String taskId;
+        private final String sessionId;
         private final LongSupplier clock;
         private final long ttlMillis;
         private long outgoingSequence;
@@ -156,6 +158,7 @@ final class V2SignedStreamControl {
             String remoteDeviceId,
             String remoteSigningPublicKeyPem,
             String taskId,
+            String sessionId,
             LongSupplier clock
         ) throws GeneralSecurityException {
             this(
@@ -164,6 +167,7 @@ final class V2SignedStreamControl {
                 remoteDeviceId,
                 remoteSigningPublicKeyPem,
                 taskId,
+                sessionId,
                 clock,
                 DEFAULT_TTL_MS
             );
@@ -175,6 +179,7 @@ final class V2SignedStreamControl {
             String remoteDeviceId,
             String remoteSigningPublicKeyPem,
             String taskId,
+            String sessionId,
             LongSupplier clock,
             long ttlMillis
         ) throws GeneralSecurityException {
@@ -184,6 +189,7 @@ final class V2SignedStreamControl {
                 throw new IllegalArgumentException("Local and remote device IDs must differ");
             }
             assertCanonicalBase64Url(taskId, 16, "Transfer task ID");
+            assertCanonicalBase64Url(sessionId, 16, "Transfer session ID");
             if (clock == null) {
                 throw new IllegalArgumentException("Stream control clock is required");
             }
@@ -196,6 +202,7 @@ final class V2SignedStreamControl {
             this.remoteDeviceId = remoteDeviceId;
             this.remoteSigningPublicKey = CryptoUtil.readPublicKey(remoteSigningPublicKeyPem, "Ed25519");
             this.taskId = taskId;
+            this.sessionId = sessionId;
             this.clock = clock;
             this.ttlMillis = ttlMillis;
         }
@@ -218,6 +225,7 @@ final class V2SignedStreamControl {
 
             JSONObject unsigned = unsignedJson(
                 control,
+                sessionId,
                 outgoingSequence,
                 now,
                 now + ttlMillis
@@ -255,6 +263,12 @@ final class V2SignedStreamControl {
                 throw new IllegalArgumentException("Stream control task does not match the bound task");
             }
 
+            String decodedSessionId = requiredString(json, "sessionId");
+            assertCanonicalBase64Url(decodedSessionId, 16, "Transfer session ID");
+            if (!sessionId.equals(decodedSessionId)) {
+                throw new IllegalArgumentException("Stream control session does not match the bound session");
+            }
+
             String fromDeviceId = requiredString(json, "fromDeviceId");
             String toDeviceId = requiredString(json, "toDeviceId");
             assertDeviceId(fromDeviceId, "Stream control source device ID");
@@ -290,6 +304,7 @@ final class V2SignedStreamControl {
             byte[] decodedSignature = decodeCanonicalBase64Url(encodedSignature, 64, "Stream control signature");
             JSONObject unsigned = unsignedJson(
                 control,
+                sessionId,
                 sequence,
                 issuedAt,
                 expiresAt
@@ -322,6 +337,7 @@ final class V2SignedStreamControl {
 
     private static JSONObject unsignedJson(
         Control control,
+        String sessionId,
         long sequence,
         long issuedAt,
         long expiresAt
@@ -333,6 +349,7 @@ final class V2SignedStreamControl {
         json.put("command", control.type);
         json.put("controlProtocol", control.protocol);
         json.put("taskId", control.taskId);
+        json.put("sessionId", sessionId);
         json.put("fromDeviceId", control.fromPeerId);
         json.put("toDeviceId", control.toPeerId);
         json.put("direction", control.direction);

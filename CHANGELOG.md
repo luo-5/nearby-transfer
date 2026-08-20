@@ -18,6 +18,7 @@ All notable changes to Nearby Transfer will be documented in this file.
 
 - Added strict v2 wire framing, authenticated transfer messages, encrypted chunk readers and writers, and shared desktop/Android test vectors.
 - Added cross-platform Ed25519 transfer-message and replay-protected stream-control codecs with deterministic interoperability vectors.
+- Added a fail-closed, per-attempt session-bound desktop bootstrap and an opt-in Android listener path that authenticates trusted senders, rechecks authorization, persists incoming jobs, and requires bounded explicit approval before socket handoff.
 - Added durable transfer source manifests, monotonic checkpoints, resumable stream sessions, and persistent desktop transfer jobs.
 - Added no-overwrite receive planning, safe receive-root validation, symlink rejection, and a single-concurrency desktop scheduler foundation.
 - Hardened legacy desktop and Android request parsing, connection lifecycle, pending-transfer bounds, and concurrent destination allocation.

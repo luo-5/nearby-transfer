@@ -21,12 +21,14 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Bounded TCP transport for protocol-v2 pairing control only. */
+/** Bounded TCP bootstrap for protocol-v2 pairing and explicitly enabled transfers. */
 final class V2LanService implements Closeable {
     static final int DEFAULT_MAX_CONNECTIONS = 16;
     static final int DEFAULT_MAX_CONNECTIONS_PER_IP = 4;
     static final int DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000;
     static final int DEFAULT_MAX_BOOTSTRAP_BYTES = 32 * 1024;
+    static final int DEFAULT_MAX_TRANSFER_BOOTSTRAP_BYTES = V2TransferMessage.MAX_MESSAGE_BYTES
+        + V2WireFrame.MAX_HEADER_SIZE + V2WireFrame.FRAME_PREFIX_BYTES;
     static final int DEFAULT_MAX_BOOTSTRAP_FRAMES = 8;
 
     interface ControlHandler {
@@ -34,6 +36,15 @@ final class V2LanService implements Closeable {
         void onConfirmation(V2Pairing.Confirmation confirmation, String signature, Connection connection) throws Exception;
         void onCancellation(V2Pairing.Cancellation cancellation, String signature, Connection connection) throws Exception;
         void onConnectionClosed(Binding binding);
+    }
+
+    /**
+     * Handles one transfer manifest synchronously on the connection read thread.
+     * The handler must either send a decision and return (the socket is closed),
+     * or send an accepted decision and detach the socket for the stream runtime.
+     */
+    interface TransferHandler {
+        void onManifestFrame(V2WireFrame.Frame frame, Connection connection) throws Exception;
     }
 
     interface Listener {
@@ -61,7 +72,10 @@ final class V2LanService implements Closeable {
         private int inputBytes;
         private int frameCount;
         private boolean closed;
+        private boolean detached;
         private boolean readLoopStarted;
+        private boolean transferManifestDispatched;
+        private Thread readLoopThread;
 
         private Connection(Socket socket, String expectedDeviceId) {
             this.socket = socket;
@@ -86,15 +100,53 @@ final class V2LanService implements Closeable {
             send(V2Pairing.TYPE_CANCEL, V2ControlMessage.encodeCancellation(cancellation, signature));
         }
 
+        void sendTransferDecisionFrame(V2WireFrame.Frame frame) throws Exception {
+            if (frame == null || !V2TransferMessage.TYPE_DECISION.equals(frame.header.opt("type"))) {
+                throw new IllegalArgumentException("A transfer-decision wire frame is required");
+            }
+            synchronized (this) {
+                if (!transferManifestDispatched || detached) {
+                    throw new IllegalStateException("Transfer decision is not valid for this connection");
+                }
+            }
+            sendFrame(frame, "Transfer decision");
+        }
+
+        Socket detachForTransfer() throws Exception {
+            synchronized (this) {
+                if (Thread.currentThread() != readLoopThread) {
+                    throw new IllegalStateException("Transfer socket may only be detached by its manifest handler");
+                }
+                if (closed || detached || !transferManifestDispatched || binding.pairingId != null) {
+                    throw new IllegalStateException("Transfer connection is unavailable for handoff");
+                }
+                if (decoder.bufferedBytes() != 0) {
+                    throw new IllegalStateException("Transfer socket cannot be detached with buffered bootstrap bytes");
+                }
+                detached = true;
+            }
+            socket.setSoTimeout(0);
+            unregister(this);
+            return socket;
+        }
+
         private void send(String type, byte[] payload) throws Exception {
-            if (payload.length > maxBootstrapBytes) throw new IllegalArgumentException("Pairing control frame exceeds the accepted limit");
             JSONObject header = new JSONObject();
             header.put("app", ProtocolV2.APP_ID);
             header.put("protocolVersion", ProtocolV2.VERSION);
             header.put("type", type);
-            byte[] frame = V2WireFrame.encode(new V2WireFrame.Frame(header, payload));
+            sendFrame(new V2WireFrame.Frame(header, payload), "Pairing control");
+        }
+
+        private void sendFrame(V2WireFrame.Frame value, String subject) throws Exception {
+            byte[] frame = V2WireFrame.encode(value);
+            if (frame.length > maxBootstrapBytes) {
+                throw new IllegalArgumentException(subject + " frame exceeds the accepted limit");
+            }
             synchronized (outputLock) {
-                if (closed || socket.isClosed() || socket.isOutputShutdown()) throw new IOException("Pairing connection is unavailable");
+                if (closed || detached || socket.isClosed() || socket.isOutputShutdown()) {
+                    throw new IOException("Bootstrap connection is unavailable");
+                }
                 OutputStream output = socket.getOutputStream();
                 output.write(frame);
                 output.flush();
@@ -116,32 +168,43 @@ final class V2LanService implements Closeable {
         }
 
         private void readLoop() {
+            synchronized (this) { readLoopThread = Thread.currentThread(); }
             try {
                 InputStream input = socket.getInputStream();
                 byte[] buffer = new byte[4096];
                 for (int read; (read = input.read(buffer)) != -1;) {
                     inputBytes += read;
-                    if (inputBytes > maxBootstrapBytes) throw new IllegalArgumentException("Pairing bootstrap input exceeds the accepted limit");
+                    if (inputBytes > maxBootstrapBytes) throw new IllegalArgumentException("Protocol v2 bootstrap input exceeds the accepted limit");
                     byte[] chunk = new byte[read];
                     System.arraycopy(buffer, 0, chunk, 0, read);
-                    for (V2WireFrame.Frame frame : decoder.push(chunk)) {
-                        if (++frameCount > maxBootstrapFrames) throw new IllegalArgumentException("Pairing bootstrap frame count exceeds the accepted limit");
+                    List<V2WireFrame.Frame> frames = decoder.push(chunk);
+                    assertTransferManifestIsIsolated(frames, decoder.bufferedBytes());
+                    for (V2WireFrame.Frame frame : frames) {
+                        if (++frameCount > maxBootstrapFrames) throw new IllegalArgumentException("Protocol v2 bootstrap frame count exceeds the accepted limit");
                         receiveFrame(frame, this);
+                        synchronized (this) {
+                            if (detached || closed) return;
+                        }
                     }
                 }
                 decoder.finish();
             } catch (SocketTimeoutException error) {
-                reportError(remoteAddress, new IOException("Pairing bootstrap timed out", error));
+                reportError(remoteAddress, new IOException("Protocol v2 bootstrap timed out", error));
             } catch (Exception error) {
                 reportError(remoteAddress, error);
             } finally {
-                close();
+                boolean shouldClose;
+                synchronized (this) {
+                    readLoopThread = null;
+                    shouldClose = !detached;
+                }
+                if (shouldClose) close();
             }
         }
 
         @Override public void close() {
             synchronized (this) {
-                if (closed) return;
+                if (closed || detached) return;
                 closed = true;
             }
             try { socket.close(); } catch (IOException ignored) { }
@@ -151,6 +214,7 @@ final class V2LanService implements Closeable {
     }
 
     private final ControlHandler controlHandler;
+    private final TransferHandler transferHandler;
     private final Listener listener;
     private final Executor callbackExecutor;
     private final int maxConnections;
@@ -166,15 +230,29 @@ final class V2LanService implements Closeable {
     private volatile boolean running;
 
     V2LanService(ControlHandler handler, Listener listener) {
-        this(handler, listener, Runnable::run, DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_CONNECTIONS_PER_IP,
+        this(handler, null, listener, Runnable::run, DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_CONNECTIONS_PER_IP,
             DEFAULT_BOOTSTRAP_TIMEOUT_MS, DEFAULT_MAX_BOOTSTRAP_BYTES, DEFAULT_MAX_BOOTSTRAP_FRAMES);
+    }
+
+    V2LanService(ControlHandler handler, TransferHandler transferHandler, Listener listener) {
+        this(handler, transferHandler, listener, Runnable::run, DEFAULT_MAX_CONNECTIONS,
+            DEFAULT_MAX_CONNECTIONS_PER_IP, DEFAULT_BOOTSTRAP_TIMEOUT_MS,
+            DEFAULT_MAX_TRANSFER_BOOTSTRAP_BYTES, DEFAULT_MAX_BOOTSTRAP_FRAMES);
     }
 
     V2LanService(ControlHandler handler, Listener listener, Executor callbackExecutor, int maxConnections,
                  int maxConnectionsPerIp, int bootstrapTimeoutMs, int maxBootstrapBytes, int maxBootstrapFrames) {
+        this(handler, null, listener, callbackExecutor, maxConnections, maxConnectionsPerIp,
+            bootstrapTimeoutMs, maxBootstrapBytes, maxBootstrapFrames);
+    }
+
+    V2LanService(ControlHandler handler, TransferHandler transferHandler, Listener listener,
+                 Executor callbackExecutor, int maxConnections, int maxConnectionsPerIp,
+                 int bootstrapTimeoutMs, int maxBootstrapBytes, int maxBootstrapFrames) {
         if (handler == null || listener == null || callbackExecutor == null) throw new IllegalArgumentException("Handler, listener, and callback executor are required");
-        if (maxConnections <= 0 || maxConnectionsPerIp <= 0 || bootstrapTimeoutMs <= 0 || maxBootstrapBytes <= 0 || maxBootstrapFrames <= 0) throw new IllegalArgumentException("Pairing transport limits must be positive");
-        this.controlHandler = handler; this.listener = listener; this.callbackExecutor = callbackExecutor;
+        if (maxConnections <= 0 || maxConnectionsPerIp <= 0 || bootstrapTimeoutMs <= 0 || maxBootstrapBytes <= 0 || maxBootstrapFrames <= 0) throw new IllegalArgumentException("Bootstrap transport limits must be positive");
+        this.controlHandler = handler; this.transferHandler = transferHandler;
+        this.listener = listener; this.callbackExecutor = callbackExecutor;
         this.maxConnections = maxConnections; this.maxConnectionsPerIp = maxConnectionsPerIp;
         this.bootstrapTimeoutMs = bootstrapTimeoutMs; this.maxBootstrapBytes = maxBootstrapBytes; this.maxBootstrapFrames = maxBootstrapFrames;
     }
@@ -188,7 +266,7 @@ final class V2LanService implements Closeable {
         serverSocket = socket;
         running = true;
         io.execute(this::acceptLoop);
-        reportStatus("v2 pairing listener started on port " + socket.getLocalPort());
+        reportStatus("v2 bootstrap listener started on port " + socket.getLocalPort());
         return socket.getLocalPort();
     }
 
@@ -241,9 +319,9 @@ final class V2LanService implements Closeable {
         socket.setSoTimeout(bootstrapTimeoutMs);
         Connection connection = new Connection(socket, expectedDeviceId);
         synchronized (connectionsLock) {
-            if (connections.size() >= maxConnections) throw new IOException("Too many pairing connections");
+            if (connections.size() >= maxConnections) throw new IOException("Too many protocol v2 connections");
             int count = connectionsPerIp.containsKey(connection.remoteAddress) ? connectionsPerIp.get(connection.remoteAddress) : 0;
-            if (count >= maxConnectionsPerIp) throw new IOException("Too many pairing connections from this address");
+            if (count >= maxConnectionsPerIp) throw new IOException("Too many protocol v2 connections from this address");
             connections.add(connection);
             connectionsPerIp.put(connection.remoteAddress, count + 1);
         }
@@ -263,7 +341,26 @@ final class V2LanService implements Closeable {
         Object typeValue = frame.header.opt("type");
         if (!(typeValue instanceof String)) throw new IllegalArgumentException("Pairing wire frame type is invalid");
         String type = (String) typeValue;
-        if (!V2Pairing.TYPE_OFFER.equals(type) && !V2Pairing.TYPE_CONFIRM.equals(type) && !V2Pairing.TYPE_CANCEL.equals(type)) throw new IllegalArgumentException("This service only accepts pairing control frames");
+        if (V2TransferMessage.TYPE_MANIFEST.equals(type)) {
+            if (transferHandler == null) {
+                throw new IllegalArgumentException("This service only accepts pairing control frames");
+            }
+            synchronized (connection) {
+                if (connection.transferManifestDispatched || binding.pairingId != null || binding.remoteDeviceId != null) {
+                    throw new IllegalArgumentException("Transfer manifest must be the first and only bootstrap frame");
+                }
+                connection.transferManifestDispatched = true;
+            }
+            transferHandler.onManifestFrame(frame, connection);
+            synchronized (connection) {
+                if (!connection.detached && !connection.closed) connection.close();
+            }
+            return;
+        }
+        if (connection.transferManifestDispatched || (!V2Pairing.TYPE_OFFER.equals(type)
+            && !V2Pairing.TYPE_CONFIRM.equals(type) && !V2Pairing.TYPE_CANCEL.equals(type))) {
+            throw new IllegalArgumentException("This service only accepts pairing control frames");
+        }
         V2ControlMessage.Message message = V2ControlMessage.decode(type, frame.payload);
         if (V2Pairing.TYPE_OFFER.equals(type)) {
             assertOrBind(binding, message.offer.pairingId, message.offer.identity.deviceId);
@@ -275,6 +372,19 @@ final class V2LanService implements Closeable {
         } else {
             assertBound(binding, message.cancellation.pairingId, message.cancellation.deviceId);
             controlHandler.onCancellation(message.cancellation, message.signature, connection);
+        }
+    }
+
+    private static void assertTransferManifestIsIsolated(List<V2WireFrame.Frame> frames, int bufferedBytes) {
+        boolean containsManifest = false;
+        for (V2WireFrame.Frame frame : frames) {
+            if (V2TransferMessage.TYPE_MANIFEST.equals(frame.header.opt("type"))) {
+                containsManifest = true;
+                break;
+            }
+        }
+        if (containsManifest && (frames.size() != 1 || bufferedBytes != 0)) {
+            throw new IllegalArgumentException("Transfer manifest must be the first and only bootstrap frame");
         }
     }
 

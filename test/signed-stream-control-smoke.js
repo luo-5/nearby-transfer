@@ -9,6 +9,8 @@ const authFixture = require('./fixtures/protocol-v2-transfer-auth.json');
 
 const NOW = 1760000000000;
 const TASK_ID = 'AQIDBAUGBwgJCgsMDQ4PEA';
+const SESSION_ID = 'EBESExQVFhcYGRobHB0eHw';
+const OTHER_SESSION_ID = 'ICEiIyQlJicoKSorLC0uLw';
 
 function main() {
   testSharedCrossPlatformVector();
@@ -22,7 +24,7 @@ function main() {
 }
 
 function testSharedCrossPlatformVector() {
-  const { sender, receiver, streamControl, taskId, validationNow } = authFixture;
+  const { sender, receiver, streamControl, taskId, sessionId, validationNow } = authFixture;
   assert.strictEqual(
     crypto.createHash('sha256').update(sender.signingPublicKey).digest('hex').slice(0, 16),
     sender.deviceId
@@ -36,6 +38,7 @@ function testSharedCrossPlatformVector() {
     localDevice: sender,
     remotePeer: receiver,
     taskId,
+    sessionId,
     now: () => validationNow
   });
   assert.strictEqual(
@@ -47,6 +50,7 @@ function testSharedCrossPlatformVector() {
     localDevice: receiver,
     remotePeer: sender,
     taskId,
+    sessionId,
     now: () => validationNow
   });
   const decoded = receiverCodec.decodeControl(Buffer.from(streamControl.canonicalSigned, 'utf8'));
@@ -143,6 +147,7 @@ function testTamperingAndWrongBindings() {
       localDevice: right,
       remotePeer: left,
       taskId: 'ERITFBUWFxgZGhscHR4fIA',
+      sessionId: SESSION_ID,
       now: () => NOW
     }).decodeControl(bytes),
     /task/
@@ -155,6 +160,8 @@ function testTamperingAndWrongBindings() {
   assert.throws(() => codec(right, left).decodeControl(wrongPeer), /identities/);
   const wrongTask = signedWire(left, { taskId: 'ERITFBUWFxgZGhscHR4fIA', toDeviceId: right.deviceId });
   assert.throws(() => codec(right, left).decodeControl(wrongTask), /task/);
+  const wrongSession = signedWire(left, { sessionId: OTHER_SESSION_ID, toDeviceId: right.deviceId });
+  assert.throws(() => codec(right, left).decodeControl(wrongSession), /session/);
 
   const directionBound = codec(right, left);
   directionBound.encodeControl(core('stream-hello', right, left, 'receive'));
@@ -174,8 +181,27 @@ function testTimeBounds() {
   const left = createDevice('8888888888888888');
   const right = createDevice('9999999999999999');
   assert.throws(
-    () => createSignedStreamControlCodec({ localDevice: left, remotePeer: right, taskId: TASK_ID, ttlMs: 300001 }),
+    () => createSignedStreamControlCodec({
+      localDevice: left,
+      remotePeer: right,
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      ttlMs: 300001
+    }),
     /TTL/
+  );
+  assert.throws(
+    () => createSignedStreamControlCodec({ localDevice: left, remotePeer: right, taskId: TASK_ID }),
+    /session ID/i
+  );
+  assert.throws(
+    () => createSignedStreamControlCodec({
+      localDevice: left,
+      remotePeer: right,
+      taskId: TASK_ID,
+      sessionId: `${SESSION_ID}=`
+    }),
+    /session ID/i
   );
 
   const expired = signedWire(left, {
@@ -270,6 +296,7 @@ function codec(localDevice, remotePeer) {
     localDevice,
     remotePeer,
     taskId: TASK_ID,
+    sessionId: SESSION_ID,
     now: () => NOW
   });
 }
@@ -305,6 +332,7 @@ function signedWire(device, overrides = {}) {
     command: 'stream-hello',
     controlProtocol: 1,
     taskId: TASK_ID,
+    sessionId: SESSION_ID,
     fromDeviceId: device.deviceId,
     toDeviceId: 'ffffffffffffffff',
     direction: 'send',

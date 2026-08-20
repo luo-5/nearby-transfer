@@ -7,6 +7,7 @@ const {
   MAX_CONTROL_MESSAGE_BYTES,
   MAX_MESSAGE_TTL_MS,
   MAX_RESUME_ENTRIES,
+  SESSION_ID_BYTES,
   TYPE_TRANSFER_COMPLETE,
   TYPE_TRANSFER_DECISION,
   TYPE_TRANSFER_MANIFEST,
@@ -76,6 +77,13 @@ function testStrictCanonicalJsonAndFieldWhitelists() {
     /missing receiverDeviceId/
   );
 
+  const missingSessionId = clone(vector.message);
+  delete missingSessionId.sessionId;
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_MANIFEST, missingSessionId, { now: fixture.validationNow }),
+    /missing sessionId/
+  );
+
   const unknownManifest = clone(vector.message);
   unknownManifest.manifest.extra = true;
   assert.throws(
@@ -92,11 +100,26 @@ function testStrictCanonicalJsonAndFieldWhitelists() {
 }
 
 function testCanonicalIdentifiersKeysHashesAndSignatures() {
+  assert.strictEqual(SESSION_ID_BYTES, 16);
   const manifest = clone(fixture.vectors.transferManifest.message);
   manifest.senderEphemeralPublicKey += '=';
   assert.throws(
     () => validateTransferMessage(TYPE_TRANSFER_MANIFEST, manifest, { now: fixture.validationNow }),
     /base64url/
+  );
+
+  const paddedSessionId = clone(fixture.vectors.transferManifest.message);
+  paddedSessionId.sessionId += '=';
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_MANIFEST, paddedSessionId, { now: fixture.validationNow }),
+    /session ID/i
+  );
+
+  const shortSessionId = clone(fixture.vectors.transferDecision.message);
+  shortSessionId.sessionId = Buffer.alloc(15).toString('base64url');
+  assert.throws(
+    () => validateTransferMessage(TYPE_TRANSFER_DECISION, shortSessionId, { now: fixture.validationNow }),
+    /16 bytes/
   );
 
   const decision = clone(fixture.vectors.transferDecision.message);

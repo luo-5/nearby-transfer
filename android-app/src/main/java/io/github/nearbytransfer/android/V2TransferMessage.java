@@ -75,14 +75,16 @@ final class V2TransferMessage {
 
     static final class ManifestEnvelope extends Message {
         final JSONObject manifest;
+        final String sessionId;
         final String senderDeviceId;
         final String receiverDeviceId;
         final String senderEphemeralPublicKey;
 
-        ManifestEnvelope(JSONObject manifest, String senderDeviceId, String receiverDeviceId,
+        ManifestEnvelope(JSONObject manifest, String sessionId, String senderDeviceId, String receiverDeviceId,
                          String senderEphemeralPublicKey, long issuedAt, long expiresAt, String signature) {
             super(TYPE_MANIFEST, issuedAt, expiresAt, signature);
             this.manifest = manifest;
+            this.sessionId = sessionId;
             this.senderDeviceId = senderDeviceId;
             this.receiverDeviceId = receiverDeviceId;
             this.senderEphemeralPublicKey = senderEphemeralPublicKey;
@@ -91,6 +93,7 @@ final class V2TransferMessage {
         @Override JSONObject toJson() throws Exception {
             JSONObject json = baseEnvelope(type);
             json.put("manifest", manifest);
+            json.put("sessionId", sessionId);
             json.put("senderDeviceId", senderDeviceId);
             json.put("receiverDeviceId", receiverDeviceId);
             json.put("senderEphemeralPublicKey", senderEphemeralPublicKey);
@@ -103,14 +106,16 @@ final class V2TransferMessage {
 
     static final class Decision extends Message {
         final String taskId;
+        final String sessionId;
         final String senderDeviceId;
         final String receiverDeviceId;
         final String decision;
 
-        Decision(String taskId, String senderDeviceId, String receiverDeviceId, String decision,
+        Decision(String taskId, String sessionId, String senderDeviceId, String receiverDeviceId, String decision,
                  long issuedAt, long expiresAt, String signature) {
             super(TYPE_DECISION, issuedAt, expiresAt, signature);
             this.taskId = taskId;
+            this.sessionId = sessionId;
             this.senderDeviceId = senderDeviceId;
             this.receiverDeviceId = receiverDeviceId;
             this.decision = decision;
@@ -119,6 +124,7 @@ final class V2TransferMessage {
         @Override JSONObject toJson() throws Exception {
             JSONObject json = baseEnvelope(type);
             json.put("taskId", taskId);
+            json.put("sessionId", sessionId);
             json.put("senderDeviceId", senderDeviceId);
             json.put("receiverDeviceId", receiverDeviceId);
             json.put("decision", decision);
@@ -391,7 +397,7 @@ final class V2TransferMessage {
 
     private static ManifestEnvelope manifestFromJson(JSONObject json, long now) throws Exception {
         assertExactKeys(json, Arrays.asList(
-            "app", "protocolVersion", "type", "manifest", "senderDeviceId", "receiverDeviceId",
+            "app", "protocolVersion", "type", "manifest", "sessionId", "senderDeviceId", "receiverDeviceId",
             "senderEphemeralPublicKey", "issuedAt", "expiresAt", "signature"
         ), "Transfer manifest envelope");
         assertProtocolEnvelope(json, TYPE_MANIFEST, "Transfer manifest envelope");
@@ -400,6 +406,8 @@ final class V2TransferMessage {
             throw new IllegalArgumentException("Transfer manifest envelope manifest must be an object");
         }
         JSONObject manifest = normalizeManifest((JSONObject) manifestValue);
+        String sessionId = requiredString(json, "sessionId", "Transfer manifest envelope");
+        assertCanonicalBase64Url(sessionId, 16, "Transfer session ID");
         String sender = requiredString(json, "senderDeviceId", "Transfer manifest envelope");
         String receiver = requiredString(json, "receiverDeviceId", "Transfer manifest envelope");
         assertRoute(sender, receiver);
@@ -410,17 +418,19 @@ final class V2TransferMessage {
         assertTimeWindow(issuedAt, expiresAt, now);
         String signature = requiredString(json, "signature", "Transfer manifest envelope");
         assertCanonicalBase64Url(signature, 64, "Transfer message signature");
-        return new ManifestEnvelope(manifest, sender, receiver, key, issuedAt, expiresAt, signature);
+        return new ManifestEnvelope(manifest, sessionId, sender, receiver, key, issuedAt, expiresAt, signature);
     }
 
     private static Decision decisionFromJson(JSONObject json, long now) throws Exception {
         assertExactKeys(json, Arrays.asList(
-            "app", "protocolVersion", "type", "taskId", "senderDeviceId", "receiverDeviceId",
+            "app", "protocolVersion", "type", "taskId", "sessionId", "senderDeviceId", "receiverDeviceId",
             "decision", "issuedAt", "expiresAt", "signature"
         ), "Transfer decision");
         assertProtocolEnvelope(json, TYPE_DECISION, "Transfer decision");
         String taskId = requiredString(json, "taskId", "Transfer decision");
         assertTaskId(taskId);
+        String sessionId = requiredString(json, "sessionId", "Transfer decision");
+        assertCanonicalBase64Url(sessionId, 16, "Transfer session ID");
         String sender = requiredString(json, "senderDeviceId", "Transfer decision");
         String receiver = requiredString(json, "receiverDeviceId", "Transfer decision");
         assertRoute(sender, receiver);
@@ -433,7 +443,7 @@ final class V2TransferMessage {
         assertTimeWindow(issuedAt, expiresAt, now);
         String signature = requiredString(json, "signature", "Transfer decision");
         assertCanonicalBase64Url(signature, 64, "Transfer message signature");
-        return new Decision(taskId, sender, receiver, decision, issuedAt, expiresAt, signature);
+        return new Decision(taskId, sessionId, sender, receiver, decision, issuedAt, expiresAt, signature);
     }
 
     private static Complete completeFromJson(JSONObject json, long now) throws Exception {

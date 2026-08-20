@@ -1,5 +1,5 @@
 {
-  "fixtureVersion": 1,
+  "fixtureVersion": 2,
   "validationNow": 1760000001000,
   "taskId": "AQIDBAUGBwgJCgsMDQ4PEA",
   "sender": {
@@ -21,7 +21,7 @@
       "toPeerId": "428997b2c1f7c6ec",
       "direction": "send"
     },
-    "canonicalSigned": "{\"app\":\"nearby-transfer\",\"command\":\"stream-hello\",\"controlProtocol\":1,\"direction\":\"send\",\"expiresAt\":1760000031000,\"fromDeviceId\":\"696d52f50efd19bf\",\"issuedAt\":1760000001000,\"protocolVersion\":2,\"sequence\":0,\"signature\":\"6SlxDNp2JByCJ30UND_F5Z29g24v7m_ASoJaGeEKAOhiUD8Ng2pJHIcyplFVFy7cfiJWe2ew1GuBanNgTVuPCQ\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"toDeviceId\":\"428997b2c1f7c6ec\",\"type\":\"transfer-stream-control\"}"
+    "canonicalSigned": "{\"app\":\"nearby-transfer\",\"command\":\"stream-hello\",\"controlProtocol\":1,\"direction\":\"send\",\"expiresAt\":1760000031000,\"fromDeviceId\":\"696d52f50efd19bf\",\"issuedAt\":1760000001000,\"protocolVersion\":2,\"sequence\":0,\"sessionId\":\"EBESExQVFhcYGRobHB0eHw\",\"signature\":\"2zCK0BrdTXUiMYO1tvQ3WcRTiktl7bJo371bo-l-5Cc_KVuo2Agw-wfDOYngvQ3WEGQGk6VNYPMHMdkN3xLKBA\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"toDeviceId\":\"428997b2c1f7c6ec\",\"type\":\"transfer-stream-control\"}"
   },
   "transferDecision": {
     "type": "transfer-decision",
@@ -34,8 +34,10 @@
       "receiverDeviceId": "696d52f50efd19bf",
       "decision": "accepted",
       "issuedAt": 1760000001000,
-      "expiresAt": 1760000031000
+      "expiresAt": 1760000031000,
+      "sessionId": "EBESExQVFhcYGRobHB0eHw"
     },
-    "canonicalSigned": "{\"app\":\"nearby-transfer\",\"decision\":\"accepted\",\"expiresAt\":1760000031000,\"issuedAt\":1760000001000,\"protocolVersion\":2,\"receiverDeviceId\":\"696d52f50efd19bf\",\"senderDeviceId\":\"428997b2c1f7c6ec\",\"signature\":\"lZWdewg-Fz5-0LvA8sGJtMU7KBd5CbL7XkngUxWdyEdP1uFAdvjQCAcdjH1ISJ1z0mwCSTXCIzMLOMNujYfyBQ\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-decision\"}"
-  }
+    "canonicalSigned": "{\"app\":\"nearby-transfer\",\"decision\":\"accepted\",\"expiresAt\":1760000031000,\"issuedAt\":1760000001000,\"protocolVersion\":2,\"receiverDeviceId\":\"696d52f50efd19bf\",\"senderDeviceId\":\"428997b2c1f7c6ec\",\"sessionId\":\"EBESExQVFhcYGRobHB0eHw\",\"signature\":\"A-TMtKRSeaIOpkOcRp3CnYV9uN4lNNt_N54d6RVzsKxKsWAcLzJmHC5g2eDdzWs0yKeI3k-aNC69WYRyOc1EAA\",\"taskId\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"type\":\"transfer-decision\"}"
+  },
+  "sessionId": "EBESExQVFhcYGRobHB0eHw"
 }
