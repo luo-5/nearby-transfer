@@ -20,6 +20,7 @@ const MESSAGE_TYPES = Object.freeze({
   TRANSFER_PROGRESS: 'transfer-progress',
   TRANSFER_CHUNK: 'transfer-chunk',
   TRANSFER_COMPLETE: 'transfer-complete',
+  TRANSFER_STREAM_CONTROL: 'transfer-stream-control',
   LIBRARY_SESSION: 'library-session'
 });
 
