@@ -142,6 +142,7 @@ async function sendFile(options) {
     }
 
     if (!decision.accepted) {
+      const rejectReason = decision.error || 'Receiver rejected the transfer';
       onTransferEvent({
         transferId,
         direction: 'send',
@@ -149,9 +150,10 @@ async function sendFile(options) {
         peer,
         file,
         bytes: 0,
-        total: stat.size
+        total: stat.size,
+        error: rejectReason
       });
-      throw new TransferRejectedError('Receiver rejected the transfer');
+      throw new TransferRejectedError(rejectReason);
     }
 
     const shouldEmitProgress = createProgressLimiter();

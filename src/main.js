@@ -27,6 +27,8 @@ let desktopPairingApi = null;
 let desktopLibraryService = null;
 let v2LanService = null;
 let saveDirectory = null;
+let selectedFilePath = null;
+let selectedFilePaths = [];
 const activeTransferControllers = new Map();
 process.on('uncaughtException', (err) => {
   try {
@@ -136,30 +138,106 @@ ipcMain.handle('refresh-peers', () => {
 ipcMain.handle('choose-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '选择要发送的文件',
-    properties: ['openFile']
+    properties: ['openFile', 'multiSelections']
   });
   if (result.canceled || result.filePaths.length === 0) {
     return { ok: false, cancelled: true };
   }
 
-  const description = await describeFileForRenderer(result.filePaths[0]);
-  if (description.ok) {
-    selectedFilePath = description.file.path;
-    return publicSelectedFileResult(description);
+  const validFiles = [];
+  let totalSize = 0;
+  for (const fp of result.filePaths) {
+    try {
+      const stat = await fs.promises.stat(fp);
+      if (stat.isFile()) {
+        validFiles.push({ path: fp, name: path.basename(fp), size: stat.size });
+        totalSize += stat.size;
+      }
+    } catch (_) {}
   }
-  return description;
+  if (validFiles.length === 0) {
+    return { ok: false, error: '未找到有效文件' };
+  }
+
+  selectedFilePaths = validFiles.map(f => f.path);
+  selectedFilePath = selectedFilePaths[0];
+  if (validFiles.length === 1) {
+    return {
+      ok: true,
+      file: { name: validFiles[0].name, size: validFiles[0].size, count: 1 }
+    };
+  }
+  return {
+    ok: true,
+    file: {
+      name: `已选择 ${validFiles.length} 个文件 (${validFiles[0].name} 等)`,
+      size: totalSize,
+      count: validFiles.length
+    }
+  };
+});
+
+ipcMain.handle('select-dropped-files', async (_event, filePaths) => {
+  if (!Array.isArray(filePaths) || filePaths.length === 0) {
+    return { ok: false, error: '未选择任何文件' };
+  }
+  const validFiles = [];
+  let totalSize = 0;
+  for (const fp of filePaths) {
+    try {
+      const stat = await fs.promises.stat(fp);
+      if (stat.isFile()) {
+        validFiles.push({ path: fp, name: path.basename(fp), size: stat.size });
+        totalSize += stat.size;
+      }
+    } catch (_) {}
+  }
+  if (validFiles.length === 0) {
+    return { ok: false, error: '所选路径中未包含有效文件' };
+  }
+  selectedFilePaths = validFiles.map(f => f.path);
+  selectedFilePath = selectedFilePaths[0];
+  if (validFiles.length === 1) {
+    return {
+      ok: true,
+      file: { name: validFiles[0].name, size: validFiles[0].size, count: 1 }
+    };
+  }
+  return {
+    ok: true,
+    file: {
+      name: `已选择 ${validFiles.length} 个文件 (${validFiles[0].name} 等)`,
+      size: totalSize,
+      count: validFiles.length
+    }
+  };
 });
 
 ipcMain.handle('select-dropped-file', async (_event, filePath) => {
+  if (!filePath) return { ok: false, error: '无效文件路径' };
   const description = await describeFileForRenderer(filePath);
   if (description.ok) {
     selectedFilePath = description.file.path;
+    selectedFilePaths = [selectedFilePath];
     return publicSelectedFileResult(description);
   }
   return description;
 });
 
-ipcMain.handle('send-selected-file-to-peer', async (_event, deviceId) => sendFileToPeer(deviceId, selectedFilePath));
+ipcMain.handle('send-selected-file-to-peer', async (_event, deviceId) => {
+  if (!selectedFilePaths || selectedFilePaths.length === 0) {
+    if (selectedFilePath) selectedFilePaths = [selectedFilePath];
+    else return { ok: false, error: '请先选择文件' };
+  }
+  let lastResult = { ok: true };
+  for (const fp of selectedFilePaths) {
+    lastResult = await sendFileToPeer(deviceId, fp);
+    if (!lastResult.ok) {
+      break;
+    }
+  }
+  return lastResult;
+});
 
 ipcMain.handle('cancel-transfer', async (_event, transferId) => {
   let handled = false;

@@ -245,12 +245,19 @@
       "type": "UX_AND_EDGE_CASE_FIX",
       "description": "Fixed essential UX and corner-case flaws across Desktop and Android: 1) Implemented receiver-side transfer cancellation in TransferServer.js with active incoming request destruction on user abort; 2) Added [🗑 清除已完成] button in Desktop renderer to batch clean completed/failed/cancelled history records; 3) Implemented Android system hardware/gesture onBackPressed navigation: automatically navigating up NAS directory hierarchy if inside a subfolder, switching back to Transfer tab if on another page, and requiring double-press within 2 seconds to exit the app; 4) Added AtomicBoolean cancellation and pause signals to WebDAV downloads and uploads in WebDavClient.java and MainActivity.java so user can pause and cancel NAS transfers in real-time.",
       "rationale": "Addresses foundational usability and edge-case gaps, ensuring responsive user control and standard mobile navigation behavior."
+    },
+    {
+      "id": "CHANGE-022",
+      "timestamp": "2026-08-21T13:03:21.803Z",
+      "type": "ROBUSTNESS_AND_FEATURE",
+      "description": "Executed comprehensive full-stack robustness enhancements: 1) Added free disk space pre-checks (ENOSPC prevention) in Node.js TransferServer.js via fs.promises.statfs and Android MainActivity.java via StatFs to reject transfers before disk full crashes; 2) Implemented Android TransferForegroundService to keep transfers alive during screen lock/background with real-time notification progress bar; 3) Added dynamic network interface change detection and multicast auto-rebind in Discovery.js; 4) Added desktop multi-file drag-and-drop and sequential batch transfer queue support in Electron main, preload, and renderer layers; 5) Added automated test test/disk-space-precheck-smoke.js with 100% test pass across all 35 desktop test suites and 301 Android unit tests.",
+      "rationale": "Addresses critical real-world edge cases: preventing catastrophic disk-full crashes, avoiding OEM background process killing, supporting multi-NIC hot reloads, and enabling multi-file transfer workflows."
     }
   ],
   "verification_results": {
     "desktop_tests": {
-      "total_suites": 34,
-      "passed": 34,
+      "total_suites": 35,
+      "passed": 35,
       "failed": 0,
       "pass_rate": "100%"
     },
@@ -307,6 +314,12 @@
       "stream_pause_resume": "PASSED",
       "electron_ipc_controls": "PASSED",
       "android_ui_controls": "PASSED"
+    },
+    "advanced_robustness": {
+      "disk_space_precheck": "PASSED",
+      "android_foreground_service": "PASSED",
+      "multi_nic_hot_reload": "PASSED",
+      "multi_file_batch_queue": "PASSED"
     }
   },
   "security_audit": {

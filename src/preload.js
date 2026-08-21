@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('lanTransfer', {
   refreshPeers: () => ipcRenderer.invoke('refresh-peers'),
   chooseFile: () => ipcRenderer.invoke('choose-file'),
   selectDroppedFile: (file) => ipcRenderer.invoke('select-dropped-file', webUtils.getPathForFile(file)),
+  selectDroppedFiles: (files) => ipcRenderer.invoke('select-dropped-files', (files || []).map(f => webUtils.getPathForFile(f)).filter(Boolean)),
   sendSelectedFileToPeer: (deviceId) => ipcRenderer.invoke('send-selected-file-to-peer', deviceId),
   chooseAndSend: (deviceId) => ipcRenderer.invoke('choose-and-send', deviceId),
   cancelTransfer: (transferId) => ipcRenderer.invoke('cancel-transfer', transferId),

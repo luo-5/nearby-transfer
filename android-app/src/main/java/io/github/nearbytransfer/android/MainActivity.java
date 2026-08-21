@@ -1588,6 +1588,18 @@ public class MainActivity extends Activity {
         if (!nearbyDir.exists()) nearbyDir.mkdirs();
         File destFile = new File(nearbyDir, item.name);
 
+        try {
+            android.os.StatFs stat = new android.os.StatFs(nearbyDir.getPath());
+            long availableBytes = stat.getAvailableBytes();
+            long neededBytes = item.size + (50 * 1024 * 1024); // 50MB buffer
+            if (item.size > 0 && availableBytes < neededBytes) {
+                String error = "手机存储空间不足 (需要 " + formatBytes(item.size) + "，剩余 " + formatBytes(availableBytes) + ")";
+                Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                appendLog(error);
+                return;
+            }
+        } catch (Exception ignored) {}
+
         transferActive = true;
         currentTransferCanceled.set(false);
         currentTransferPaused.set(false);
@@ -1605,6 +1617,7 @@ public class MainActivity extends Activity {
         progressTitleText.setText("正在从电脑下载文件");
         progressDetailText.setText(item.name);
         setProgressColor(COLOR_PRIMARY);
+        io.github.nearbytransfer.android.service.TransferForegroundService.startTransfer(this, item.name, "正在从电脑下载文件", 0, "-");
 
         executor.execute(() -> {
             try {
@@ -1619,6 +1632,7 @@ public class MainActivity extends Activity {
                         transferProgress.setProgress(percent * 10);
                         progressPercentText.setText(percent + "%");
                         progressDetailText.setText(item.name + "\n" + formatBytes(transferred) + " / " + formatBytes(total));
+                        io.github.nearbytransfer.android.service.TransferForegroundService.updateProgress(this, item.name, "正在从电脑下载文件", percent, "-");
                     }),
                     currentTransferCanceled,
                     currentTransferPaused
@@ -1646,6 +1660,7 @@ public class MainActivity extends Activity {
                     transferActive = false;
                     if (pauseTransferButton != null) pauseTransferButton.setVisibility(View.GONE);
                     if (cancelTransferButton != null) cancelTransferButton.setVisibility(View.GONE);
+                    io.github.nearbytransfer.android.service.TransferForegroundService.stopTransfer(this);
                 });
             }
         });
@@ -1678,6 +1693,7 @@ public class MainActivity extends Activity {
         progressTitleText.setText("正在上传文件至电脑");
         progressDetailText.setText(file.name);
         setProgressColor(COLOR_PRIMARY);
+        io.github.nearbytransfer.android.service.TransferForegroundService.startTransfer(this, file.name, "正在上传文件至电脑", 0, "-");
 
         executor.execute(() -> {
             try {
@@ -1704,6 +1720,7 @@ public class MainActivity extends Activity {
                             transferProgress.setProgress(percent * 10);
                             progressPercentText.setText(percent + "%");
                             progressDetailText.setText(file.name + "\n" + formatBytes(transferred) + " / " + formatBytes(total));
+                            io.github.nearbytransfer.android.service.TransferForegroundService.updateProgress(this, file.name, "正在上传文件至电脑", percent, "-");
                         }),
                         currentTransferCanceled,
                         currentTransferPaused
@@ -1734,6 +1751,7 @@ public class MainActivity extends Activity {
                     transferActive = false;
                     if (pauseTransferButton != null) pauseTransferButton.setVisibility(View.GONE);
                     if (cancelTransferButton != null) cancelTransferButton.setVisibility(View.GONE);
+                    io.github.nearbytransfer.android.service.TransferForegroundService.stopTransfer(this);
                 });
             }
         });
@@ -1882,6 +1900,8 @@ public class MainActivity extends Activity {
 
         PeerDevice peer = selectedPeer;
         SelectedFile file = selectedFile;
+        io.github.nearbytransfer.android.service.TransferForegroundService.startTransfer(this, file.name, "正在发送文件至 " + peer.deviceName, 0, "-");
+
         executor.execute(() -> {
             String finalStatus = "发送已结束。";
             try {
@@ -1903,6 +1923,7 @@ public class MainActivity extends Activity {
                     transferActive = false;
                     if (pauseTransferButton != null) pauseTransferButton.setVisibility(View.GONE);
                     if (cancelTransferButton != null) cancelTransferButton.setVisibility(View.GONE);
+                    io.github.nearbytransfer.android.service.TransferForegroundService.stopTransfer(this);
                     renderSendState();
                     statusText.setText(statusAfterTransfer);
                 });
@@ -2360,6 +2381,18 @@ public class MainActivity extends Activity {
         }
 
         statusText.setText(progressTitle(event));
+
+        if (transferActive) {
+            io.github.nearbytransfer.android.service.TransferForegroundService.updateProgress(
+                this,
+                event.fileName,
+                progressTitle(event),
+                percent,
+                formatRate(speed)
+            );
+        } else {
+            io.github.nearbytransfer.android.service.TransferForegroundService.stopTransfer(this);
+        }
     }
 
     private String progressTitle(TransferEvent event) {

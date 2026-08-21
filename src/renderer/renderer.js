@@ -224,15 +224,16 @@ for (const eventName of ['dragleave', 'drop']) {
 document.addEventListener('drop', async (event) => {
   const files = Array.from(event.dataTransfer.files || []);
   if (files.length === 0) {
-    setStatus('请从文件管理器拖入一个文件。');
-    return;
-  }
-  if (files.length > 1) {
-    setStatus('一次只能发送一个文件。');
+    setStatus('请从文件管理器拖入文件。');
     return;
   }
 
-  const result = await window.lanTransfer.selectDroppedFile(files[0]);
+  let result;
+  if (files.length === 1) {
+    result = await window.lanTransfer.selectDroppedFile(files[0]);
+  } else {
+    result = await window.lanTransfer.selectDroppedFiles(files);
+  }
   applySelectedFile(result);
 });
 

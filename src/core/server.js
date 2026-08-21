@@ -170,6 +170,21 @@ class TransferServer {
         savePath
       };
 
+      const diskSpace = await checkAvailableDiskSpace(this.saveDirectory);
+      const MIN_SAFETY_BUFFER = 50 * 1024 * 1024; // 50MB
+      if (diskSpace !== null && diskSpace < payload.file.size + MIN_SAFETY_BUFFER) {
+        const errorMsg = `接收端磁盘可用空间不足 (需要 ${formatBytes(payload.file.size)}，可用 ${formatBytes(diskSpace)})`;
+        this.onTransferEvent(Object.assign({}, incoming, {
+          direction: 'receive',
+          status: 'rejected',
+          error: errorMsg,
+          bytes: 0,
+          total: incoming.file.size
+        }));
+        respondJson(response, 507, { accepted: false, error: errorMsg });
+        return;
+      }
+
       const decision = await this.onIncomingRequest(incoming);
       if (!decision || !decision.accepted) {
         this.onTransferEvent(Object.assign({}, incoming, {
@@ -468,6 +483,25 @@ function respondJson(response, statusCode, payload) {
   response.statusCode = statusCode;
   response.setHeader('content-type', 'application/json; charset=utf-8');
   response.end(JSON.stringify(payload));
+}
+
+async function checkAvailableDiskSpace(targetDirectory) {
+  if (typeof fs.promises.statfs === 'function') {
+    try {
+      const stats = await fs.promises.statfs(targetDirectory);
+      return Number(stats.bavail) * Number(stats.bsize);
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
 module.exports = TransferServer;

@@ -59,10 +59,20 @@ class Discovery extends EventEmitter {
     }
   }
 
+  _checkAndReconfigureInterfaces() {
+    const currentList = multicastInterfaces();
+    const joinedSet = new Set(this.multicastInterfaces);
+    const isDifferent = currentList.length !== this.multicastInterfaces.length || currentList.some(ip => !joinedSet.has(ip));
+    if (isDifferent) {
+      this._configureMulticast();
+    }
+  }
+
   announce() {
     if (!this.socket) {
       return;
     }
+    this._checkAndReconfigureInterfaces();
 
     const payload = Buffer.from(JSON.stringify({
       app: APP_ID,
