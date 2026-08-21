@@ -238,6 +238,13 @@
       "type": "FEATURE_AND_UX",
       "description": "Implemented full transfer lifecycle controls across Desktop and Android: 1) Added interactive [⏸ 暂停], [▶ 继续], [✕ 终止/取消], and [📁 打开所在文件夹] controls in Desktop Electron transfer cards with IPC bridge (cancel-transfer, pause-transfer, resume-transfer, open-transfer-folder); 2) Added stream-level AbortController / ClientRequest cancellation and readStream pause/resume in src/core/transfer.js; 3) Added [⏸ 暂停] and [✕ 终止] action buttons with AtomicBoolean cancellation and pause signals in Android MainActivity.java & TransferClient.java; 4) Added automated test test/transfer-controls-smoke.js verifying cancellation during active streaming, pause/resume state transitions, and 100% test suite pass across 34 desktop test suites and 301 Android Gradle unit tests.",
       "rationale": "Directly fulfills user request for real-time transfer termination and pause controls, preventing accidental data transfer and matching top open-source file transfer standards."
+    },
+    {
+      "id": "CHANGE-021",
+      "timestamp": "2026-08-21T12:13:36.291Z",
+      "type": "UX_AND_EDGE_CASE_FIX",
+      "description": "Fixed essential UX and corner-case flaws across Desktop and Android: 1) Implemented receiver-side transfer cancellation in TransferServer.js with active incoming request destruction on user abort; 2) Added [🗑 清除已完成] button in Desktop renderer to batch clean completed/failed/cancelled history records; 3) Implemented Android system hardware/gesture onBackPressed navigation: automatically navigating up NAS directory hierarchy if inside a subfolder, switching back to Transfer tab if on another page, and requiring double-press within 2 seconds to exit the app; 4) Added AtomicBoolean cancellation and pause signals to WebDAV downloads and uploads in WebDavClient.java and MainActivity.java so user can pause and cancel NAS transfers in real-time.",
+      "rationale": "Addresses foundational usability and edge-case gaps, ensuring responsive user control and standard mobile navigation behavior."
     }
   ],
   "verification_results": {

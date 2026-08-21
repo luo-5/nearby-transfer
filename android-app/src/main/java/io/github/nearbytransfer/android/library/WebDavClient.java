@@ -165,7 +165,12 @@ public class WebDavClient {
     }
 
     public static void downloadFile(String serverIp, int port, String token, String downloadUrl, File destFile, ProgressListener listener) throws Exception {
+        downloadFile(serverIp, port, token, downloadUrl, destFile, listener, null, null);
+    }
+
+    public static void downloadFile(String serverIp, int port, String token, String downloadUrl, File destFile, ProgressListener listener, java.util.concurrent.atomic.AtomicBoolean cancelSignal, java.util.concurrent.atomic.AtomicBoolean pauseSignal) throws Exception {
         HttpURLConnection conn = null;
+        File tempFile = new File(destFile.getAbsolutePath() + ".tmp");
         try {
             String fullUrl = "http://" + serverIp + ":" + port + downloadUrl;
             URL url = new URL(fullUrl);
@@ -186,13 +191,21 @@ public class WebDavClient {
                 parent.mkdirs();
             }
 
-            File tempFile = new File(destFile.getAbsolutePath() + ".tmp");
             try (InputStream in = conn.getInputStream();
                  FileOutputStream out = new FileOutputStream(tempFile)) {
                 byte[] buffer = new byte[64 * 1024];
                 long transferred = 0;
                 int read;
                 while ((read = in.read(buffer)) != -1) {
+                    if (cancelSignal != null && cancelSignal.get()) {
+                        throw new InterruptedException("用户已取消下载");
+                    }
+                    while (pauseSignal != null && pauseSignal.get()) {
+                        if (cancelSignal != null && cancelSignal.get()) {
+                            throw new InterruptedException("用户已取消下载");
+                        }
+                        Thread.sleep(100);
+                    }
                     out.write(buffer, 0, read);
                     transferred += read;
                     if (listener != null) {
@@ -208,12 +221,19 @@ public class WebDavClient {
             if (!tempFile.renameTo(destFile)) {
                 throw new IllegalStateException("无法写入目标文件：" + destFile.getName());
             }
+        } catch (Exception e) {
+            if (tempFile.exists()) tempFile.delete();
+            throw e;
         } finally {
             if (conn != null) conn.disconnect();
         }
     }
 
     public static void uploadFile(String serverIp, int port, String token, String shareId, String subPath, String fileName, InputStream inStream, long length, ProgressListener listener) throws Exception {
+        uploadFile(serverIp, port, token, shareId, subPath, fileName, inStream, length, listener, null, null);
+    }
+
+    public static void uploadFile(String serverIp, int port, String token, String shareId, String subPath, String fileName, InputStream inStream, long length, ProgressListener listener, java.util.concurrent.atomic.AtomicBoolean cancelSignal, java.util.concurrent.atomic.AtomicBoolean pauseSignal) throws Exception {
         HttpURLConnection conn = null;
         try {
             StringBuilder pathBuilder = new StringBuilder();
@@ -246,6 +266,15 @@ public class WebDavClient {
                 long transferred = 0;
                 int read;
                 while ((read = inStream.read(buffer)) != -1) {
+                    if (cancelSignal != null && cancelSignal.get()) {
+                        throw new InterruptedException("用户已取消上传");
+                    }
+                    while (pauseSignal != null && pauseSignal.get()) {
+                        if (cancelSignal != null && cancelSignal.get()) {
+                            throw new InterruptedException("用户已取消上传");
+                        }
+                        Thread.sleep(100);
+                    }
                     out.write(buffer, 0, read);
                     transferred += read;
                     if (listener != null) {

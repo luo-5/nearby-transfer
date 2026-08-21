@@ -132,8 +132,14 @@
 
       <section class="panel transfers-panel">
         <div class="panel-title-row">
-          <h2>传输记录</h2>
-          <span class="badge">实时</span>
+          <div>
+            <h2>传输记录</h2>
+            <p class="pairing-intro">实时监控传输进度，支持暂停、继续、终止和定位打开已接收文件。</p>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button id="clearCompletedTransfersButton" class="secondary" type="button" style="font-size: 0.8rem; padding: 4px 12px;">清除已完成</button>
+            <span class="badge">实时</span>
+          </div>
         </div>
         <div id="transfers" class="transfers empty">暂无传输记录。</div>
       </section>

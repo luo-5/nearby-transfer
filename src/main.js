@@ -162,12 +162,19 @@ ipcMain.handle('select-dropped-file', async (_event, filePath) => {
 ipcMain.handle('send-selected-file-to-peer', async (_event, deviceId) => sendFileToPeer(deviceId, selectedFilePath));
 
 ipcMain.handle('cancel-transfer', async (_event, transferId) => {
+  let handled = false;
   const ctrl = activeTransferControllers.get(transferId);
   if (ctrl && typeof ctrl.cancel === 'function') {
     ctrl.cancel();
     activeTransferControllers.delete(transferId);
-    return { ok: true };
+    handled = true;
   }
+  if (transferServer && typeof transferServer.cancelTransfer === 'function') {
+    if (transferServer.cancelTransfer(transferId)) {
+      handled = true;
+    }
+  }
+  if (handled) return { ok: true };
   return { ok: false, error: '未找到进行中的传输任务' };
 });
 

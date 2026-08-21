@@ -1588,6 +1588,17 @@ public class MainActivity extends Activity {
         if (!nearbyDir.exists()) nearbyDir.mkdirs();
         File destFile = new File(nearbyDir, item.name);
 
+        transferActive = true;
+        currentTransferCanceled.set(false);
+        currentTransferPaused.set(false);
+        if (pauseTransferButton != null) {
+            pauseTransferButton.setText("⏸ 暂停");
+            pauseTransferButton.setVisibility(View.VISIBLE);
+        }
+        if (cancelTransferButton != null) {
+            cancelTransferButton.setVisibility(View.VISIBLE);
+        }
+
         Toast.makeText(this, "开始下载：" + item.name, Toast.LENGTH_SHORT).show();
         appendLog("开始从 NAS 下载：" + item.name);
         progressCard.setVisibility(View.VISIBLE);
@@ -1608,7 +1619,9 @@ public class MainActivity extends Activity {
                         transferProgress.setProgress(percent * 10);
                         progressPercentText.setText(percent + "%");
                         progressDetailText.setText(item.name + "\n" + formatBytes(transferred) + " / " + formatBytes(total));
-                    })
+                    }),
+                    currentTransferCanceled,
+                    currentTransferPaused
                 );
                 runOnUiThreadIfAlive(() -> {
                     transferProgress.setProgress(1000);
@@ -1621,11 +1634,18 @@ public class MainActivity extends Activity {
                 });
             } catch (Exception e) {
                 runOnUiThreadIfAlive(() -> {
-                    progressTitleText.setText("下载失败");
+                    boolean wasCancelled = currentTransferCanceled.get();
+                    progressTitleText.setText(wasCancelled ? "下载已终止" : "下载失败");
                     setProgressColor(COLOR_DANGER);
-                    statusText.setText("下载失败：" + e.getMessage());
-                    appendLog("下载失败：" + e.getMessage());
-                    Toast.makeText(this, "下载失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                    statusText.setText(wasCancelled ? "已主动终止下载" : "下载失败：" + e.getMessage());
+                    appendLog(wasCancelled ? "用户已主动终止下载" : "下载失败：" + e.getMessage());
+                    Toast.makeText(this, wasCancelled ? "已终止下载" : "下载失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            } finally {
+                runOnUiThreadIfAlive(() -> {
+                    transferActive = false;
+                    if (pauseTransferButton != null) pauseTransferButton.setVisibility(View.GONE);
+                    if (cancelTransferButton != null) cancelTransferButton.setVisibility(View.GONE);
                 });
             }
         });
@@ -1642,6 +1662,18 @@ public class MainActivity extends Activity {
         String pathInfo = libraryCurrentSubPath.isEmpty() ? "根目录" : libraryCurrentSubPath;
         Toast.makeText(this, "开始上传至电脑 (" + pathInfo + ")：" + file.name, Toast.LENGTH_SHORT).show();
         appendLog("开始上传文件至电脑文件库 (" + pathInfo + ")：" + file.name);
+
+        transferActive = true;
+        currentTransferCanceled.set(false);
+        currentTransferPaused.set(false);
+        if (pauseTransferButton != null) {
+            pauseTransferButton.setText("⏸ 暂停");
+            pauseTransferButton.setVisibility(View.VISIBLE);
+        }
+        if (cancelTransferButton != null) {
+            cancelTransferButton.setVisibility(View.VISIBLE);
+        }
+
         progressCard.setVisibility(View.VISIBLE);
         progressTitleText.setText("正在上传文件至电脑");
         progressDetailText.setText(file.name);
@@ -1650,10 +1682,10 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             try {
                 if (libraryToken == null) {
-                    WebDavClient.SessionResult res = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
-                    if (!res.ok) throw new IllegalStateException(res.error);
-                    libraryToken = res.token;
-                    if (!res.shares.isEmpty()) libraryShareId = res.shares.get(0).id;
+                    WebDavClient.SessionResult auth = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
+                    if (!auth.ok) throw new IllegalStateException(auth.error);
+                    libraryToken = auth.token;
+                    if (!auth.shares.isEmpty()) libraryShareId = auth.shares.get(0).id;
                 }
 
                 try (InputStream in = getContentResolver().openInputStream(file.uri)) {
@@ -1672,7 +1704,9 @@ public class MainActivity extends Activity {
                             transferProgress.setProgress(percent * 10);
                             progressPercentText.setText(percent + "%");
                             progressDetailText.setText(file.name + "\n" + formatBytes(transferred) + " / " + formatBytes(total));
-                        })
+                        }),
+                        currentTransferCanceled,
+                        currentTransferPaused
                     );
                 }
 
@@ -1688,11 +1722,18 @@ public class MainActivity extends Activity {
                 });
             } catch (Exception e) {
                 runOnUiThreadIfAlive(() -> {
-                    progressTitleText.setText("上传失败");
+                    boolean wasCancelled = currentTransferCanceled.get();
+                    progressTitleText.setText(wasCancelled ? "上传已终止" : "上传失败");
                     setProgressColor(COLOR_DANGER);
-                    statusText.setText("上传失败：" + e.getMessage());
-                    appendLog("上传失败：" + e.getMessage());
-                    Toast.makeText(this, "上传失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                    statusText.setText(wasCancelled ? "已主动终止上传" : "上传失败：" + e.getMessage());
+                    appendLog(wasCancelled ? "用户已主动终止上传" : "上传失败：" + e.getMessage());
+                    Toast.makeText(this, wasCancelled ? "已终止上传" : "上传失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            } finally {
+                runOnUiThreadIfAlive(() -> {
+                    transferActive = false;
+                    if (pauseTransferButton != null) pauseTransferButton.setVisibility(View.GONE);
+                    if (cancelTransferButton != null) cancelTransferButton.setVisibility(View.GONE);
                 });
             }
         });
@@ -2439,6 +2480,27 @@ public class MainActivity extends Activity {
         tab.setSelected(selected);
         tab.setTextColor(selected ? Color.WHITE : COLOR_MUTED);
         tab.setBackground(rounded(selected ? COLOR_NAVY : Color.TRANSPARENT, dp(6)));
+    }
+
+    private long lastBackPressTime = 0;
+
+    @Override
+    public void onBackPressed() {
+        if (selectedTab == TAB_LIBRARIES && libraryCurrentSubPath != null && !libraryCurrentSubPath.isEmpty()) {
+            navigateToParentDirectory();
+            return;
+        }
+        if (selectedTab != TAB_TRANSFER) {
+            selectTab(TAB_TRANSFER);
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastBackPressTime < 2000) {
+            super.onBackPressed();
+        } else {
+            lastBackPressTime = now;
+            Toast.makeText(this, "再按一次退出附近传输", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void addSectionTitle(LinearLayout parent, String title) {

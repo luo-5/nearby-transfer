@@ -35,6 +35,7 @@ const elements = {
   peerCount: document.getElementById('peerCount'),
   peers: document.getElementById('peers'),
   transfers: document.getElementById('transfers'),
+  clearCompletedTransfersButton: document.getElementById('clearCompletedTransfersButton'),
   refreshButton: document.getElementById('refreshButton'),
   changeSaveDirectoryButton: document.getElementById('changeSaveDirectoryButton'),
   resetSaveDirectoryButton: document.getElementById('resetSaveDirectoryButton'),
@@ -144,6 +145,18 @@ window.lanTransfer.onTransferEvent((event) => {
   state.transfers.set(event.transferId, Object.assign({}, previous, event));
   renderTransfers();
 });
+
+if (elements.clearCompletedTransfersButton) {
+  elements.clearCompletedTransfersButton.addEventListener('click', () => {
+    for (const [id, t] of state.transfers.entries()) {
+      if (['completed', 'failed', 'cancelled', 'rejected'].includes(t.status)) {
+        state.transfers.delete(id);
+      }
+    }
+    renderTransfers();
+    setStatus('已清除历史传输记录。');
+  });
+}
 
 elements.refreshButton.addEventListener('click', async () => {
   const peers = await window.lanTransfer.refreshPeers();

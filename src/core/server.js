@@ -26,12 +26,25 @@ class TransferServer {
     this.server = null;
     this.port = null;
     this.pending = new Map();
+    this.activeIncoming = new Map();
     this.reservedTransferIds = new Set();
     this.requestWindows = new Map();
     this.transferRequestLimit = positiveIntegerOption(options.transferRequestLimit, TRANSFER_REQUEST_LIMIT);
     this.transferRequestWindowMs = positiveIntegerOption(options.transferRequestWindowMs, TRANSFER_REQUEST_WINDOW_MS);
     this.maxPendingTransfers = positiveIntegerOption(options.maxPendingTransfers, MAX_PENDING_TRANSFERS);
     this.cleanupTimer = null;
+  }
+
+  cancelTransfer(transferId) {
+    const active = this.activeIncoming.get(transferId);
+    if (active) {
+      try {
+        active.request.destroy(new Error('用户已主动取消接收'));
+      } catch (_) {}
+      this.activeIncoming.delete(transferId);
+      return true;
+    }
+    return false;
   }
 
   start(port) {
@@ -68,6 +81,7 @@ class TransferServer {
     }
     this.reservedTransferIds.clear();
     this.requestWindows.clear();
+    this.activeIncoming.clear();
   }
 
   setSaveDirectory(saveDirectory) {
@@ -224,6 +238,8 @@ class TransferServer {
       }
     });
 
+    this.activeIncoming.set(transferId, { request, response, tempPath });
+
     try {
       const decrypted = new DecryptFrameStream(pending.key, pending.file.sha256, pending.file.size);
       await pipeline(request, decrypted, progress, fs.createWriteStream(tempPath, {
@@ -267,6 +283,8 @@ class TransferServer {
         error: error.message
       });
       respondJson(response, 400, { ok: false, error: error.message });
+    } finally {
+      this.activeIncoming.delete(transferId);
     }
   }
 
