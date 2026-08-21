@@ -32,6 +32,13 @@ contextBridge.exposeInMainWorld('lanTransfer', {
     retry: (taskId) => ipcRenderer.invoke('v2:retry-transfer-job', taskId),
     cancel: (taskId) => ipcRenderer.invoke('v2:cancel-transfer-job', taskId)
   }),
+  library: Object.freeze({
+    getStatus: () => ipcRenderer.invoke('v2:library-get-status'),
+    listShares: () => ipcRenderer.invoke('v2:library-list-shares'),
+    chooseShareDirectory: () => ipcRenderer.invoke('v2:library-choose-share-directory'),
+    openShareDirectory: (shareId) => ipcRenderer.invoke('v2:library-open-share-directory', shareId),
+    resetShareDirectory: () => ipcRenderer.invoke('v2:library-reset-share-directory')
+  }),
   onState: (callback) => ipcRenderer.on('state', (_event, state) => callback(state)),
   onPeers: (callback) => ipcRenderer.on('peers', (_event, peers) => callback(peers)),
   onV2Peers: (callback) => ipcRenderer.on('v2-peers', (_event, peers) => callback(peers)),

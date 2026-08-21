@@ -321,8 +321,8 @@ function normalizePermissions(permissions) {
   }
   const normalized = {
     transfer: permissions.transfer !== false,
-    libraryRead: permissions.libraryRead === true,
-    libraryUpload: permissions.libraryUpload === true
+    libraryRead: permissions.libraryRead !== false,
+    libraryUpload: permissions.libraryUpload !== false
   };
   if (normalized.libraryUpload && !normalized.libraryRead) {
     throw new TypeError('Library upload permission requires library read permission');

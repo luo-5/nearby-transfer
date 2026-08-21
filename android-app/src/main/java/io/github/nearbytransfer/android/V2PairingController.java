@@ -20,6 +20,9 @@ import java.util.concurrent.Executors;
 final class V2PairingController implements Closeable {
     private static final String TAG = "NearbyTransferV2";
     private static final List<String> PAIRING_CAPABILITIES = Collections.singletonList("pairing");
+    private static final List<String> TRANSFER_CAPABILITIES = Collections.unmodifiableList(
+        java.util.Arrays.asList("pairing", "transfer")
+    );
 
     interface Listener {
         void onPeersChanged(List<V2DiscoveryService.Peer> peers);
@@ -33,6 +36,7 @@ final class V2PairingController implements Closeable {
     private final V2PairingSessionStore sessions;
     private final Listener listener;
     private final Executor callbackExecutor;
+    private final V2LanService.TransferHandler transferHandler;
     private final ExecutorService workExecutor = Executors.newSingleThreadExecutor();
     private final Object lock = new Object();
     private final Map<String, V2LanService.Connection> connectionsByPairingId = new HashMap<>();
@@ -42,11 +46,17 @@ final class V2PairingController implements Closeable {
     private boolean started;
 
     V2PairingController(Context context, DeviceConfig device, Listener listener, Executor callbackExecutor) throws Exception {
+        this(context, device, null, listener, callbackExecutor);
+    }
+
+    V2PairingController(Context context, DeviceConfig device, V2LanService.TransferHandler transferHandler,
+                        Listener listener, Executor callbackExecutor) throws Exception {
         if (context == null || device == null || listener == null || callbackExecutor == null) {
             throw new IllegalArgumentException("Context, device, listener, and callback executor are required");
         }
         this.context = context.getApplicationContext();
         this.device = device;
+        this.transferHandler = transferHandler;
         this.sessions = new V2PairingSessionStore(device);
         this.listener = listener;
         this.callbackExecutor = callbackExecutor;
@@ -55,14 +65,15 @@ final class V2PairingController implements Closeable {
     void start() throws Exception {
         synchronized (lock) {
             if (started) return;
-            V2LanService transport = new V2LanService(new TransportHandler(), new TransportListener(), callbackExecutor,
+            List<String> capabilities = transferHandler != null ? TRANSFER_CAPABILITIES : PAIRING_CAPABILITIES;
+            V2LanService transport = new V2LanService(new TransportHandler(), transferHandler, new TransportListener(), callbackExecutor,
                 V2LanService.DEFAULT_MAX_CONNECTIONS, V2LanService.DEFAULT_MAX_CONNECTIONS_PER_IP,
                 V2LanService.DEFAULT_BOOTSTRAP_TIMEOUT_MS, V2LanService.DEFAULT_MAX_BOOTSTRAP_BYTES,
                 V2LanService.DEFAULT_MAX_BOOTSTRAP_FRAMES);
             int port = transport.start(0);
             V2DiscoveryService discovery;
             try {
-                discovery = new V2DiscoveryService(context, device, port, PAIRING_CAPABILITIES,
+                discovery = new V2DiscoveryService(context, device, port, capabilities,
                     new DiscoveryListener(), this::notifyError, this::notifyStatus);
                 discovery.start();
             } catch (Exception error) {

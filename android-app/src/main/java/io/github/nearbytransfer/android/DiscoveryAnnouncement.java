@@ -58,8 +58,8 @@ final class DiscoveryAnnouncement {
 
         PublicKey signingKey = CryptoUtil.readPublicKey(signingPublicKey, "Ed25519");
         PublicKey encryptionKey = CryptoUtil.readPublicKey(encryptionPublicKey, "X25519");
-        if (!"Ed25519".equalsIgnoreCase(signingKey.getAlgorithm()) ||
-            !"X25519".equalsIgnoreCase(encryptionKey.getAlgorithm())) {
+        if ((!"Ed25519".equalsIgnoreCase(signingKey.getAlgorithm()) && !"EdDSA".equalsIgnoreCase(signingKey.getAlgorithm())) ||
+            (!"X25519".equalsIgnoreCase(encryptionKey.getAlgorithm()) && !"XDH".equalsIgnoreCase(encryptionKey.getAlgorithm()))) {
             return null;
         }
 

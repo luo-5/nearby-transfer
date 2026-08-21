@@ -306,7 +306,7 @@ function testInputValidation() {
       assert.throws(() => store.deleteTrustedPeer('ABCDEF0123456789'), /Device ID/);
       assert.throws(() => store.upsertTrustedPeer(null), /Trusted peer must be an object/);
       assert.throws(() => store.upsertTrustedPeer({ identity, unknown: true }), /Invalid trusted peer/);
-      assert.throws(() => normalizePermissions({ libraryUpload: true }), /requires library read/);
+      assert.throws(() => normalizePermissions({ libraryUpload: true, libraryRead: false }), /requires library read/);
       assert.throws(() => normalizePermissions({ unknown: true }), /Invalid peer permission/);
     });
   });

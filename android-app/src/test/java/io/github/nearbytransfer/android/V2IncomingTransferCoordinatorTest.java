@@ -395,10 +395,16 @@ public final class V2IncomingTransferCoordinatorTest {
         assertEquals(Arrays.asList("CREATE", "CANCELLED"), jobs.events);
     }
 
+    @FunctionalInterface
+    interface LegacyRuntimeHandler {
+        void start(Socket socket, V2TransferBootstrap.VerifiedManifest manifest,
+                   V2TransferPeerAccess.AuthorizedPeer peer) throws Exception;
+    }
+
     private V2IncomingTransferCoordinator coordinator(
         FakeJobs jobs,
         V2IncomingTransferCoordinator.ApprovalHandler approvals,
-        V2IncomingTransferCoordinator.RuntimeHandler runtime,
+        LegacyRuntimeHandler runtime,
         long timeoutMs
     ) {
         return coordinator(deviceId -> authorizedPeer, jobs, approvals, runtime, timeoutMs);
@@ -408,7 +414,7 @@ public final class V2IncomingTransferCoordinatorTest {
         V2IncomingTransferCoordinator.PeerLookup peers,
         FakeJobs jobs,
         V2IncomingTransferCoordinator.ApprovalHandler approvals,
-        V2IncomingTransferCoordinator.RuntimeHandler runtime,
+        LegacyRuntimeHandler runtime,
         long timeoutMs
     ) {
         return new V2IncomingTransferCoordinator(
@@ -417,7 +423,12 @@ public final class V2IncomingTransferCoordinatorTest {
             peers,
             jobs,
             approvals,
-            runtime,
+            (manifest, peer) -> new V2IncomingTransferCoordinator.PreparedRuntime() {
+                @Override public V2WireFrame.Frame createResumeFrame() { return null; }
+                @Override public void start(Socket socket) throws Exception {
+                    runtime.start(socket, manifest, peer);
+                }
+            },
             () -> NOW,
             timeoutMs
         );

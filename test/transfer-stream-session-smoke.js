@@ -352,6 +352,7 @@ async function testCancellationWhilePaused() {
   await sessions.receiver.pause();
   await assert.rejects(sessions.receiver.cancel('cancel while paused'), /cancelled/i);
   await Promise.all([settle(senderDone), settle(receiverDone)]);
+  await waitFor(() => writer.cancelled === 1 && tracker.returned === 1);
   assert.strictEqual(writer.cancelled, 1);
   assert.strictEqual(tracker.returned, 1);
   await waitFor(() => hasNoSessionListeners(pair.left) && hasNoSessionListeners(pair.right));
@@ -659,7 +660,7 @@ async function testBoundedMuxHeader() {
   Buffer.from('NTV2MUX1').copy(malicious);
   malicious.writeUInt8(1, 8);
   malicious.writeUInt8(FRAME_KIND_CHUNK, 9);
-  malicious.writeUInt32BE(0xffffffff, 12);
+    malicious.writeUInt32BE(0xffffffff, 12);
   const decoder = new StreamEnvelopeDecoder();
   await assert.rejects(decoder.push(malicious, async () => {}), /bound/i);
 }

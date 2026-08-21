@@ -3,6 +3,9 @@ package io.github.nearbytransfer.android;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -24,13 +27,21 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import io.github.nearbytransfer.android.core.data.V2TransferPeerAccess;
+import io.github.nearbytransfer.android.library.WebDavClient;
 
 import java.io.File;
+import java.io.InputStream;
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -40,9 +51,11 @@ public class MainActivity extends Activity {
     private static final int REQUEST_NEARBY_WIFI = 1002;
     private static final int REQUEST_SAVE_TREE = 1003;
     private static final int REQUEST_STORAGE_WRITE = 1004;
+    private static final int REQUEST_UPLOAD_LIBRARY = 1005;
     private static final int TAB_TRANSFER = 0;
     private static final int TAB_DEVICES = 1;
-    private static final int TAB_SETTINGS = 2;
+    private static final int TAB_LIBRARIES = 2;
+    private static final int TAB_SETTINGS = 3;
     private static final String PREFS_NAME = "nearby-transfer";
     private static final String PREF_SAVE_TREE_URI = "saveTreeUri";
 
@@ -75,6 +88,7 @@ public class MainActivity extends Activity {
     private SaveTarget saveTarget;
     private DiscoveryService discoveryService;
     private V2PairingController v2PairingController;
+    private V2IncomingTransferCoordinator v2IncomingCoordinator;
     private List<V2DiscoveryService.Peer> v2Peers = new ArrayList<>();
     private List<V2TrustedPeerPersistence.TrustedPeerSummary> trustedPeers = new ArrayList<>();
     private SelectedFile selectedFile;
@@ -97,13 +111,35 @@ public class MainActivity extends Activity {
     private LinearLayout localDetailsLayout;
     private LinearLayout transferSection;
     private LinearLayout devicesSection;
+    private LinearLayout librariesSection;
     private LinearLayout settingsSection;
     private TextView v2StatusText;
     private TextView v2SessionTitle;
     private TextView trustedPeersStatusText;
     private TextView transferTab;
     private TextView devicesTab;
+    private TextView librariesTab;
     private TextView settingsTab;
+    private TextView librariesStatusText;
+    private LinearLayout librariesItemsLayout;
+    private Button refreshLibrariesButton;
+    private Button uploadToLibraryButton;
+    private String libraryCurrentSubPath = "";
+    private List<WebDavClient.WebDavItem> rawLibraryItems = new ArrayList<>();
+    private String librarySearchQuery = "";
+    private int librarySortMode = 0; // 0: 文件夹优先+名称, 1: 最新时间, 2: 大小降序
+    private LinearLayout librariesBreadcrumbLayout;
+    private Button librariesBackButton;
+    private Button createFolderButton;
+    private android.widget.EditText librariesSearchBox;
+    private Button librariesSortButton;
+    private String libraryToken = null;
+    private String libraryServerIp = null;
+    private int libraryServerPort = 56578;
+    private String libraryShareId = "default-share";
+    private boolean libraryLoading = false;
+    private java.util.concurrent.atomic.AtomicBoolean libraryEventsCancel = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private Thread libraryEventsThread = null;
     private Button localDetailsButton;
     private Button resetSaveButton;
     private Button sendButton;
@@ -135,6 +171,9 @@ public class MainActivity extends Activity {
         if (hasRequiredCorePermissions()) {
             startCore();
         }
+        if (selectedTab == TAB_LIBRARIES) {
+            startLibraryEventsSubscription();
+        }
     }
 
     @Override
@@ -145,16 +184,16 @@ public class MainActivity extends Activity {
             if (granted) {
                 startCore();
             } else {
-                statusText.setText("未授予附近设备权限，无法搜索局域网设备。");
-                appendLog("附近设备权限未授予，无法启动发现。");
+                statusText.setText(getString(R.string.permission_nearby_missing));
+                appendLog(getString(R.string.permission_nearby_missing));
             }
         } else if (requestCode == REQUEST_STORAGE_WRITE) {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             if (granted) {
                 startCore();
             } else {
-                statusText.setText("未授予存储权限，无法保存到系统下载目录。");
-                appendLog("存储权限未授予，无法保存到公共下载目录。");
+                statusText.setText(getString(R.string.permission_storage_missing));
+                appendLog(getString(R.string.permission_storage_missing));
             }
         }
     }
@@ -166,20 +205,30 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStop() {
+        stopLibraryEventsSubscription();
+        super.onStop();
+    }
+
+    @Override
     protected void onDestroy() {
+        stopLibraryEventsSubscription();
         HttpTransferServer serverToStop;
         DiscoveryService discoveryToStop;
         V2PairingController pairingToStop;
+        V2IncomingTransferCoordinator coordinatorToStop;
         synchronized (coreLifecycleLock) {
             activityDestroyed = true;
             serverToStop = transferServer;
             discoveryToStop = discoveryService;
             pairingToStop = v2PairingController;
+            coordinatorToStop = v2IncomingCoordinator;
             transferServer = null;
             discoveryService = null;
             v2PairingController = null;
+            v2IncomingCoordinator = null;
         }
-        stopCoreServices(serverToStop, discoveryToStop, pairingToStop);
+        stopCoreServices(serverToStop, discoveryToStop, pairingToStop, coordinatorToStop);
         executor.shutdownNow();
         super.onDestroy();
     }
@@ -187,7 +236,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if ((requestCode != REQUEST_PICK_FILE && requestCode != REQUEST_SAVE_TREE) || resultCode != RESULT_OK || data == null || data.getData() == null) {
+        if ((requestCode != REQUEST_PICK_FILE && requestCode != REQUEST_SAVE_TREE && requestCode != REQUEST_UPLOAD_LIBRARY)
+            || resultCode != RESULT_OK || data == null || data.getData() == null) {
             return;
         }
 
@@ -197,6 +247,12 @@ public class MainActivity extends Activity {
         }
 
         Uri uri = data.getData();
+        if (requestCode == REQUEST_UPLOAD_LIBRARY) {
+            SelectedFile fileToUpload = describeUri(uri);
+            uploadFileToLibrary(fileToUpload);
+            return;
+        }
+
         try {
             final int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             getContentResolver().takePersistableUriPermission(uri, flags & Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -227,10 +283,12 @@ public class MainActivity extends Activity {
         appHeader.setOrientation(LinearLayout.VERTICAL);
         appHeader.setPadding(dp(16), dp(12), dp(16), dp(10));
         TextView title = text("Nearby Transfer", 26, COLOR_TEXT, Typeface.BOLD);
-        statusText = text("正在启动...", 13, COLOR_MUTED, Typeface.NORMAL);
+        statusText = text(getString(R.string.status_starting), 13, COLOR_MUTED, Typeface.NORMAL);
         statusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         statusText.setPadding(dp(12), dp(9), dp(12), dp(9));
         statusText.setBackground(roundedStroke(COLOR_SURFACE, dp(8), COLOR_BORDER, 1));
+        statusText.setMinHeight(dp(48));
+        statusText.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams statusParams = matchWrap();
         statusParams.setMargins(0, dp(8), 0, 0);
         appHeader.addView(title, matchWrap());
@@ -241,14 +299,18 @@ public class MainActivity extends Activity {
         navigation.setOrientation(LinearLayout.HORIZONTAL);
         navigation.setPadding(dp(4), dp(4), dp(4), dp(4));
         navigation.setBackground(roundedStroke(COLOR_SURFACE, dp(8), COLOR_BORDER, 1));
-        transferTab = navigationTab("传输", TAB_TRANSFER);
-        devicesTab = navigationTab("设备", TAB_DEVICES);
-        settingsTab = navigationTab("设置", TAB_SETTINGS);
-        navigation.addView(transferTab, new LinearLayout.LayoutParams(0, dp(44), 1));
-        LinearLayout.LayoutParams devicesTabParams = new LinearLayout.LayoutParams(0, dp(44), 1);
+        transferTab = navigationTab(getString(R.string.tab_transfer), TAB_TRANSFER);
+        devicesTab = navigationTab(getString(R.string.tab_devices), TAB_DEVICES);
+        librariesTab = navigationTab(getString(R.string.nav_libraries), TAB_LIBRARIES);
+        settingsTab = navigationTab(getString(R.string.tab_settings), TAB_SETTINGS);
+        navigation.addView(transferTab, new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout.LayoutParams devicesTabParams = new LinearLayout.LayoutParams(0, dp(48), 1);
         devicesTabParams.setMargins(dp(4), 0, dp(4), 0);
         navigation.addView(devicesTab, devicesTabParams);
-        navigation.addView(settingsTab, new LinearLayout.LayoutParams(0, dp(44), 1));
+        LinearLayout.LayoutParams librariesTabParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+        librariesTabParams.setMargins(0, 0, dp(4), 0);
+        navigation.addView(librariesTab, librariesTabParams);
+        navigation.addView(settingsTab, new LinearLayout.LayoutParams(0, dp(48), 1));
         LinearLayout.LayoutParams navigationParams = matchWrap();
         navigationParams.setMargins(dp(12), 0, dp(12), dp(10));
         screen.addView(navigation, navigationParams);
@@ -262,45 +324,55 @@ public class MainActivity extends Activity {
         transferSection.setOrientation(LinearLayout.VERTICAL);
         devicesSection = new LinearLayout(this);
         devicesSection.setOrientation(LinearLayout.VERTICAL);
+        librariesSection = new LinearLayout(this);
+        librariesSection.setOrientation(LinearLayout.VERTICAL);
         settingsSection = new LinearLayout(this);
         settingsSection.setOrientation(LinearLayout.VERTICAL);
         root.addView(transferSection, matchWrap());
         root.addView(devicesSection, matchWrap());
+        root.addView(librariesSection, matchWrap());
         root.addView(settingsSection, matchWrap());
 
+        // --- 传输板块 ---
         LinearLayout fileCard = card(COLOR_SURFACE);
-        addSectionTitle(fileCard, "发送文件");
+        addSectionTitle(fileCard, getString(R.string.section_send_file));
         Button chooseButton = new Button(this);
-        chooseButton.setText("选择要发送的文件");
+        chooseButton.setText(getString(R.string.btn_choose_file));
+        chooseButton.setContentDescription(getString(R.string.btn_choose_file));
         chooseButton.setAllCaps(false);
+        chooseButton.setMinHeight(dp(48));
         styleButton(chooseButton, false);
         chooseButton.setOnClickListener(v -> chooseFile());
         fileCard.addView(chooseButton, matchWrap());
 
-        selectedFileText = text("未选择文件。", 15, COLOR_TEXT, Typeface.NORMAL);
+        selectedFileText = text(getString(R.string.no_file_selected), 15, COLOR_TEXT, Typeface.NORMAL);
         selectedFileText.setMaxLines(2);
         selectedFileText.setEllipsize(TextUtils.TruncateAt.END);
         selectedFileText.setPadding(dp(12), dp(10), dp(12), dp(10));
+        selectedFileText.setMinHeight(dp(48));
+        selectedFileText.setGravity(Gravity.CENTER_VERTICAL);
         selectedFileText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
         LinearLayout.LayoutParams selectedFileParams = matchWrap();
         selectedFileParams.setMargins(0, dp(12), 0, dp(12));
         fileCard.addView(selectedFileText, selectedFileParams);
 
         sendButton = new Button(this);
-        sendButton.setText("发送到选中设备");
+        sendButton.setText(getString(R.string.btn_send_to_peer));
+        sendButton.setContentDescription(getString(R.string.btn_send_to_peer));
         sendButton.setAllCaps(false);
         sendButton.setEnabled(false);
+        sendButton.setMinHeight(dp(48));
         styleButton(sendButton, true);
         sendButton.setOnClickListener(v -> sendSelectedFile());
         transferSection.addView(fileCard, cardParams());
 
         progressCard = card(COLOR_SURFACE);
-        addSectionTitle(progressCard, "传输进度");
+        addSectionTitle(progressCard, getString(R.string.section_transfer_progress));
 
         LinearLayout progressHeader = new LinearLayout(this);
         progressHeader.setOrientation(LinearLayout.HORIZONTAL);
         progressHeader.setGravity(Gravity.CENTER_VERTICAL);
-        progressTitleText = text("暂无传输", 17, COLOR_TEXT, Typeface.BOLD);
+        progressTitleText = text(getString(R.string.no_active_transfer), 17, COLOR_TEXT, Typeface.BOLD);
         progressTitleText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         progressPercentText = pill("0%", COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
         progressHeader.addView(progressTitleText, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
@@ -315,10 +387,10 @@ public class MainActivity extends Activity {
         progressParams.setMargins(0, dp(10), 0, dp(10));
         progressCard.addView(transferProgress, progressParams);
 
-        progressDetailText = text("等待发送或接收文件。", 14, COLOR_MUTED, Typeface.NORMAL);
+        progressDetailText = text(getString(R.string.transfer_waiting), 14, COLOR_MUTED, Typeface.NORMAL);
         progressDetailText.setPadding(dp(12), dp(10), dp(12), dp(10));
         progressDetailText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
-        progressSpeedText = pill("速率 -", COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
+        progressSpeedText = pill(getString(R.string.transfer_speed_format, "-"), COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
         progressCard.addView(progressDetailText, matchWrap());
         LinearLayout.LayoutParams speedParams = wrapContent();
         speedParams.setMargins(0, dp(10), 0, 0);
@@ -326,25 +398,29 @@ public class MainActivity extends Activity {
         progressCard.setVisibility(View.GONE);
 
         LinearLayout peerCard = card(COLOR_SURFACE);
-        addSectionTitle(peerCard, "附近设备");
+        addSectionTitle(peerCard, getString(R.string.section_nearby_peers));
         Button refreshButton = new Button(this);
-        refreshButton.setText("立即刷新附近设备");
+        refreshButton.setText(getString(R.string.btn_refresh_peers));
+        refreshButton.setContentDescription(getString(R.string.btn_refresh_peers));
         refreshButton.setAllCaps(false);
+        refreshButton.setMinHeight(dp(48));
         styleButton(refreshButton, false);
         refreshButton.setOnClickListener(v -> {
             if (discoveryService != null) {
-                appendLog("正在主动搜索附近设备...");
-                statusText.setText("正在搜索附近设备...");
+                appendLog(getString(R.string.searching_peers));
+                statusText.setText(getString(R.string.searching_peers));
                 discoveryService.announce();
                 peersLayout.postDelayed(() -> {
                     peers = discoveryService.listPeers();
                     renderPeers();
                     if (!transferActive) {
-                        statusText.setText(peers.isEmpty() ? "暂未发现设备，请确认同一 Wi-Fi 且未开启 AP 隔离。" : "发现 " + peers.size() + " 台设备。");
+                        statusText.setText(peers.isEmpty()
+                            ? getString(R.string.no_peers_found)
+                            : getString(R.string.peers_found_format, peers.size()));
                     }
                 }, 2500);
             } else {
-                statusText.setText("发现服务尚未启动，正在检查权限…");
+                statusText.setText(getString(R.string.status_starting));
                 requestPermissionsThenStart();
             }
         });
@@ -354,30 +430,35 @@ public class MainActivity extends Activity {
         peersLayout.setPadding(0, dp(10), 0, 0);
         peerCard.addView(peersLayout, matchWrap());
         LinearLayout.LayoutParams sendButtonParams = matchWrap();
-        sendButtonParams.setMargins(0, dp(4), 0, 0);
+        sendButtonParams.setMargins(0, dp(8), 0, 0);
         peerCard.addView(sendButton, sendButtonParams);
         transferSection.addView(peerCard, cardParams());
         transferSection.addView(progressCard, cardParams());
 
+        // --- 设备与配对板块 ---
         LinearLayout v2Card = card(COLOR_SURFACE);
-        addSectionTitle(v2Card, "安全配对");
-        v2StatusText = text("正在启动协议 v2 安全配对…", 14, COLOR_MUTED, Typeface.NORMAL);
+        addSectionTitle(v2Card, getString(R.string.section_security_pairing));
+        v2StatusText = text(getString(R.string.v2_starting), 14, COLOR_MUTED, Typeface.NORMAL);
         v2StatusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         v2StatusText.setPadding(dp(12), dp(10), dp(12), dp(10));
+        v2StatusText.setMinHeight(dp(48));
+        v2StatusText.setGravity(Gravity.CENTER_VERTICAL);
         v2StatusText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
         v2Card.addView(v2StatusText, matchWrap());
         Button v2RefreshButton = new Button(this);
-        v2RefreshButton.setText("刷新配对与可信设备");
+        v2RefreshButton.setText(getString(R.string.btn_refresh_v2));
+        v2RefreshButton.setContentDescription(getString(R.string.btn_refresh_v2));
         v2RefreshButton.setAllCaps(false);
+        v2RefreshButton.setMinHeight(dp(48));
         styleButton(v2RefreshButton, false);
         v2RefreshButton.setOnClickListener(v -> {
             if (v2PairingController != null) {
-                v2StatusText.setText("正在发送协议 v2 发现公告…");
+                v2StatusText.setText(getString(R.string.v2_announcing));
                 v2PairingController.announceNow();
                 v2PeersLayout.postDelayed(this::renderV2Peers, 2500);
                 refreshTrustedPeers();
             } else {
-                v2StatusText.setText("安全配对服务尚未启动，正在检查权限…");
+                v2StatusText.setText(getString(R.string.status_starting));
                 requestPermissionsThenStart();
             }
         });
@@ -389,7 +470,7 @@ public class MainActivity extends Activity {
         v2PeersLayout.setPadding(0, dp(10), 0, 0);
         v2PeersLayout.setVisibility(View.GONE);
         v2Card.addView(v2PeersLayout, matchWrap());
-        v2SessionTitle = text("正在进行的配对", 15, COLOR_TEXT, Typeface.BOLD);
+        v2SessionTitle = text(getString(R.string.title_active_pairing), 15, COLOR_TEXT, Typeface.BOLD);
         LinearLayout.LayoutParams v2SessionTitleParams = matchWrap();
         v2SessionTitleParams.setMargins(0, dp(14), 0, 0);
         v2Card.addView(v2SessionTitle, v2SessionTitleParams);
@@ -401,11 +482,11 @@ public class MainActivity extends Activity {
         v2SessionTitle.setVisibility(View.GONE);
         v2SessionsLayout.setVisibility(View.GONE);
 
-        TextView trustedPeersTitle = text("可信设备", 15, COLOR_TEXT, Typeface.BOLD);
+        TextView trustedPeersTitle = text(getString(R.string.title_trusted_devices), 15, COLOR_TEXT, Typeface.BOLD);
         LinearLayout.LayoutParams trustedPeersTitleParams = matchWrap();
         trustedPeersTitleParams.setMargins(0, dp(14), 0, 0);
         v2Card.addView(trustedPeersTitle, trustedPeersTitleParams);
-        trustedPeersStatusText = text("正在读取可信设备…", 13, COLOR_MUTED, Typeface.NORMAL);
+        trustedPeersStatusText = text(getString(R.string.trusted_devices_reading), 13, COLOR_MUTED, Typeface.NORMAL);
         trustedPeersStatusText.setPadding(0, dp(6), 0, 0);
         v2Card.addView(trustedPeersStatusText, matchWrap());
         trustedPeersLayout = new LinearLayout(this);
@@ -414,33 +495,158 @@ public class MainActivity extends Activity {
         v2Card.addView(trustedPeersLayout, matchWrap());
         devicesSection.addView(v2Card, cardParams());
 
+        // --- 文件库板块 (NAS / WebDAV) ---
+        LinearLayout librariesCard = card(COLOR_SURFACE);
+        addSectionTitle(librariesCard, getString(R.string.section_shared_libraries));
+
+        librariesStatusText = text("正在准备连接电脑共享库…", 13, COLOR_MUTED, Typeface.NORMAL);
+        librariesStatusText.setPadding(0, 0, 0, dp(8));
+        librariesCard.addView(librariesStatusText, matchWrap());
+
+        // 面包屑导航与返回上一级栏
+        LinearLayout breadcrumbRow = new LinearLayout(this);
+        breadcrumbRow.setOrientation(LinearLayout.HORIZONTAL);
+        breadcrumbRow.setGravity(Gravity.CENTER_VERTICAL);
+        breadcrumbRow.setPadding(0, 0, 0, dp(8));
+
+        librariesBackButton = new Button(this);
+        librariesBackButton.setText("⬅ 返回上一级");
+        librariesBackButton.setContentDescription("返回上一级目录");
+        librariesBackButton.setAllCaps(false);
+        librariesBackButton.setTextSize(12);
+        styleButton(librariesBackButton, false);
+        librariesBackButton.setVisibility(View.GONE);
+        librariesBackButton.setOnClickListener(v -> navigateToParentDirectory());
+        breadcrumbRow.addView(librariesBackButton, wrapContent());
+
+        android.widget.HorizontalScrollView breadcrumbScroll = new android.widget.HorizontalScrollView(this);
+        breadcrumbScroll.setHorizontalScrollBarEnabled(false);
+        librariesBreadcrumbLayout = new LinearLayout(this);
+        librariesBreadcrumbLayout.setOrientation(LinearLayout.HORIZONTAL);
+        librariesBreadcrumbLayout.setGravity(Gravity.CENTER_VERTICAL);
+        librariesBreadcrumbLayout.setPadding(dp(6), 0, dp(6), 0);
+        breadcrumbScroll.addView(librariesBreadcrumbLayout, wrapContent());
+        breadcrumbRow.addView(breadcrumbScroll, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        librariesCard.addView(breadcrumbRow, matchWrap());
+
+        // 搜索与排序工具栏
+        LinearLayout searchSortRow = new LinearLayout(this);
+        searchSortRow.setOrientation(LinearLayout.HORIZONTAL);
+        searchSortRow.setGravity(Gravity.CENTER_VERTICAL);
+        searchSortRow.setPadding(0, 0, 0, dp(8));
+
+        librariesSearchBox = new android.widget.EditText(this);
+        librariesSearchBox.setHint("🔍 搜索当前目录文件…");
+        librariesSearchBox.setTextSize(13);
+        librariesSearchBox.setTextColor(COLOR_TEXT);
+        librariesSearchBox.setHintTextColor(COLOR_MUTED);
+        librariesSearchBox.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(6), COLOR_BORDER, 1));
+        librariesSearchBox.setPadding(dp(10), dp(8), dp(10), dp(8));
+        librariesSearchBox.setSingleLine(true);
+        librariesSearchBox.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                librarySearchQuery = s != null ? s.toString().trim() : "";
+                applyFilterAndRender();
+            }
+            @Override
+            public void afterTextChanged(android.text.Editable s) {}
+        });
+        searchSortRow.addView(librariesSearchBox, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+        librariesSortButton = new Button(this);
+        librariesSortButton.setText("🔀 默认");
+        librariesSortButton.setContentDescription("切换排序方式");
+        librariesSortButton.setAllCaps(false);
+        librariesSortButton.setTextSize(12);
+        styleButton(librariesSortButton, false);
+        librariesSortButton.setOnClickListener(v -> cycleSortMode());
+        LinearLayout.LayoutParams sortParams = wrapContent();
+        sortParams.setMargins(dp(6), 0, 0, 0);
+        searchSortRow.addView(librariesSortButton, sortParams);
+        librariesCard.addView(searchSortRow, matchWrap());
+
+        // 操作按钮行 (刷新、新建文件夹、上传)
+        LinearLayout libButtonsHeader = new LinearLayout(this);
+        libButtonsHeader.setOrientation(LinearLayout.HORIZONTAL);
+        libButtonsHeader.setPadding(0, 0, 0, dp(10));
+
+        refreshLibrariesButton = new Button(this);
+        refreshLibrariesButton.setText("刷新");
+        refreshLibrariesButton.setContentDescription("刷新文件库");
+        refreshLibrariesButton.setAllCaps(false);
+        refreshLibrariesButton.setMinHeight(dp(44));
+        styleButton(refreshLibrariesButton, false);
+        refreshLibrariesButton.setOnClickListener(v -> refreshLibrariesList(true));
+        libButtonsHeader.addView(refreshLibrariesButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+
+        createFolderButton = new Button(this);
+        createFolderButton.setText("新建文件夹");
+        createFolderButton.setContentDescription("在当前目录下新建文件夹");
+        createFolderButton.setAllCaps(false);
+        createFolderButton.setMinHeight(dp(44));
+        styleButton(createFolderButton, false);
+        createFolderButton.setOnClickListener(v -> promptCreateFolder());
+        LinearLayout.LayoutParams createFolderParams = new LinearLayout.LayoutParams(0, dp(44), 1.2f);
+        createFolderParams.setMargins(dp(6), 0, dp(6), 0);
+        libButtonsHeader.addView(createFolderButton, createFolderParams);
+
+        uploadToLibraryButton = new Button(this);
+        uploadToLibraryButton.setText("上传文件");
+        uploadToLibraryButton.setContentDescription("上传文件至电脑文件库当前目录");
+        uploadToLibraryButton.setAllCaps(false);
+        uploadToLibraryButton.setMinHeight(dp(44));
+        styleButton(uploadToLibraryButton, true);
+        uploadToLibraryButton.setOnClickListener(v -> chooseFileForUpload());
+        libButtonsHeader.addView(uploadToLibraryButton, new LinearLayout.LayoutParams(0, dp(44), 1.1f));
+        librariesCard.addView(libButtonsHeader, matchWrap());
+
+        librariesItemsLayout = new LinearLayout(this);
+        librariesItemsLayout.setOrientation(LinearLayout.VERTICAL);
+        TextView emptyLibrariesText = text("暂无文件，点击上方“刷新”或“上传文件”。", 13, COLOR_MUTED, Typeface.NORMAL);
+        emptyLibrariesText.setGravity(Gravity.CENTER);
+        emptyLibrariesText.setPadding(dp(16), dp(20), dp(16), dp(20));
+        emptyLibrariesText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
+        librariesItemsLayout.addView(emptyLibrariesText, matchWrap());
+        librariesCard.addView(librariesItemsLayout, matchWrap());
+
+        librariesSection.addView(librariesCard, cardParams());
+
+        // --- 设置板块 ---
         LinearLayout localCard = card(COLOR_SURFACE);
-        addSectionTitle(localCard, "本机与保存");
+        addSectionTitle(localCard, getString(R.string.section_local_identity));
         localDetailsButton = new Button(this);
-        localDetailsButton.setText("展开设置");
-        localDetailsButton.setContentDescription("展开本机与保存设置");
+        localDetailsButton.setText(getString(R.string.btn_expand_settings));
+        localDetailsButton.setContentDescription(getString(R.string.btn_expand_settings));
         localDetailsButton.setAllCaps(false);
+        localDetailsButton.setMinHeight(dp(48));
         styleButton(localDetailsButton, false);
         localDetailsButton.setOnClickListener(v -> toggleLocalDetails());
         localCard.addView(localDetailsButton, matchWrap());
         localDetailsLayout = new LinearLayout(this);
         localDetailsLayout.setOrientation(LinearLayout.VERTICAL);
         localDetailsLayout.setVisibility(View.GONE);
-        deviceText = text("正在生成本机密钥...", 14, COLOR_TEXT, Typeface.NORMAL);
+        deviceText = text(getString(R.string.device_generating_keys), 14, COLOR_TEXT, Typeface.NORMAL);
         deviceText.setPadding(dp(12), dp(10), dp(12), dp(10));
         deviceText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
-        saveText = text("保存目录：-", 14, COLOR_MUTED, Typeface.NORMAL);
+        saveText = text(getString(R.string.save_location_format, "-"), 14, COLOR_MUTED, Typeface.NORMAL);
         saveText.setPadding(dp(12), dp(10), dp(12), dp(10));
         saveText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
-        saveModeText = pill("保存模式：-", COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
+        saveModeText = pill(getString(R.string.save_mode_format, "-"), COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
         Button changeSaveButton = new Button(this);
-        changeSaveButton.setText("更改保存位置");
+        changeSaveButton.setText(getString(R.string.btn_change_save_dir));
+        changeSaveButton.setContentDescription(getString(R.string.btn_change_save_dir));
         changeSaveButton.setAllCaps(false);
+        changeSaveButton.setMinHeight(dp(48));
         styleButton(changeSaveButton, false);
         changeSaveButton.setOnClickListener(v -> chooseSaveDirectory());
         resetSaveButton = new Button(this);
-        resetSaveButton.setText("恢复默认下载目录");
+        resetSaveButton.setText(getString(R.string.btn_reset_save_dir));
+        resetSaveButton.setContentDescription(getString(R.string.btn_reset_save_dir));
         resetSaveButton.setAllCaps(false);
+        resetSaveButton.setMinHeight(dp(48));
         resetSaveButton.setVisibility(View.GONE);
         styleButton(resetSaveButton, false);
         resetSaveButton.setOnClickListener(v -> resetSaveDirectory());
@@ -460,8 +666,36 @@ public class MainActivity extends Activity {
         localCard.addView(localDetailsLayout, matchWrap());
         settingsSection.addView(localCard, cardParams());
 
+        // --- 诊断日志板块 ---
         LinearLayout logCard = card(COLOR_SURFACE);
-        addSectionTitle(logCard, "日志");
+        LinearLayout logHeader = new LinearLayout(this);
+        logHeader.setOrientation(LinearLayout.HORIZONTAL);
+        logHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView logTitle = text(getString(R.string.section_diagnostics_log), 18, COLOR_TEXT, Typeface.BOLD);
+        logHeader.addView(logTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+        Button copyLogButton = new Button(this);
+        copyLogButton.setText(getString(R.string.btn_copy_log));
+        copyLogButton.setContentDescription(getString(R.string.btn_copy_log));
+        copyLogButton.setAllCaps(false);
+        copyLogButton.setMinHeight(dp(48));
+        styleButton(copyLogButton, false);
+        copyLogButton.setOnClickListener(v -> copyLogToClipboard());
+
+        Button clearLogButton = new Button(this);
+        clearLogButton.setText(getString(R.string.btn_clear_log));
+        clearLogButton.setContentDescription(getString(R.string.btn_clear_log));
+        clearLogButton.setAllCaps(false);
+        clearLogButton.setMinHeight(dp(48));
+        styleButton(clearLogButton, false);
+        clearLogButton.setOnClickListener(v -> clearLogs());
+
+        logHeader.addView(copyLogButton, wrapContent());
+        LinearLayout.LayoutParams clearParams = wrapContent();
+        clearParams.setMargins(dp(6), 0, 0, 0);
+        logHeader.addView(clearLogButton, clearParams);
+        logCard.addView(logHeader, matchWrap());
+
         logScroll = new ScrollView(this);
         logScroll.setFillViewport(true);
         logScroll.setNestedScrollingEnabled(true);
@@ -469,7 +703,7 @@ public class MainActivity extends Activity {
             logFollowLatest = isLogScrolledToBottom()
         );
         logScroll.setBackground(roundedStroke(Color.rgb(15, 23, 42), dp(8), Color.rgb(30, 41, 59), 1));
-        logText = text("暂无日志。", 13, COLOR_MUTED, Typeface.NORMAL);
+        logText = text(getString(R.string.no_logs), 13, COLOR_MUTED, Typeface.NORMAL);
         logText.setTextIsSelectable(true);
         logText.setLineSpacing(dp(2), 1.0f);
         logText.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -478,10 +712,12 @@ public class MainActivity extends Activity {
             ScrollView.LayoutParams.MATCH_PARENT,
             ScrollView.LayoutParams.WRAP_CONTENT
         ));
-        logCard.addView(logScroll, new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams logScrollParams = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             dp(168)
-        ));
+        );
+        logScrollParams.setMargins(0, dp(10), 0, 0);
+        logCard.addView(logScroll, logScrollParams);
         settingsSection.addView(logCard, cardParams());
 
         setContentView(screen);
@@ -530,6 +766,7 @@ public class MainActivity extends Activity {
         HttpTransferServer localServer = null;
         DiscoveryService localDiscovery = null;
         V2PairingController localPairing = null;
+        V2IncomingTransferCoordinator localCoordinator = null;
         boolean installed = false;
         try {
             if (!canContinueCoreStart()) {
@@ -562,49 +799,125 @@ public class MainActivity extends Activity {
                 return;
             }
 
+            DeviceConfig pairingDevice = localDevice;
             try {
-                V2PairingController candidatePairing = new V2PairingController(this, localDevice, new V2PairingController.Listener() {
-                    @Override public void onPeersChanged(List<V2DiscoveryService.Peer> updatedPeers) {
-                        v2Peers = updatedPeers;
-                        renderV2Peers();
-                    }
+                V2IncomingTransferCoordinator candidateCoordinator = V2IncomingTransferCoordinator.create(
+                    this,
+                    localDevice,
+                    request -> {
+                        CompletableFuture<V2IncomingTransferCoordinator.Approval> future = new CompletableFuture<>();
+                        runOnUiThreadIfAlive(() -> {
+                            new AlertDialog.Builder(this)
+                                .setTitle(getString(R.string.incoming_transfer_dialog_title))
+                                .setMessage(getString(R.string.incoming_transfer_dialog_msg,
+                                    request.senderDeviceId(), request.totalFiles(), formatBytes(request.totalBytes()))
+                                    + (request.entrySummaries().isEmpty() ? "" : "\n" + TextUtils.join("\n", request.entrySummaries())))
+                                .setPositiveButton(getString(R.string.btn_accept), (d, w) -> future.complete(V2IncomingTransferCoordinator.Approval.ACCEPT))
+                                .setNegativeButton(getString(R.string.btn_reject), (d, w) -> future.complete(V2IncomingTransferCoordinator.Approval.REJECT))
+                                .setOnCancelListener(d -> future.complete(V2IncomingTransferCoordinator.Approval.REJECT))
+                                .show();
+                        });
+                        return future;
+                    },
+                    new V2IncomingTransferCoordinator.RuntimeHandler() {
+                        @Override
+                        public V2IncomingTransferCoordinator.PreparedRuntime prepare(
+                            V2TransferBootstrap.VerifiedManifest manifest,
+                            V2TransferPeerAccess.AuthorizedPeer peer
+                        ) throws Exception {
+                            String customTree = getCustomSaveTreeUriString();
+                            V2IncomingTransferRuntime runtime = V2IncomingTransferRuntime.prepare(
+                                MainActivity.this,
+                                pairingDevice,
+                                manifest,
+                                peer,
+                                customTree,
+                                new V2IncomingTransferRuntime.TransferEventListener() {
+                                    @Override
+                                    public void onTransferProgress(String taskId, long bytesTransferred, long totalBytes) {
+                                        runOnUiThreadIfAlive(() -> updateV2ProgressUi(taskId, bytesTransferred, totalBytes));
+                                    }
 
-                    @Override public void onSessionChanged(V2PairingSessionStore.Session session) {
-                        renderV2Sessions();
-                        if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION
-                            || session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
-                            setPendingPairingAction(true);
+                                    @Override
+                                    public void onTransferCompleted(String taskId) {
+                                        runOnUiThreadIfAlive(() -> showV2TransferCompletedUi(taskId));
+                                    }
+
+                                    @Override
+                                    public void onTransferFailed(String taskId, String reason) {
+                                        runOnUiThreadIfAlive(() -> showV2TransferFailedUi(taskId, reason));
+                                    }
+                                }
+                            );
+                            return new V2IncomingTransferCoordinator.PreparedRuntime() {
+                                @Override
+                                public V2WireFrame.Frame createResumeFrame() throws Exception {
+                                    return runtime.createResumeFrame();
+                                }
+
+                                @Override
+                                public void start(java.net.Socket socket) throws Exception {
+                                    runtime.start(socket);
+                                }
+
+                                @Override
+                                public void close() {
+                                    runtime.close();
+                                }
+                            };
                         }
-                        appendLog("协议 v2 配对状态：" + pairingStatusLabel(session.status));
-                        if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
-                            v2StatusText.setText("双方已确认配对码；请点击“保存信任”。");
-                            if (selectedTab != TAB_DEVICES) {
-                                statusText.setText("安全配对待确认，请打开“设备”页。");
+                    }
+                );
+                localCoordinator = candidateCoordinator;
+
+                V2PairingController candidatePairing = new V2PairingController(
+                    this, localDevice, candidateCoordinator,
+                    new V2PairingController.Listener() {
+                        @Override public void onPeersChanged(List<V2DiscoveryService.Peer> updatedPeers) {
+                            v2Peers = updatedPeers;
+                            renderV2Peers();
+                        }
+
+                        @Override public void onSessionChanged(V2PairingSessionStore.Session session) {
+                            renderV2Sessions();
+                            if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION
+                                || session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
+                                setPendingPairingAction(true);
                             }
-                        } else if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION
-                            && selectedTab != TAB_DEVICES) {
-                            statusText.setText("收到安全配对请求，请打开“设备”页确认。");
-                        } else if (session.status == V2PairingSessionStore.Status.COMPLETED) {
-                            refreshTrustedPeers();
+                            appendLog("协议 v2 配对状态：" + pairingStatusLabel(session.status));
+                            if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
+                                v2StatusText.setText("双方已确认配对码；请点击“保存信任”。");
+                                if (selectedTab != TAB_DEVICES) {
+                                    statusText.setText("安全配对待确认，请打开“设备”页。");
+                                }
+                            } else if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION
+                                && selectedTab != TAB_DEVICES) {
+                                statusText.setText("收到安全配对请求，请打开“设备”页确认。");
+                            } else if (session.status == V2PairingSessionStore.Status.COMPLETED) {
+                                refreshTrustedPeers();
+                            }
                         }
-                    }
 
-                    @Override public void onStatus(String message) {
-                        v2StatusText.setText(message);
-                        appendLog(message);
-                    }
+                        @Override public void onStatus(String message) {
+                            v2StatusText.setText(message);
+                            appendLog(message);
+                        }
 
-                    @Override public void onError(Exception error) {
-                        v2StatusText.setText("协议 v2 配对错误：" + error.getMessage());
-                        appendLog("协议 v2 配对错误：" + error);
-                    }
-                }, this::runOnUiThreadIfAlive);
+                        @Override public void onError(Exception error) {
+                            v2StatusText.setText("协议 v2 配对错误：" + error.getMessage());
+                            appendLog("协议 v2 配对错误：" + error);
+                        }
+                    }, this::runOnUiThreadIfAlive);
                 localPairing = candidatePairing;
                 candidatePairing.start();
             } catch (Exception v2Error) {
                 if (localPairing != null) {
                     localPairing.close();
                     localPairing = null;
+                }
+                if (localCoordinator != null) {
+                    localCoordinator.close();
+                    localCoordinator = null;
                 }
                 Exception reportedV2Error = v2Error;
                 runOnUiThreadIfAlive(() -> appendLog("协议 v2 安全配对未启动：" + reportedV2Error));
@@ -620,6 +933,7 @@ public class MainActivity extends Activity {
                     transferServer = localServer;
                     discoveryService = localDiscovery;
                     v2PairingController = localPairing;
+                    v2IncomingCoordinator = localCoordinator;
                     installed = true;
                 }
             }
@@ -648,7 +962,7 @@ public class MainActivity extends Activity {
             }
         } finally {
             if (!installed) {
-                stopCoreServices(localServer, localDiscovery, localPairing);
+                stopCoreServices(localServer, localDiscovery, localPairing, localCoordinator);
             }
             synchronized (coreLifecycleLock) {
                 coreStarting = false;
@@ -660,7 +974,11 @@ public class MainActivity extends Activity {
         return !activityDestroyed && !Thread.currentThread().isInterrupted();
     }
 
-    private void stopCoreServices(HttpTransferServer server, DiscoveryService discovery, V2PairingController pairing) {
+    private void stopCoreServices(HttpTransferServer server, DiscoveryService discovery,
+                                  V2PairingController pairing, V2IncomingTransferCoordinator coordinator) {
+        if (coordinator != null) {
+            coordinator.close();
+        }
         if (pairing != null) {
             pairing.close();
         }
@@ -684,14 +1002,14 @@ public class MainActivity extends Activity {
                 + "\n文件：" + incoming.fileName
                 + "\n大小：" + formatBytes(incoming.size)
                 + "\n保存到：" + incoming.savePath)
-            .setPositiveButton("接收", (dialog, which) -> {
+            .setPositiveButton(getString(R.string.btn_accept), (dialog, which) -> {
                 synchronized (lock) {
                     decision[0] = true;
                     answered[0] = true;
                     lock.notifyAll();
                 }
             })
-            .setNegativeButton("拒绝", (dialog, which) -> {
+            .setNegativeButton(getString(R.string.btn_reject), (dialog, which) -> {
                 synchronized (lock) {
                     answered[0] = true;
                     lock.notifyAll();
@@ -717,6 +1035,11 @@ public class MainActivity extends Activity {
             }
             return decision[0];
         }
+    }
+
+    private String getCustomSaveTreeUriString() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        return prefs.getString(PREF_SAVE_TREE_URI, null);
     }
 
     private SaveTarget loadSaveTarget() {
@@ -773,8 +1096,8 @@ public class MainActivity extends Activity {
     private void toggleLocalDetails() {
         boolean expanding = localDetailsLayout.getVisibility() != View.VISIBLE;
         localDetailsLayout.setVisibility(expanding ? View.VISIBLE : View.GONE);
-        localDetailsButton.setText(expanding ? "收起设置" : "展开设置");
-        localDetailsButton.setContentDescription(expanding ? "收起本机与保存设置" : "展开本机与保存设置");
+        localDetailsButton.setText(expanding ? getString(R.string.btn_collapse_settings) : getString(R.string.btn_expand_settings));
+        localDetailsButton.setContentDescription(expanding ? getString(R.string.btn_collapse_settings) : getString(R.string.btn_expand_settings));
     }
 
     private String saveModeTextFor(SaveTarget target) {
@@ -811,6 +1134,40 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void updateV2ProgressUi(String taskId, long bytesTransferred, long totalBytes) {
+        progressCard.setVisibility(View.VISIBLE);
+        int progress = 0;
+        int percent = 0;
+        if (totalBytes > 0) {
+            progress = Math.max(0, Math.min(1000, (int) Math.round((bytesTransferred * 1000.0) / totalBytes)));
+            percent = Math.max(0, Math.min(100, (int) Math.round((bytesTransferred * 100.0) / totalBytes)));
+        }
+        transferProgress.setProgress(progress);
+        progressPercentText.setText(percent + "%");
+        progressTitleText.setText(getString(R.string.transfer_in_progress));
+        progressDetailText.setText(formatBytes(bytesTransferred) + " / " + formatBytes(totalBytes));
+        setProgressColor(COLOR_PRIMARY);
+        statusText.setText(getString(R.string.transfer_in_progress) + " " + percent + "%");
+    }
+
+    private void showV2TransferCompletedUi(String taskId) {
+        progressCard.setVisibility(View.VISIBLE);
+        transferProgress.setProgress(1000);
+        progressPercentText.setText("100%");
+        progressTitleText.setText(getString(R.string.transfer_completed));
+        setProgressColor(COLOR_SUCCESS);
+        statusText.setText(getString(R.string.transfer_completed));
+        appendLog(getString(R.string.transfer_completed) + " (" + taskId + ")");
+    }
+
+    private void showV2TransferFailedUi(String taskId, String reason) {
+        progressCard.setVisibility(View.VISIBLE);
+        progressTitleText.setText(getString(R.string.transfer_failed, reason));
+        setProgressColor(COLOR_DANGER);
+        statusText.setText(getString(R.string.transfer_failed, reason));
+        appendLog(getString(R.string.transfer_failed, reason) + " (" + taskId + ")");
+    }
+
     private void restoreSelectedFile(Bundle savedInstanceState) {
         SelectedFile restored = SelectedFileState.restore(savedInstanceState);
         if (restored != null) {
@@ -833,6 +1190,526 @@ public class MainActivity extends Activity {
         intent.setType("*/*");
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(intent, REQUEST_PICK_FILE);
+    }
+
+    private void chooseFileForUpload() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivityForResult(intent, REQUEST_UPLOAD_LIBRARY);
+    }
+
+    private String getTargetServerIp() {
+        if (selectedPeer != null && selectedPeer.host != null && !selectedPeer.host.isEmpty()) {
+            return selectedPeer.host;
+        }
+        if (!peers.isEmpty() && peers.get(0).host != null && !peers.get(0).host.isEmpty()) {
+            return peers.get(0).host;
+        }
+        if (!v2Peers.isEmpty() && v2Peers.get(0).host != null && !v2Peers.get(0).host.isEmpty()) {
+            return v2Peers.get(0).host;
+        }
+        return "192.168.9.151";
+    }
+
+    private static class FileTypeBadge {
+        final String icon;
+        final String label;
+        final int color;
+        final int bgColor;
+        FileTypeBadge(String icon, String label, int color, int bgColor) {
+            this.icon = icon;
+            this.label = label;
+            this.color = color;
+            this.bgColor = bgColor;
+        }
+    }
+
+    private FileTypeBadge getFileTypeInfo(String filename, boolean isDirectory) {
+        if (isDirectory) {
+            return new FileTypeBadge("📁", "文件夹", Color.rgb(217, 119, 6), Color.rgb(254, 243, 199));
+        }
+        String ext = "";
+        int dot = filename.lastIndexOf('.');
+        if (dot >= 0) ext = filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+        switch (ext) {
+            case "png": case "jpg": case "jpeg": case "gif": case "webp": case "svg": case "bmp": case "heic":
+                return new FileTypeBadge("🖼️", "图片", Color.rgb(124, 58, 237), Color.rgb(237, 233, 254));
+            case "mp4": case "mkv": case "avi": case "mov": case "flv": case "wmv": case "webm":
+                return new FileTypeBadge("🎬", "视频", Color.rgb(225, 29, 72), Color.rgb(255, 228, 230));
+            case "mp3": case "wav": case "flac": case "aac": case "m4a": case "ogg":
+                return new FileTypeBadge("🎵", "音频", Color.rgb(8, 145, 178), Color.rgb(207, 250, 254));
+            case "pdf": case "doc": case "docx": case "txt": case "md": case "xls": case "xlsx": case "ppt": case "pptx": case "csv":
+                return new FileTypeBadge("📄", "文档", Color.rgb(37, 99, 235), Color.rgb(219, 234, 254));
+            case "zip": case "rar": case "7z": case "tar": case "gz": case "bz2": case "iso":
+                return new FileTypeBadge("📦", "压缩包", Color.rgb(234, 88, 12), Color.rgb(255, 237, 213));
+            case "js": case "ts": case "java": case "kt": case "py": case "c": case "cpp": case "html": case "css": case "json": case "xml": case "sh":
+                return new FileTypeBadge("💻", "代码", Color.rgb(5, 150, 105), Color.rgb(209, 250, 229));
+            default:
+                return new FileTypeBadge("📄", "文件", Color.rgb(100, 116, 139), Color.rgb(241, 245, 249));
+        }
+    }
+
+    private void navigateToParentDirectory() {
+        if (libraryCurrentSubPath == null || libraryCurrentSubPath.isEmpty()) return;
+        int lastSlash = libraryCurrentSubPath.lastIndexOf('/');
+        libraryCurrentSubPath = lastSlash >= 0 ? libraryCurrentSubPath.substring(0, lastSlash) : "";
+        refreshLibrariesList(false);
+    }
+
+    private void cycleSortMode() {
+        librarySortMode = (librarySortMode + 1) % 3;
+        if (librariesSortButton != null) {
+            switch (librarySortMode) {
+                case 0: librariesSortButton.setText("🔀 默认"); break;
+                case 1: librariesSortButton.setText("🕒 最新"); break;
+                case 2: librariesSortButton.setText("📊 大小"); break;
+            }
+        }
+        applyFilterAndRender();
+    }
+
+    private void renderLibraryBreadcrumbs() {
+        if (librariesBreadcrumbLayout == null) return;
+        librariesBreadcrumbLayout.removeAllViews();
+
+        if (librariesBackButton != null) {
+            librariesBackButton.setVisibility(libraryCurrentSubPath.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+
+        // 根目录标签
+        TextView rootChip = text("🏠 根目录", 12, libraryCurrentSubPath.isEmpty() ? COLOR_PRIMARY_DARK : COLOR_MUTED, Typeface.BOLD);
+        rootChip.setPadding(dp(8), dp(4), dp(8), dp(4));
+        rootChip.setBackground(rounded(libraryCurrentSubPath.isEmpty() ? COLOR_PRIMARY_SOFT : Color.TRANSPARENT, dp(6)));
+        rootChip.setOnClickListener(v -> {
+            if (!libraryCurrentSubPath.isEmpty()) {
+                libraryCurrentSubPath = "";
+                refreshLibrariesList(false);
+            }
+        });
+        librariesBreadcrumbLayout.addView(rootChip, wrapContent());
+
+        if (!libraryCurrentSubPath.isEmpty()) {
+            String[] parts = libraryCurrentSubPath.split("/");
+            StringBuilder pathAccumulator = new StringBuilder();
+            for (int i = 0; i < parts.length; i++) {
+                final String part = parts[i];
+                if (part.isEmpty()) continue;
+                if (pathAccumulator.length() > 0) pathAccumulator.append("/");
+                pathAccumulator.append(part);
+                final String targetSubPath = pathAccumulator.toString();
+                final boolean isCurrent = i == parts.length - 1;
+
+                TextView separator = text(" > ", 12, COLOR_MUTED, Typeface.BOLD);
+                librariesBreadcrumbLayout.addView(separator, wrapContent());
+
+                TextView chip = text("📁 " + part, 12, isCurrent ? COLOR_PRIMARY_DARK : COLOR_MUTED, Typeface.BOLD);
+                chip.setPadding(dp(8), dp(4), dp(8), dp(4));
+                chip.setBackground(rounded(isCurrent ? COLOR_PRIMARY_SOFT : Color.TRANSPARENT, dp(6)));
+                chip.setOnClickListener(v -> {
+                    if (!targetSubPath.equals(libraryCurrentSubPath)) {
+                        libraryCurrentSubPath = targetSubPath;
+                        refreshLibrariesList(false);
+                    }
+                });
+                librariesBreadcrumbLayout.addView(chip, wrapContent());
+            }
+        }
+    }
+
+    private void applyFilterAndRender() {
+        List<WebDavClient.WebDavItem> filtered = new ArrayList<>();
+        String query = librarySearchQuery != null ? librarySearchQuery.toLowerCase(Locale.ROOT) : "";
+
+        for (WebDavClient.WebDavItem item : rawLibraryItems) {
+            if (query.isEmpty() || (item.name != null && item.name.toLowerCase(Locale.ROOT).contains(query))) {
+                filtered.add(item);
+            }
+        }
+
+        // 排序规则
+        Collections.sort(filtered, (a, b) -> {
+            if (librarySortMode == 0) {
+                // 文件夹优先，随后按文件名升序
+                if (a.isDirectory != b.isDirectory) {
+                    return a.isDirectory ? -1 : 1;
+                }
+                return a.name.compareToIgnoreCase(b.name);
+            } else if (librarySortMode == 1) {
+                // 按修改时间最新优先
+                return Long.compare(b.lastModified, a.lastModified);
+            } else if (librarySortMode == 2) {
+                // 按文件大小降序（文件夹优先放前）
+                if (a.isDirectory != b.isDirectory) {
+                    return a.isDirectory ? -1 : 1;
+                }
+                return Long.compare(b.size, a.size);
+            }
+            return 0;
+        });
+
+        renderLibraryItems(filtered, null);
+    }
+
+    private void promptCreateFolder() {
+        if (libraryServerIp == null || libraryToken == null) {
+            Toast.makeText(this, "请先连接文件库", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("输入新文件夹名称");
+        input.setSingleLine(true);
+        input.setPadding(dp(16), dp(12), dp(16), dp(12));
+
+        new AlertDialog.Builder(this)
+            .setTitle("新建文件夹")
+            .setMessage("在当前目录：" + (libraryCurrentSubPath.isEmpty() ? "根目录" : libraryCurrentSubPath) + " 下创建子文件夹")
+            .setView(input)
+            .setPositiveButton("创建", (dialog, which) -> {
+                String folderName = input.getText().toString().trim();
+                if (folderName.isEmpty()) {
+                    Toast.makeText(this, "文件夹名称不能为空", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                appendLog("正在创建文件夹：" + folderName);
+                executor.execute(() -> {
+                    try {
+                        WebDavClient.createDirectory(libraryServerIp, libraryServerPort, libraryToken, libraryShareId, libraryCurrentSubPath, folderName);
+                        runOnUiThreadIfAlive(() -> {
+                            Toast.makeText(this, "文件夹已创建：" + folderName, Toast.LENGTH_SHORT).show();
+                            appendLog("文件夹创建成功：" + folderName);
+                            refreshLibrariesList(false);
+                        });
+                    } catch (Exception e) {
+                        runOnUiThreadIfAlive(() -> {
+                            Toast.makeText(this, "创建文件夹失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                            appendLog("创建文件夹失败：" + e.getMessage());
+                        });
+                    }
+                });
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void refreshLibrariesList(boolean userInitiated) {
+        if (activityDestroyed || libraryLoading) return;
+        libraryLoading = true;
+        if (librariesStatusText != null) {
+            librariesStatusText.setText("正在连接电脑共享文件库…");
+        }
+        String serverIp = getTargetServerIp();
+        libraryServerIp = serverIp;
+        String myDeviceId = device != null ? device.deviceId : "415847b501f88dbb";
+
+        executor.execute(() -> {
+            try {
+                WebDavClient.SessionResult authResult = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
+                if (!authResult.ok) {
+                    runOnUiThreadIfAlive(() -> {
+                        libraryLoading = false;
+                        if (librariesStatusText != null) {
+                            librariesStatusText.setText("连接文件库失败：" + authResult.error + "\n请确认两端已完成配对。");
+                        }
+                        rawLibraryItems.clear();
+                        renderLibraryBreadcrumbs();
+                        renderLibraryItems(Collections.emptyList(), authResult.error);
+                    });
+                    return;
+                }
+                libraryToken = authResult.token;
+                if (!authResult.shares.isEmpty()) {
+                    libraryShareId = authResult.shares.get(0).id;
+                }
+                List<WebDavClient.WebDavItem> items = WebDavClient.listFiles(serverIp, libraryServerPort, libraryToken, libraryShareId, libraryCurrentSubPath);
+                runOnUiThreadIfAlive(() -> {
+                    libraryLoading = false;
+                    rawLibraryItems = new ArrayList<>(items);
+                    if (librariesStatusText != null) {
+                        String pathDisplay = libraryCurrentSubPath.isEmpty() ? "根目录" : libraryCurrentSubPath;
+                        librariesStatusText.setText("已连接电脑文件库 (" + serverIp + ":" + libraryServerPort + ") 当前: " + pathDisplay + " (" + items.size() + " 项)");
+                    }
+                    renderLibraryBreadcrumbs();
+                    applyFilterAndRender();
+                    if (userInitiated) {
+                        Toast.makeText(this, "文件库已刷新 (" + items.size() + " 项)", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThreadIfAlive(() -> {
+                    libraryLoading = false;
+                    rawLibraryItems.clear();
+                    renderLibraryBreadcrumbs();
+                    if (librariesStatusText != null) {
+                        librariesStatusText.setText("读取文件库出错：" + e.getMessage());
+                    }
+                    renderLibraryItems(Collections.emptyList(), e.getMessage());
+                });
+            }
+        });
+    }
+
+    private void renderLibraryItems(List<WebDavClient.WebDavItem> items, String error) {
+        if (librariesItemsLayout == null) return;
+        librariesItemsLayout.removeAllViews();
+        if (items.isEmpty()) {
+            String msg = error != null ? ("连接失败：" + error) :
+                (!libraryCurrentSubPath.isEmpty() ? "当前子文件夹为空。\n点击上方“上传文件”可向此目录添加内容。" : "共享库中暂无文件。\n点击上方“上传文件”即可分享文件。");
+            TextView empty = text(msg, 13, COLOR_MUTED, Typeface.NORMAL);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(16), dp(20), dp(16), dp(20));
+            empty.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
+            librariesItemsLayout.addView(empty, matchWrap());
+            return;
+        }
+
+        DateFormat df = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, Locale.getDefault());
+
+        for (WebDavClient.WebDavItem item : items) {
+            LinearLayout itemRow = new LinearLayout(this);
+            itemRow.setOrientation(LinearLayout.HORIZONTAL);
+            itemRow.setGravity(Gravity.CENTER_VERTICAL);
+            itemRow.setPadding(dp(12), dp(10), dp(12), dp(10));
+            itemRow.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
+
+            FileTypeBadge badge = getFileTypeInfo(item.name, item.isDirectory);
+
+            TextView iconView = text(badge.icon, 18, Color.WHITE, Typeface.NORMAL);
+            iconView.setGravity(Gravity.CENTER);
+            iconView.setBackground(rounded(badge.bgColor, dp(10)));
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+            iconParams.setMargins(0, 0, dp(12), 0);
+            itemRow.addView(iconView, iconParams);
+
+            LinearLayout fileInfo = new LinearLayout(this);
+            fileInfo.setOrientation(LinearLayout.VERTICAL);
+            TextView nameText = text(item.name, 15, COLOR_TEXT, Typeface.BOLD);
+            nameText.setEllipsize(TextUtils.TruncateAt.END);
+            nameText.setMaxLines(1);
+
+            String subInfo;
+            if (item.isDirectory) {
+                subInfo = "文件夹 · 点击进入子目录";
+            } else {
+                String timeStr = item.lastModified > 0 ? (" · " + df.format(new Date(item.lastModified))) : "";
+                subInfo = formatBytes(item.size) + timeStr;
+            }
+            TextView sizeText = text(subInfo, 12, COLOR_MUTED, Typeface.NORMAL);
+            sizeText.setPadding(0, dp(2), 0, 0);
+            fileInfo.addView(nameText, matchWrap());
+            fileInfo.addView(sizeText, matchWrap());
+            itemRow.addView(fileInfo, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+            if (item.isDirectory) {
+                Button enterBtn = new Button(this);
+                enterBtn.setText("进入");
+                enterBtn.setAllCaps(false);
+                enterBtn.setMinHeight(dp(36));
+                enterBtn.setTextSize(13);
+                styleButton(enterBtn, false);
+                enterBtn.setOnClickListener(v -> {
+                    libraryCurrentSubPath = libraryCurrentSubPath.isEmpty() ? item.name : (libraryCurrentSubPath + "/" + item.name);
+                    refreshLibrariesList(false);
+                });
+                itemRow.addView(enterBtn, wrapContent());
+
+                itemRow.setOnClickListener(v -> {
+                    libraryCurrentSubPath = libraryCurrentSubPath.isEmpty() ? item.name : (libraryCurrentSubPath + "/" + item.name);
+                    refreshLibrariesList(false);
+                });
+            } else {
+                Button downloadBtn = new Button(this);
+                downloadBtn.setText("下载");
+                downloadBtn.setAllCaps(false);
+                downloadBtn.setMinHeight(dp(36));
+                downloadBtn.setTextSize(13);
+                styleButton(downloadBtn, true);
+                downloadBtn.setOnClickListener(v -> downloadLibraryFile(item));
+                itemRow.addView(downloadBtn, wrapContent());
+            }
+
+            LinearLayout.LayoutParams rowParams = matchWrap();
+            rowParams.setMargins(0, 0, 0, dp(8));
+            librariesItemsLayout.addView(itemRow, rowParams);
+        }
+    }
+
+    private void downloadLibraryFile(WebDavClient.WebDavItem item) {
+        if (libraryServerIp == null || libraryToken == null) {
+            Toast.makeText(this, "正在连接电脑文件库...", Toast.LENGTH_SHORT).show();
+            refreshLibrariesList(false);
+            return;
+        }
+        File downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        File nearbyDir = new File(downloadDir, "Nearby Transfer");
+        if (!nearbyDir.exists()) nearbyDir.mkdirs();
+        File destFile = new File(nearbyDir, item.name);
+
+        Toast.makeText(this, "开始下载：" + item.name, Toast.LENGTH_SHORT).show();
+        appendLog("开始从 NAS 下载：" + item.name);
+        progressCard.setVisibility(View.VISIBLE);
+        progressTitleText.setText("正在从电脑下载文件");
+        progressDetailText.setText(item.name);
+        setProgressColor(COLOR_PRIMARY);
+
+        executor.execute(() -> {
+            try {
+                WebDavClient.downloadFile(
+                    libraryServerIp,
+                    libraryServerPort,
+                    libraryToken,
+                    item.downloadUrl,
+                    destFile,
+                    (transferred, total) -> runOnUiThreadIfAlive(() -> {
+                        int percent = total > 0 ? (int) Math.round((transferred * 100.0) / total) : 0;
+                        transferProgress.setProgress(percent * 10);
+                        progressPercentText.setText(percent + "%");
+                        progressDetailText.setText(item.name + "\n" + formatBytes(transferred) + " / " + formatBytes(total));
+                    })
+                );
+                runOnUiThreadIfAlive(() -> {
+                    transferProgress.setProgress(1000);
+                    progressPercentText.setText("100%");
+                    progressTitleText.setText("下载完成");
+                    setProgressColor(COLOR_SUCCESS);
+                    statusText.setText("已下载到：" + destFile.getAbsolutePath());
+                    appendLog("文件已保存至：" + destFile.getAbsolutePath());
+                    Toast.makeText(this, "文件已成功保存到 Download/Nearby Transfer 目录！", Toast.LENGTH_LONG).show();
+                });
+            } catch (Exception e) {
+                runOnUiThreadIfAlive(() -> {
+                    progressTitleText.setText("下载失败");
+                    setProgressColor(COLOR_DANGER);
+                    statusText.setText("下载失败：" + e.getMessage());
+                    appendLog("下载失败：" + e.getMessage());
+                    Toast.makeText(this, "下载失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void uploadFileToLibrary(SelectedFile file) {
+        if (libraryServerIp == null || libraryToken == null) {
+            Toast.makeText(this, "正在连接电脑文件库...", Toast.LENGTH_SHORT).show();
+            refreshLibrariesList(false);
+        }
+        String serverIp = getTargetServerIp();
+        String myDeviceId = device != null ? device.deviceId : "415847b501f88dbb";
+
+        String pathInfo = libraryCurrentSubPath.isEmpty() ? "根目录" : libraryCurrentSubPath;
+        Toast.makeText(this, "开始上传至电脑 (" + pathInfo + ")：" + file.name, Toast.LENGTH_SHORT).show();
+        appendLog("开始上传文件至电脑文件库 (" + pathInfo + ")：" + file.name);
+        progressCard.setVisibility(View.VISIBLE);
+        progressTitleText.setText("正在上传文件至电脑");
+        progressDetailText.setText(file.name);
+        setProgressColor(COLOR_PRIMARY);
+
+        executor.execute(() -> {
+            try {
+                if (libraryToken == null) {
+                    WebDavClient.SessionResult res = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
+                    if (!res.ok) throw new IllegalStateException(res.error);
+                    libraryToken = res.token;
+                    if (!res.shares.isEmpty()) libraryShareId = res.shares.get(0).id;
+                }
+
+                try (InputStream in = getContentResolver().openInputStream(file.uri)) {
+                    if (in == null) throw new IllegalStateException("无法读取文件内容");
+                    WebDavClient.uploadFile(
+                        serverIp,
+                        libraryServerPort,
+                        libraryToken,
+                        libraryShareId,
+                        libraryCurrentSubPath,
+                        file.name,
+                        in,
+                        file.size,
+                        (transferred, total) -> runOnUiThreadIfAlive(() -> {
+                            int percent = total > 0 ? (int) Math.round((transferred * 100.0) / total) : 0;
+                            transferProgress.setProgress(percent * 10);
+                            progressPercentText.setText(percent + "%");
+                            progressDetailText.setText(file.name + "\n" + formatBytes(transferred) + " / " + formatBytes(total));
+                        })
+                    );
+                }
+
+                runOnUiThreadIfAlive(() -> {
+                    transferProgress.setProgress(1000);
+                    progressPercentText.setText("100%");
+                    progressTitleText.setText("上传完成");
+                    setProgressColor(COLOR_SUCCESS);
+                    statusText.setText("已上传至电脑共享库: " + file.name);
+                    appendLog("文件上传完成：" + file.name);
+                    Toast.makeText(this, "已成功上传 " + file.name + " 到电脑共享库！", Toast.LENGTH_LONG).show();
+                    refreshLibrariesList(false);
+                });
+            } catch (Exception e) {
+                runOnUiThreadIfAlive(() -> {
+                    progressTitleText.setText("上传失败");
+                    setProgressColor(COLOR_DANGER);
+                    statusText.setText("上传失败：" + e.getMessage());
+                    appendLog("上传失败：" + e.getMessage());
+                    Toast.makeText(this, "上传失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void startLibraryEventsSubscription() {
+        if (libraryEventsThread != null && libraryEventsThread.isAlive()) return;
+        libraryEventsCancel.set(false);
+        libraryEventsThread = new Thread(() -> {
+            while (!activityDestroyed && !libraryEventsCancel.get() && selectedTab == TAB_LIBRARIES) {
+                String serverIp = libraryServerIp != null ? libraryServerIp : getTargetServerIp();
+                String token = libraryToken;
+                if (token == null) {
+                    try {
+                        String myDeviceId = device != null ? device.deviceId : "415847b501f88dbb";
+                        WebDavClient.SessionResult auth = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
+                        if (auth.ok) {
+                            token = auth.token;
+                            libraryToken = token;
+                        }
+                    } catch (Exception ignored) {}
+                }
+                if (token != null && !libraryEventsCancel.get()) {
+                    WebDavClient.subscribeEvents(serverIp, libraryServerPort, token, new WebDavClient.EventListener() {
+                        @Override
+                        public void onLibraryChanged(String shareId, String eventType, String filename) {
+                            runOnUiThreadIfAlive(() -> {
+                                if (selectedTab == TAB_LIBRARIES) {
+                                    appendLog("电脑端文件发生变动 (" + (filename.isEmpty() ? "文件库已更新" : filename) + ")，自动同步中…");
+                                    refreshLibrariesList(false);
+                                }
+                            });
+                        }
+
+                        @Override
+                        public void onConnected() {}
+
+                        @Override
+                        public void onError(Exception e) {}
+                    }, libraryEventsCancel);
+                }
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+        }, "WebDavEventsClient");
+        libraryEventsThread.setDaemon(true);
+        libraryEventsThread.start();
+    }
+
+    private void stopLibraryEventsSubscription() {
+        libraryEventsCancel.set(true);
+        if (libraryEventsThread != null) {
+            libraryEventsThread.interrupt();
+            libraryEventsThread = null;
+        }
     }
 
     private SelectedFile describeUri(Uri uri) {
@@ -982,8 +1859,10 @@ public class MainActivity extends Activity {
             item.addView(details, matchWrap());
 
             Button revokeButton = new Button(this);
-            revokeButton.setText("移除信任");
+            revokeButton.setText(getString(R.string.btn_revoke_trust));
+            revokeButton.setContentDescription(getString(R.string.btn_revoke_trust) + " " + name);
             revokeButton.setAllCaps(false);
+            revokeButton.setMinHeight(dp(48));
             styleButton(revokeButton, false);
             revokeButton.setTextColor(COLOR_DANGER);
             revokeButton.setOnClickListener(v -> confirmRevokeTrustedPeer(peer, revokeButton));
@@ -1002,10 +1881,10 @@ public class MainActivity extends Activity {
         if (activityDestroyed) return;
         String name = displayNameOrFallback(peer.getDisplayName());
         new AlertDialog.Builder(this)
-            .setTitle("移除设备信任？")
-            .setMessage("移除对“" + name + "”的信任后，必须重新完成安全配对才能恢复。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("移除信任", (dialog, which) -> revokeTrustedPeer(peer, revokeButton))
+            .setTitle(getString(R.string.dialog_revoke_trust_title))
+            .setMessage(getString(R.string.dialog_revoke_trust_message, name))
+            .setNegativeButton(getString(R.string.dialog_cancel), null)
+            .setPositiveButton(getString(R.string.btn_revoke_trust), (dialog, which) -> revokeTrustedPeer(peer, revokeButton))
             .show();
     }
 
@@ -1034,7 +1913,7 @@ public class MainActivity extends Activity {
                 } catch (Exception error) {
                     runOnUiThreadIfAlive(() -> {
                         revokeButton.setEnabled(true);
-                        revokeButton.setText("移除信任");
+                        revokeButton.setText(getString(R.string.btn_revoke_trust));
                         trustedPeersStatusText.setText("移除信任失败，请稍后重试。");
                         appendLog("移除可信设备失败（" + error.getClass().getSimpleName() + "）。");
                     });
@@ -1104,8 +1983,10 @@ public class MainActivity extends Activity {
             endpoint.setPadding(0, dp(5), 0, dp(10));
             item.addView(endpoint, matchWrap());
             Button pairButton = new Button(this);
-            pairButton.setText("开始安全配对");
+            pairButton.setText(getString(R.string.btn_start_pairing));
+            pairButton.setContentDescription(getString(R.string.btn_start_pairing) + " " + peer.deviceName);
             pairButton.setAllCaps(false);
+            pairButton.setMinHeight(dp(48));
             styleButton(pairButton, true);
             pairButton.setOnClickListener(v -> {
                 v2StatusText.setText("正在连接 " + peer.deviceName + "…");
@@ -1154,22 +2035,28 @@ public class MainActivity extends Activity {
             item.addView(code, matchWrap());
             if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION) {
                 Button confirm = new Button(this);
-                confirm.setText("配对码相同，确认配对");
+                confirm.setText(getString(R.string.btn_confirm_pairing));
+                confirm.setContentDescription(getString(R.string.btn_confirm_pairing));
                 confirm.setAllCaps(false);
+                confirm.setMinHeight(dp(48));
                 styleButton(confirm, true);
                 confirm.setOnClickListener(v -> v2PairingController.confirmPairing(session.pairingId));
                 item.addView(confirm, matchWrap());
             } else if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
                 Button trust = new Button(this);
-                trust.setText("保存为可信设备");
+                trust.setText(getString(R.string.btn_save_trust));
+                trust.setContentDescription(getString(R.string.btn_save_trust));
                 trust.setAllCaps(false);
+                trust.setMinHeight(dp(48));
                 styleButton(trust, true);
                 trust.setOnClickListener(v -> v2PairingController.completePairing(session.pairingId));
                 item.addView(trust, matchWrap());
             }
             Button cancel = new Button(this);
-            cancel.setText("取消配对");
+            cancel.setText(getString(R.string.btn_cancel_pairing));
+            cancel.setContentDescription(getString(R.string.btn_cancel_pairing));
             cancel.setAllCaps(false);
+            cancel.setMinHeight(dp(48));
             styleButton(cancel, false);
             cancel.setOnClickListener(v -> v2PairingController.cancelPairing(session.pairingId, "user-cancelled"));
             LinearLayout.LayoutParams cancelParams = matchWrap();
@@ -1194,7 +2081,7 @@ public class MainActivity extends Activity {
     private void renderPeers() {
         peersLayout.removeAllViews();
         if (peers.isEmpty()) {
-            TextView empty = text("正在扫描局域网设备…", 13, COLOR_MUTED, Typeface.NORMAL);
+            TextView empty = text(getString(R.string.searching_peers), 13, COLOR_MUTED, Typeface.NORMAL);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(dp(12), dp(12), dp(12), dp(12));
             empty.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
@@ -1211,6 +2098,7 @@ public class MainActivity extends Activity {
             item.setClickable(true);
             item.setFocusable(true);
             item.setSelected(selected);
+            item.setMinimumHeight(dp(48));
             item.setContentDescription(peer.deviceName + (selected ? "，已选择" : "，可用"));
             item.setBackground(selected
                 ? roundedStroke(COLOR_PRIMARY_SOFT, dp(8), COLOR_PRIMARY, 2)
@@ -1386,6 +2274,21 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void copyLogToClipboard() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            ClipData clip = ClipData.newPlainText("Nearby Transfer Logs", logs.render());
+            clipboard.setPrimaryClip(clip);
+            Toast.makeText(this, getString(R.string.log_copied), Toast.LENGTH_SHORT).show();
+            appendLog("日志已复制到剪贴板。");
+        }
+    }
+
+    private void clearLogs() {
+        logText.setText(getString(R.string.no_logs));
+        Toast.makeText(this, "日志已清空", Toast.LENGTH_SHORT).show();
+    }
+
     private static boolean isTerminalPairingStatus(V2PairingSessionStore.Status status) {
         return status == V2PairingSessionStore.Status.COMPLETED
             || status == V2PairingSessionStore.Status.CANCELLED
@@ -1416,6 +2319,7 @@ public class MainActivity extends Activity {
         view.setGravity(Gravity.CENTER);
         view.setClickable(true);
         view.setFocusable(true);
+        view.setMinHeight(dp(48));
         view.setOnClickListener(ignored -> selectTab(tab));
         return view;
     }
@@ -1424,13 +2328,23 @@ public class MainActivity extends Activity {
         selectedTab = tab;
         boolean showTransfer = tab == TAB_TRANSFER;
         boolean showDevices = tab == TAB_DEVICES;
+        boolean showLibraries = tab == TAB_LIBRARIES;
+        boolean showSettings = tab == TAB_SETTINGS;
         transferSection.setVisibility(showTransfer ? View.VISIBLE : View.GONE);
         devicesSection.setVisibility(showDevices ? View.VISIBLE : View.GONE);
-        settingsSection.setVisibility(tab == TAB_SETTINGS ? View.VISIBLE : View.GONE);
+        librariesSection.setVisibility(showLibraries ? View.VISIBLE : View.GONE);
+        settingsSection.setVisibility(showSettings ? View.VISIBLE : View.GONE);
         styleNavigationTab(transferTab, showTransfer);
         styleNavigationTab(devicesTab, showDevices);
-        styleNavigationTab(settingsTab, tab == TAB_SETTINGS);
+        styleNavigationTab(librariesTab, showLibraries);
+        styleNavigationTab(settingsTab, showSettings);
         contentScroll.post(() -> contentScroll.scrollTo(0, 0));
+        if (tab == TAB_LIBRARIES) {
+            refreshLibrariesList(false);
+            startLibraryEventsSubscription();
+        } else {
+            stopLibraryEventsSubscription();
+        }
         if (tab == TAB_SETTINGS && logScroll != null && logFollowLatest) {
             logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         }

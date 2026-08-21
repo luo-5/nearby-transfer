@@ -18,3 +18,7 @@ local.properties
 *.part-*
 .DS_Store
 Thumbs.db
+references/
+running_ports.json
+phone_screen_*.png
+*.corrupt-*

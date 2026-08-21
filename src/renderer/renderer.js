@@ -55,12 +55,82 @@ const elements = {
   v2TransferJobSummary: document.getElementById('v2TransferJobSummary'),
   v2TransferJobStatus: document.getElementById('v2TransferJobStatus'),
   v2TransferJobs: document.getElementById('v2TransferJobs'),
-  v2TransferJobRefresh: document.getElementById('v2TransferJobRefresh')
+  v2TransferJobRefresh: document.getElementById('v2TransferJobRefresh'),
+  libraryStatusBadge: document.getElementById('libraryStatusBadge'),
+  librarySharePath: document.getElementById('librarySharePath'),
+  libraryShareMode: document.getElementById('libraryShareMode'),
+  libraryWebDavUrl: document.getElementById('libraryWebDavUrl'),
+  changeLibraryPathButton: document.getElementById('changeLibraryPathButton'),
+  openLibraryFolderButton: document.getElementById('openLibraryFolderButton'),
+  resetLibraryPathButton: document.getElementById('resetLibraryPathButton'),
+  copyWebDavUrlButton: document.getElementById('copyWebDavUrlButton')
 };
 
 window.lanTransfer.getState().then(applyState);
 initializeV2Pairing();
 initializeTransferJobs();
+refreshLibraryInfo();
+
+async function refreshLibraryInfo() {
+  if (!window.lanTransfer || !window.lanTransfer.library) return;
+  try {
+    const status = await window.lanTransfer.library.getStatus();
+    if (elements.libraryStatusBadge) {
+      elements.libraryStatusBadge.textContent = status.running ? `运行中 :${status.port}` : '未启动';
+    }
+    if (elements.librarySharePath) {
+      elements.librarySharePath.textContent = (status.primaryShare && status.primaryShare.localPath) || '未配置';
+    }
+    if (elements.libraryShareMode) {
+      elements.libraryShareMode.textContent = status.isDefault ? '默认共享库' : '自定义共享库';
+    }
+    if (elements.libraryWebDavUrl) {
+      elements.libraryWebDavUrl.textContent = status.webDavUrl || `http://127.0.0.1:${status.port || 56578}/webdav/default-share`;
+    }
+  } catch (err) {
+    console.error('Failed to get library status:', err);
+  }
+}
+
+if (elements.changeLibraryPathButton) {
+  elements.changeLibraryPathButton.addEventListener('click', async () => {
+    const res = await window.lanTransfer.library.chooseShareDirectory();
+    if (res && res.ok) {
+      setStatus('NAS 共享文件库目录已更改。');
+      refreshLibraryInfo();
+    }
+  });
+}
+
+if (elements.openLibraryFolderButton) {
+  elements.openLibraryFolderButton.addEventListener('click', async () => {
+    await window.lanTransfer.library.openShareDirectory('default-share');
+  });
+}
+
+if (elements.resetLibraryPathButton) {
+  elements.resetLibraryPathButton.addEventListener('click', async () => {
+    const res = await window.lanTransfer.library.resetShareDirectory();
+    if (res && res.ok) {
+      setStatus('NAS 共享文件库已恢复为默认目录。');
+      refreshLibraryInfo();
+    }
+  });
+}
+
+if (elements.copyWebDavUrlButton) {
+  elements.copyWebDavUrlButton.addEventListener('click', async () => {
+    const url = elements.libraryWebDavUrl?.textContent;
+    if (url && url !== '-') {
+      try {
+        await navigator.clipboard.writeText(url);
+        setStatus('已复制 WebDAV 挂载链接到剪贴板！');
+      } catch (_e) {
+        setStatus('链接：' + url);
+      }
+    }
+  });
+}
 
 window.lanTransfer.onState(applyState);
 window.lanTransfer.onPeers((peers) => {

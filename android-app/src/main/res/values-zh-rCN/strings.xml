@@ -1,4 +1,5 @@
 <resources>
+    <string name="app_name">Nearby Transfer</string>
     <string name="compose_migration_activity_label">Nearby Transfer 预览</string>
     <string name="compose_migration_title">Compose 迁移预览</string>
     <string name="compose_migration_notice">此预览与正式 Java 传输流程隔离。</string>
@@ -10,4 +11,126 @@
     <string name="transfers_placeholder">可恢复的多文件传输队列将显示在这里。</string>
     <string name="libraries_placeholder">已配对设备的文件库将显示在这里。</string>
     <string name="settings_placeholder">身份、语言与局域网设置将显示在这里。</string>
+
+    <!-- 标签页 -->
+    <string name="tab_transfer">传输</string>
+    <string name="tab_devices">设备</string>
+    <string name="tab_settings">设置</string>
+
+    <!-- 传输板块 -->
+    <string name="section_send_file">发送文件</string>
+    <string name="btn_choose_file">选择要发送的文件</string>
+    <string name="no_file_selected">未选择文件。</string>
+    <string name="file_selected_format">已选择：%1$s (%2$s)</string>
+    <string name="section_nearby_peers">附近设备</string>
+    <string name="btn_refresh_peers">立即刷新附近设备</string>
+    <string name="btn_send_to_peer">发送到选中设备</string>
+    <string name="no_peers_found">暂未发现设备，请确认处于同一 Wi-Fi 且未开启 AP 隔离。</string>
+    <string name="peers_found_format">发现 %1$d 台设备。</string>
+    <string name="searching_peers">正在搜索附近设备…</string>
+    <string name="peer_selected_hint">点击选择此设备</string>
+
+    <!-- 传输进度板块 -->
+    <string name="section_transfer_progress">传输进度</string>
+    <string name="no_active_transfer">暂无传输</string>
+    <string name="transfer_waiting">等待发送或接收文件。</string>
+    <string name="transfer_preparing">正在准备传输…</string>
+    <string name="transfer_in_progress">正在传输…</string>
+    <string name="transfer_completed">传输已顺利完成。</string>
+    <string name="transfer_rejected">传输已被对端设备拒绝。</string>
+    <string name="transfer_failed">传输失败：%1$s</string>
+    <string name="transfer_cancelled">传输已取消。</string>
+    <string name="transfer_speed_format">速率：%1$s</string>
+    <string name="transfer_bytes_format">%1$s / %2$s (%3$d%%)</string>
+
+    <!-- 设备与配对板块 -->
+    <string name="section_security_pairing">安全配对</string>
+    <string name="btn_refresh_v2">刷新配对与可信设备</string>
+    <string name="v2_starting">正在启动协议 v2 安全配对…</string>
+    <string name="v2_announcing">正在发送协议 v2 发现公告…</string>
+    <string name="title_active_pairing">正在进行的配对</string>
+    <string name="title_trusted_devices">可信设备</string>
+    <string name="trusted_devices_reading">正在读取可信设备…</string>
+    <string name="no_trusted_devices">暂无可信设备。请先与附近设备完成配对，即可进行加密快速传输。</string>
+    <string name="no_v2_peers">附近暂未发现支持协议 v2 的设备。</string>
+    <string name="btn_start_pairing">配对</string>
+    <string name="btn_cancel_pairing">取消</string>
+    <string name="btn_confirm_pairing">确认配对码</string>
+    <string name="btn_save_trust">保存信任</string>
+    <string name="btn_revoke_trust">解除信任</string>
+    <string name="dialog_revoke_trust_title">解除信任设备</string>
+    <string name="dialog_revoke_trust_message">确定要解除对设备“%1$s”的信任吗？解除后后续传输需重新配对。</string>
+    <string name="dialog_confirm">确定</string>
+    <string name="dialog_cancel">取消</string>
+
+    <!-- 设置板块 -->
+    <string name="section_local_identity">本机与保存</string>
+    <string name="btn_expand_settings">展开设置</string>
+    <string name="btn_collapse_settings">收起设置</string>
+    <string name="device_generating_keys">正在生成本机密钥…</string>
+    <string name="device_id_format">本机设备 ID：%1$s</string>
+    <string name="save_location_format">保存目录：%1$s</string>
+    <string name="save_mode_format">保存模式：%1$s</string>
+    <string name="btn_change_save_dir">更改保存位置</string>
+    <string name="btn_reset_save_dir">恢复默认下载目录</string>
+    <string name="section_diagnostics_log">诊断日志</string>
+    <string name="no_logs">暂无日志。</string>
+    <string name="btn_copy_log">复制日志</string>
+    <string name="btn_clear_log">清空日志</string>
+    <string name="log_copied">日志已复制到剪贴板。</string>
+
+    <!-- 权限与系统状态 -->
+    <string name="status_starting">正在启动服务…</string>
+    <string name="permission_nearby_missing">未授予附近设备权限，无法搜索局域网设备。</string>
+    <string name="permission_storage_missing">未授予存储权限，无法保存到系统下载目录。</string>
+    <string name="incoming_transfer_dialog_title">收到文件传输请求</string>
+    <string name="incoming_transfer_dialog_msg">%1$s 请求向您发送 %2$d 个文件（共 %3$s）。\n是否接收？</string>
+    <string name="btn_accept">接收</string>
+    <string name="btn_reject">拒绝</string>
+
+    <!-- Compose 屏幕字符串 -->
+    <string name="section_select_file">选择文件</string>
+    <string name="section_nearby_devices">附近设备</string>
+    <string name="section_trusted_peers">受信任设备</string>
+    <string name="section_save_location">保存位置</string>
+    <string name="section_diagnostics">诊断日志</string>
+    <string name="section_transfer_history">传输历史</string>
+    <string name="action_choose_file">选择文件</string>
+    <string name="action_send">发送</string>
+    <string name="action_pair">配对</string>
+    <string name="action_confirm">确认</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_retry">重试</string>
+    <string name="action_revoke_trust">解除信任</string>
+    <string name="action_change_location">更改位置</string>
+    <string name="action_reset_location">重置位置</string>
+    <string name="action_copy_log">复制日志</string>
+    <string name="action_clear_log">清空日志</string>
+    <string name="no_nearby_devices">未发现附近设备。</string>
+    <string name="no_trusted_peers">暂无受信任设备。</string>
+    <string name="log_empty">暂无日志记录。</string>
+    <string name="pairing_request_title">设备配对请求</string>
+    <string name="pairing_verify_hint">请确认此 6 位配对码与对端设备显示一致。</string>
+    <string name="permission_transfer">传输</string>
+    <string name="permission_library_read">读取文件库</string>
+    <string name="permission_library_upload">上传到文件库</string>
+    <string name="device_name_fallback">Android 设备</string>
+    <string name="status_ready">就绪</string>
+    <string name="status_awaiting_approval">等待确认</string>
+    <string name="status_queued">排队中</string>
+    <string name="status_transferring">传输中</string>
+    <string name="status_paused">已暂停</string>
+    <string name="status_completed">已完成</string>
+    <string name="status_failed">失败</string>
+    <string name="status_cancelled">已取消</string>
+
+    <!-- 文件库相关字符串 -->
+    <string name="section_shared_libraries">共享文件库</string>
+    <string name="no_libraries_available">暂无可用共享文件库。请连接已开启文件库共享的受信任设备。</string>
+    <string name="action_upload_to_library">上传文件</string>
+    <string name="action_download_file">下载</string>
+    <string name="library_readonly_badge">只读</string>
+    <string name="library_upload_badge">允许上传</string>
+    <string name="empty_folder_message">此文件夹为空。</string>
+    <string name="action_go_up">返回上级</string>
 </resources>

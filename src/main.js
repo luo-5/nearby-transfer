@@ -1,5 +1,6 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { loadOrCreateDevice, updateDeviceConfig, toPublicDevice } = require('./core/config');
 const { Discovery } = require('./core/discovery');
 const { TransferServer } = require('./core/server');
@@ -12,6 +13,8 @@ const { LanService } = require('./v2/lan-service');
 const { registerLanServiceIpcHandlers } = require('./v2/desktop-lan-api');
 const { TransferJobStore } = require('./v2/transfer-job-store');
 const { createDesktopTransferJobApi, registerTransferJobIpcHandlers } = require('./v2/desktop-transfer-job-api');
+const { DesktopLibraryService } = require('./v2/desktop-library-service');
+const { registerLibraryServiceIpcHandlers } = require('./v2/desktop-library-api');
 
 let mainWindow = null;
 let device = null;
@@ -21,9 +24,20 @@ let trustedPeerStore = null;
 let pairingSessionStore = null;
 let transferJobStore = null;
 let desktopPairingApi = null;
+let desktopLibraryService = null;
 let v2LanService = null;
 let saveDirectory = null;
-let selectedFilePath = null;
+process.on('uncaughtException', (err) => {
+  try {
+    fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNCAUGHT: ' + (err.stack || err.message) + '\n', { flag: 'a' });
+  } catch (_e) {}
+});
+
+process.on('unhandledRejection', (err) => {
+  try {
+    fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNHANDLED REJECTION: ' + (err ? (err.stack || err.message) : 'unknown') + '\n', { flag: 'a' });
+  } catch (_e) {}
+});
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
@@ -37,6 +51,10 @@ app.whenReady().then(async () => {
     }
   });
 }).catch((error) => {
+  try {
+    fs.writeFileSync('main_error.log', (error.stack || error.message) + '\n', 'utf8');
+  } catch (_e) {}
+  console.error('MAIN ERROR:', error);
   dialog.showErrorBox('附近传输启动失败', error.stack || error.message);
   app.quit();
 });
@@ -48,6 +66,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (desktopLibraryService) {
+    desktopLibraryService.stop().catch(() => {});
+    desktopLibraryService = null;
+  }
   if (v2LanService) {
     v2LanService.stop().catch(() => {});
     v2LanService = null;
@@ -162,12 +184,14 @@ function createWindow() {
     minWidth: 860,
     minHeight: 560,
     title: '附近传输',
+    show: true,
+    center: true,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: false
     }
   });
 
@@ -180,6 +204,10 @@ function createWindow() {
     }
   });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    mainWindow.focus();
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -266,9 +294,37 @@ async function startCore() {
   trustedPeerStore = new TrustedPeerStore(userDataDir);
   pairingSessionStore = new PairingSessionStore(userDataDir);
   transferJobStore = new TransferJobStore(userDataDir, trustedPeerStore);
+
+  const defaultShareDir = path.join(userDataDir, 'SharedLibrary');
+  if (!fs.existsSync(defaultShareDir)) {
+    fs.mkdirSync(defaultShareDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(defaultShareDir, '欢迎使用附近传输-共享库.txt'),
+      '恭喜！您已成功连接到电脑端受控 NAS 共享文件库。\n您可以在手机上随时下载此文件，也可以从手机上传相片和文档！\n',
+      'utf8'
+    );
+  }
+
+  desktopLibraryService = new DesktopLibraryService({
+    trustedPeerStore,
+    shares: [{
+      id: 'default-share',
+      name: '电脑共享文件库',
+      localPath: defaultShareDir,
+      readOnly: false
+    }]
+  });
+  registerLibraryServiceIpcHandlers(ipcMain, desktopLibraryService, { dialog, shell, userDataDir });
+  let libraryPort = 56578;
+  try {
+    libraryPort = await desktopLibraryService.start(56578);
+  } catch (_e) {
+    libraryPort = await desktopLibraryService.start(0);
+  }
+
   desktopPairingApi = createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore });
   registerPairingIpcHandlers(ipcMain, desktopPairingApi);
-  v2LanService = new LanService({ device, pairingApi: desktopPairingApi, capabilities: ['pairing'] });
+  v2LanService = new LanService({ device, pairingApi: desktopPairingApi, capabilities: ['pairing', 'transfer', 'library'], enableDiscovery: true });
   v2LanService.on('peers', (peers) => sendToRenderer('v2-peers', peers.map(toPublicV2Peer)));
   v2LanService.on('pairing-session', (session) => sendToRenderer('v2-pairing-session', session));
   v2LanService.on('error', (error) => emitTransferEvent({
@@ -300,7 +356,16 @@ async function startCore() {
     error: error.message
   }));
   discovery.start();
-  await v2LanService.start();
+  const v2Port = await v2LanService.start();
+
+  try {
+    fs.writeFileSync('running_ports.json', JSON.stringify({
+      libraryPort,
+      transferServerPort: port,
+      v2LanPort: v2Port
+    }, null, 2), 'utf8');
+  } catch (_e) {}
+
   emitState();
 }
 
@@ -425,4 +490,25 @@ function toUserError(message) {
     ['Directory path must resolve to itself', '保存目录不能通过链接跳转']
   ]);
   return translations.get(message) || message || '操作失败';
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 980,
+    height: 720,
+    minWidth: 800,
+    minHeight: 600,
+    show: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+
+  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 }

@@ -20,7 +20,7 @@ final class DeviceConfig {
     final String encryptionPublicKey;
     final String encryptionPrivateKey;
 
-    private DeviceConfig(
+    DeviceConfig(
         String deviceId,
         String deviceName,
         String fingerprint,

@@ -1,4 +1,5 @@
 <resources>
+    <string name="app_name">Nearby Transfer</string>
     <string name="compose_migration_activity_label">Nearby Transfer preview</string>
     <string name="compose_migration_title">Compose migration preview</string>
     <string name="compose_migration_notice">This preview is isolated from the production Java transfer flow.</string>
@@ -10,4 +11,126 @@
     <string name="transfers_placeholder">Recoverable multi-file transfer queues will appear here.</string>
     <string name="libraries_placeholder">Paired-device file libraries will appear here.</string>
     <string name="settings_placeholder">Identity, language, and local-network settings will appear here.</string>
+
+    <!-- Tab Titles -->
+    <string name="tab_transfer">Transfer</string>
+    <string name="tab_devices">Devices</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Transfer Section -->
+    <string name="section_send_file">Send Files</string>
+    <string name="btn_choose_file">Select file to send</string>
+    <string name="no_file_selected">No file selected.</string>
+    <string name="file_selected_format">Selected: %1$s (%2$s)</string>
+    <string name="section_nearby_peers">Nearby Devices</string>
+    <string name="btn_refresh_peers">Refresh nearby devices</string>
+    <string name="btn_send_to_peer">Send to selected device</string>
+    <string name="no_peers_found">No nearby devices found. Make sure devices are on the same Wi-Fi without AP isolation.</string>
+    <string name="peers_found_format">Found %1$d device(s).</string>
+    <string name="searching_peers">Searching for nearby devices…</string>
+    <string name="peer_selected_hint">Tap to select this peer</string>
+
+    <!-- Transfer Progress Section -->
+    <string name="section_transfer_progress">Transfer Progress</string>
+    <string name="no_active_transfer">No active transfer</string>
+    <string name="transfer_waiting">Waiting to send or receive files.</string>
+    <string name="transfer_preparing">Preparing transfer…</string>
+    <string name="transfer_in_progress">Transferring…</string>
+    <string name="transfer_completed">Transfer completed successfully.</string>
+    <string name="transfer_rejected">Transfer was rejected by the remote device.</string>
+    <string name="transfer_failed">Transfer failed: %1$s</string>
+    <string name="transfer_cancelled">Transfer was cancelled.</string>
+    <string name="transfer_speed_format">Speed: %1$s</string>
+    <string name="transfer_bytes_format">%1$s / %2$s (%3$d%%)</string>
+
+    <!-- Devices & Pairing Section -->
+    <string name="section_security_pairing">Security &amp; Pairing</string>
+    <string name="btn_refresh_v2">Refresh pairing &amp; trusted devices</string>
+    <string name="v2_starting">Starting protocol v2 secure pairing…</string>
+    <string name="v2_announcing">Sending protocol v2 discovery announcement…</string>
+    <string name="title_active_pairing">Active Pairing</string>
+    <string name="title_trusted_devices">Trusted Devices</string>
+    <string name="trusted_devices_reading">Loading trusted devices…</string>
+    <string name="no_trusted_devices">No trusted devices yet. Pair with a device to enable fast and secure transfers.</string>
+    <string name="no_v2_peers">No protocol v2 devices discovered nearby.</string>
+    <string name="btn_start_pairing">Pair</string>
+    <string name="btn_cancel_pairing">Cancel</string>
+    <string name="btn_confirm_pairing">Confirm code</string>
+    <string name="btn_save_trust">Save trust</string>
+    <string name="btn_revoke_trust">Revoke</string>
+    <string name="dialog_revoke_trust_title">Revoke Trusted Device</string>
+    <string name="dialog_revoke_trust_message">Are you sure you want to revoke trust for %1$s? You will need to pair again for future transfers.</string>
+    <string name="dialog_confirm">Confirm</string>
+    <string name="dialog_cancel">Cancel</string>
+
+    <!-- Settings Section -->
+    <string name="section_local_identity">Device &amp; Storage</string>
+    <string name="btn_expand_settings">Expand Settings</string>
+    <string name="btn_collapse_settings">Collapse Settings</string>
+    <string name="device_generating_keys">Generating local identity keys…</string>
+    <string name="device_id_format">Device ID: %1$s</string>
+    <string name="save_location_format">Save Location: %1$s</string>
+    <string name="save_mode_format">Save Mode: %1$s</string>
+    <string name="btn_change_save_dir">Change save location</string>
+    <string name="btn_reset_save_dir">Reset to default Downloads</string>
+    <string name="section_diagnostics_log">Diagnostics Log</string>
+    <string name="no_logs">No logs recorded.</string>
+    <string name="btn_copy_log">Copy Log</string>
+    <string name="btn_clear_log">Clear Log</string>
+    <string name="log_copied">Logs copied to clipboard.</string>
+
+    <!-- Permissions & Errors -->
+    <string name="status_starting">Starting services…</string>
+    <string name="permission_nearby_missing">Nearby devices permission not granted. Unable to discover devices on local network.</string>
+    <string name="permission_storage_missing">Storage permission not granted. Unable to save to public Downloads directory.</string>
+    <string name="incoming_transfer_dialog_title">Incoming Transfer</string>
+    <string name="incoming_transfer_dialog_msg">%1$s wants to send %2$d file(s) (%3$s).\nAccept?</string>
+    <string name="btn_accept">Accept</string>
+    <string name="btn_reject">Reject</string>
+
+    <!-- Compose Screen Strings -->
+    <string name="section_select_file">Select File</string>
+    <string name="section_nearby_devices">Nearby Devices</string>
+    <string name="section_trusted_peers">Trusted Devices</string>
+    <string name="section_save_location">Save Location</string>
+    <string name="section_diagnostics">Diagnostics Log</string>
+    <string name="section_transfer_history">Transfer History</string>
+    <string name="action_choose_file">Choose File</string>
+    <string name="action_send">Send</string>
+    <string name="action_pair">Pair</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_revoke_trust">Revoke</string>
+    <string name="action_change_location">Change Location</string>
+    <string name="action_reset_location">Reset Location</string>
+    <string name="action_copy_log">Copy Log</string>
+    <string name="action_clear_log">Clear Log</string>
+    <string name="no_nearby_devices">No nearby devices found.</string>
+    <string name="no_trusted_peers">No trusted devices yet.</string>
+    <string name="log_empty">No logs recorded.</string>
+    <string name="pairing_request_title">Pairing Request</string>
+    <string name="pairing_verify_hint">Verify that this 6-digit code matches the code displayed on the other device.</string>
+    <string name="permission_transfer">Transfer</string>
+    <string name="permission_library_read">Read Library</string>
+    <string name="permission_library_upload">Upload to Library</string>
+    <string name="device_name_fallback">Android Device</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_awaiting_approval">Awaiting Approval</string>
+    <string name="status_queued">Queued</string>
+    <string name="status_transferring">Transferring</string>
+    <string name="status_paused">Paused</string>
+    <string name="status_completed">Completed</string>
+    <string name="status_failed">Failed</string>
+    <string name="status_cancelled">Cancelled</string>
+
+    <!-- Library Section Strings -->
+    <string name="section_shared_libraries">Shared Libraries</string>
+    <string name="no_libraries_available">No shared libraries available. Connect to a trusted device with library sharing enabled.</string>
+    <string name="action_upload_to_library">Upload File</string>
+    <string name="action_download_file">Download</string>
+    <string name="library_readonly_badge">Read-Only</string>
+    <string name="library_upload_badge">Upload Allowed</string>
+    <string name="empty_folder_message">This folder is empty.</string>
+    <string name="action_go_up">Up</string>
 </resources>

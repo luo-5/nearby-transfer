@@ -113,8 +113,8 @@ final class V2TransferCrypto {
         );
         PrivateKey privateKey = CryptoUtil.readPrivateKey(localPrivateKeyPem, "X25519");
         PublicKey publicKey = CryptoUtil.readPublicKey(remotePublicKeyPem, "X25519");
-        if (!"X25519".equalsIgnoreCase(privateKey.getAlgorithm()) ||
-            !"X25519".equalsIgnoreCase(publicKey.getAlgorithm()) ||
+        if ((!"X25519".equalsIgnoreCase(privateKey.getAlgorithm()) && !"XDH".equalsIgnoreCase(privateKey.getAlgorithm())) ||
+            (!"X25519".equalsIgnoreCase(publicKey.getAlgorithm()) && !"XDH".equalsIgnoreCase(publicKey.getAlgorithm())) ||
             !Arrays.equals(privateDer, privateKey.getEncoded()) ||
             !Arrays.equals(publicDer, publicKey.getEncoded())) {
             throw new IllegalArgumentException("Transfer session keys must use canonical X25519 PKCS#8/SPKI encoding");
@@ -122,9 +122,26 @@ final class V2TransferCrypto {
 
         byte[] sharedSecret;
         try {
-            KeyAgreement agreement = KeyAgreement.getInstance("X25519", "BC");
-            agreement.init(privateKey);
-            agreement.doPhase(publicKey, true);
+            KeyAgreement agreement = null;
+            for (java.security.Provider provider : java.security.Security.getProviders()) {
+                for (String name : new String[] { "X25519", "XDH" }) {
+                    try {
+                        KeyAgreement ka = KeyAgreement.getInstance(name, provider);
+                        ka.init(privateKey);
+                        ka.doPhase(publicKey, true);
+                        agreement = ka;
+                        break;
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (agreement != null) break;
+            }
+            if (agreement == null) {
+                KeyAgreement ka = KeyAgreement.getInstance("X25519", "BC");
+                ka.init(privateKey);
+                ka.doPhase(publicKey, true);
+                agreement = ka;
+            }
             sharedSecret = agreement.generateSecret();
         } catch (RuntimeException error) {
             // Bouncy Castle reports low-order/all-zero peer keys as an

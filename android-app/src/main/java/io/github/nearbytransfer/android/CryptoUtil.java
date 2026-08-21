@@ -45,17 +45,50 @@ final class CryptoUtil {
     }
 
     static KeyPair generateX25519KeyPair() throws GeneralSecurityException {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("X25519", "BC");
-        return generator.generateKeyPair();
+        for (Provider provider : Security.getProviders()) {
+            if (!"BC".equals(provider.getName())) {
+                for (String name : new String[] { "X25519", "XDH" }) {
+                    try {
+                        return KeyPairGenerator.getInstance(name, provider).generateKeyPair();
+                    } catch (GeneralSecurityException ignored) {
+                    }
+                }
+            }
+        }
+        return KeyPairGenerator.getInstance("X25519", "BC").generateKeyPair();
     }
 
     static PublicKey readPublicKey(String pem, String algorithm) throws GeneralSecurityException {
         byte[] der = readPem(pem);
+        if ("X25519".equalsIgnoreCase(algorithm)) {
+            for (Provider provider : Security.getProviders()) {
+                if (!"BC".equals(provider.getName())) {
+                    for (String name : new String[] { "X25519", "XDH" }) {
+                        try {
+                            return KeyFactory.getInstance(name, provider).generatePublic(new X509EncodedKeySpec(der));
+                        } catch (GeneralSecurityException ignored) {
+                        }
+                    }
+                }
+            }
+        }
         return KeyFactory.getInstance(algorithm, "BC").generatePublic(new X509EncodedKeySpec(der));
     }
 
     static PrivateKey readPrivateKey(String pem, String algorithm) throws GeneralSecurityException {
         byte[] der = readPem(pem);
+        if ("X25519".equalsIgnoreCase(algorithm)) {
+            for (Provider provider : Security.getProviders()) {
+                if (!"BC".equals(provider.getName())) {
+                    for (String name : new String[] { "X25519", "XDH" }) {
+                        try {
+                            return KeyFactory.getInstance(name, provider).generatePrivate(new PKCS8EncodedKeySpec(der));
+                        } catch (GeneralSecurityException ignored) {
+                        }
+                    }
+                }
+            }
+        }
         return KeyFactory.getInstance(algorithm, "BC").generatePrivate(new PKCS8EncodedKeySpec(der));
     }
 

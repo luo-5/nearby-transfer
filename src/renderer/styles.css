@@ -523,3 +523,26 @@ dd {
     width: 100%;
   }
 }
+
+.library-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.path-display,
+.url-display {
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  font-size: 0.82rem;
+  word-break: break-all;
+  background: rgba(0, 0, 0, 0.22);
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: text;
+  margin-top: 4px;
+}
+
+.url-display {
+  color: var(--accent);
+}
+

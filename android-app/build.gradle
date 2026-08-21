@@ -13,8 +13,8 @@ android {
         applicationId 'io.github.nearbytransfer.android'
         minSdk 26
         targetSdk 35
-        versionCode 2
-        versionName '0.2.0'
+        versionCode 3
+        versionName '1.1.0'
 
         // The Java MVP remains the launcher. Compose is isolated behind a build flag
         // until its navigation and persistence layers are production-ready.

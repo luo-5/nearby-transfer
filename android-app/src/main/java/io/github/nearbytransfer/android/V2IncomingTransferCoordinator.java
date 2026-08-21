@@ -94,9 +94,16 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
         CompletionStage<Approval> requestApproval(PendingRequest request);
     }
 
+    interface PreparedRuntime extends AutoCloseable {
+        V2WireFrame.Frame createResumeFrame() throws Exception;
+        void start(Socket socket) throws Exception;
+        @Override default void close() throws Exception {}
+    }
+
+    @FunctionalInterface
     interface RuntimeHandler {
-        void start(Socket socket, V2TransferBootstrap.VerifiedManifest manifest,
-                   V2TransferPeerAccess.AuthorizedPeer peer) throws Exception;
+        PreparedRuntime prepare(V2TransferBootstrap.VerifiedManifest manifest,
+                                V2TransferPeerAccess.AuthorizedPeer peer) throws Exception;
     }
 
     interface PeerLookup {
@@ -361,6 +368,15 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
                 return;
             }
 
+            PreparedRuntime runtime = null;
+            try {
+                runtime = runtimeHandler.prepare(verified, currentPeer);
+            } catch (Exception error) {
+                jobs.transition(verified.taskId, "FAILED", clock.nowEpochMillis(), "Runtime preparation failed", false);
+                sendDecision(connection, verified, "rejected");
+                return;
+            }
+
             try {
                 jobs.transition(verified.taskId, "QUEUED", clock.nowEpochMillis(), null, true);
                 jobs.transition(verified.taskId, "TRANSFERRING", clock.nowEpochMillis(), null, true);
@@ -368,12 +384,17 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
                 connection.sendDecisionFrame(V2TransferBootstrap.createDecisionFrame(
                     verified, "accepted", localSigningPrivateKey, clock.nowEpochMillis()
                 ));
+                V2WireFrame.Frame resumeFrame = runtime.createResumeFrame();
+                if (resumeFrame != null) {
+                    connection.sendDecisionFrame(resumeFrame);
+                }
 
                 Socket socket = null;
                 try {
                     socket = connection.detachForTransfer();
-                    runtimeHandler.start(socket, verified, currentPeer);
+                    runtime.start(socket);
                     socket = null;
+                    runtime = null;
                 } catch (Exception error) {
                     closeQuietly(socket);
                     transitionQuietly(
@@ -381,6 +402,9 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
                     );
                 }
             } finally {
+                if (runtime != null) {
+                    try { runtime.close(); } catch (Exception ignored) {}
+                }
                 finishHandoff();
             }
         } catch (Exception error) {

@@ -64,7 +64,7 @@ final class V2TransferMessageAuth {
         }
         try {
             PrivateKey key = CryptoUtil.readPrivateKey(pem, "Ed25519");
-            if (!"Ed25519".equalsIgnoreCase(key.getAlgorithm())) {
+            if (!"Ed25519".equalsIgnoreCase(key.getAlgorithm()) && !"EdDSA".equalsIgnoreCase(key.getAlgorithm())) {
                 throw new IllegalArgumentException("Transfer message signing requires an Ed25519 private key");
             }
             return key;
@@ -81,7 +81,7 @@ final class V2TransferMessageAuth {
         }
         try {
             PublicKey key = CryptoUtil.readPublicKey(pem, "Ed25519");
-            if (!"Ed25519".equalsIgnoreCase(key.getAlgorithm())) {
+            if (!"Ed25519".equalsIgnoreCase(key.getAlgorithm()) && !"EdDSA".equalsIgnoreCase(key.getAlgorithm())) {
                 throw new IllegalArgumentException("Transfer message verification requires an Ed25519 public key");
             }
             return key;

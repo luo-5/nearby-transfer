@@ -49,6 +49,31 @@
             <button id="resetSaveDirectoryButton" class="secondary" type="button">恢复默认下载目录</button>
           </div>
         </article>
+
+        <article class="panel library-panel">
+          <div class="panel-title-row">
+            <h2>NAS 共享文件库 (WebDAV)</h2>
+            <span id="libraryStatusBadge" class="badge">已就绪</span>
+          </div>
+          <p class="pairing-intro">手机与其它设备可通过受控免密会话或 WebDAV 直接访问与同步该目录下的所有文件。</p>
+          <dl>
+            <div>
+              <dt>当前共享文件夹</dt>
+              <dd id="librarySharePath" class="path-display">正在加载...</dd>
+              <dd id="libraryShareMode" class="mode-line">-</dd>
+            </div>
+            <div>
+              <dt>局域网 WebDAV 挂载地址</dt>
+              <dd id="libraryWebDavUrl" class="url-display">-</dd>
+            </div>
+          </dl>
+          <div class="button-row">
+            <button id="changeLibraryPathButton" class="primary" type="button">更改共享文件夹</button>
+            <button id="openLibraryFolderButton" class="secondary" type="button">在资源管理器中打开</button>
+            <button id="resetLibraryPathButton" class="secondary" type="button">恢复默认共享目录</button>
+            <button id="copyWebDavUrlButton" class="secondary" type="button">复制挂载链接</button>
+          </div>
+        </article>
       </section>
 
       <section class="panel pairing-panel" aria-labelledby="v2PairingTitle">
