@@ -1423,18 +1423,29 @@ public class MainActivity extends Activity {
                 if (!authResult.shares.isEmpty()) {
                     libraryShareId = authResult.shares.get(0).id;
                 }
-                List<WebDavClient.WebDavItem> items = WebDavClient.listFiles(serverIp, libraryServerPort, libraryToken, libraryShareId, libraryCurrentSubPath);
+                List<WebDavClient.WebDavItem> items;
+                try {
+                    items = WebDavClient.listFiles(serverIp, libraryServerPort, libraryToken, libraryShareId, libraryCurrentSubPath);
+                } catch (Exception listErr) {
+                    if (!libraryCurrentSubPath.isEmpty()) {
+                        libraryCurrentSubPath = "";
+                        items = WebDavClient.listFiles(serverIp, libraryServerPort, libraryToken, libraryShareId, "");
+                    } else {
+                        throw listErr;
+                    }
+                }
+                final List<WebDavClient.WebDavItem> finalItems = items;
                 runOnUiThreadIfAlive(() -> {
                     libraryLoading = false;
-                    rawLibraryItems = new ArrayList<>(items);
+                    rawLibraryItems = new ArrayList<>(finalItems);
                     if (librariesStatusText != null) {
                         String pathDisplay = libraryCurrentSubPath.isEmpty() ? "根目录" : libraryCurrentSubPath;
-                        librariesStatusText.setText("已连接电脑文件库 (" + serverIp + ":" + libraryServerPort + ") 当前: " + pathDisplay + " (" + items.size() + " 项)");
+                        librariesStatusText.setText("已连接电脑文件库 (" + serverIp + ":" + libraryServerPort + ") 当前: " + pathDisplay + " (" + finalItems.size() + " 项)");
                     }
                     renderLibraryBreadcrumbs();
                     applyFilterAndRender();
                     if (userInitiated) {
-                        Toast.makeText(this, "文件库已刷新 (" + items.size() + " 项)", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, "文件库已刷新 (" + finalItems.size() + " 项)", Toast.LENGTH_SHORT).show();
                     }
                 });
             } catch (Exception e) {

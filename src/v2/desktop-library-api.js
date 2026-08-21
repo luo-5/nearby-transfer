@@ -27,6 +27,17 @@ function registerLibraryServiceIpcHandlers(ipcMain, libraryService, { dialog, sh
     return libraryService.listShares();
   });
 
+  function persistLibraryConfig(localPath) {
+    if (!userDataDir) return;
+    try {
+      const configFile = path.join(userDataDir, 'library_config.json');
+      fs.writeFileSync(configFile, JSON.stringify({
+        activeSharePath: localPath,
+        updatedAt: Date.now()
+      }, null, 2), 'utf8');
+    } catch (_e) {}
+  }
+
   ipcMain.handle('v2:library-choose-share-directory', async () => {
     if (!dialog) return { ok: false, error: 'Dialog not available' };
     const shares = libraryService.listShares();
@@ -50,6 +61,7 @@ function registerLibraryServiceIpcHandlers(ipcMain, libraryService, { dialog, sh
       localPath: chosenPath,
       readOnly: false
     });
+    persistLibraryConfig(chosenPath);
 
     return {
       ok: true,
@@ -86,6 +98,7 @@ function registerLibraryServiceIpcHandlers(ipcMain, libraryService, { dialog, sh
       localPath: defaultDir,
       readOnly: false
     });
+    persistLibraryConfig(defaultDir);
     return {
       ok: true,
       localPath: defaultDir,

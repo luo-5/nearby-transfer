@@ -41,6 +41,7 @@ class DesktopLibraryService {
       throw new Error(`Share path must be a directory: ${resolvedPath}`);
     }
 
+    this._unwatchShare(id);
     this.shares.set(id, {
       id,
       name,
@@ -48,6 +49,7 @@ class DesktopLibraryService {
       readOnly: readOnly === true
     });
     this._watchShare(id, resolvedPath);
+    this._broadcastEvent({ type: 'share-updated', shareId: id, localPath: resolvedPath });
   }
 
   removeShare(id) {

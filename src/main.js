@@ -305,12 +305,23 @@ async function startCore() {
     );
   }
 
+  let activeShareDir = defaultShareDir;
+  try {
+    const configFile = path.join(userDataDir, 'library_config.json');
+    if (fs.existsSync(configFile)) {
+      const parsed = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      if (parsed && typeof parsed.activeSharePath === 'string' && fs.existsSync(parsed.activeSharePath)) {
+        activeShareDir = parsed.activeSharePath;
+      }
+    }
+  } catch (_e) {}
+
   desktopLibraryService = new DesktopLibraryService({
     trustedPeerStore,
     shares: [{
       id: 'default-share',
       name: '电脑共享文件库',
-      localPath: defaultShareDir,
+      localPath: activeShareDir,
       readOnly: false
     }]
   });

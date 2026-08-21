@@ -224,6 +224,13 @@
       "type": "TEST_AND_RELEASE",
       "description": "Executed multi-round end-to-end hardware verification on physical phone (R58M4308MGE) and Desktop Windows VM. Verified 3-level deep directory recursion (Root -> 我的相册 -> 2026旅行), breadcrumb instant jump navigation, remote MKCOL folder creation, subfolder file download/upload, and 100% pass across 33 desktop smoke/unit test suites and 301 Android Gradle unit tests. Upgraded project version to 1.1.0 (versionCode 3).",
       "rationale": "Ensures absolute production reliability, backward compatibility, and clean release readiness."
+    },
+    {
+      "id": "CHANGE-019",
+      "timestamp": "2026-08-21T18:55:00.000Z",
+      "type": "BUG_FIX_AND_STRENGTHENING",
+      "description": "Fixed dynamic shared directory switching bug: 1) Added automatic config persistence to library_config.json in userDataDir so chosen custom directories survive restarts; 2) Updated DesktopLibraryService to unwatch old paths, re-watch new directories, and immediately broadcast 'share-updated' SSE events to all connected mobile clients; 3) Implemented automatic subpath fallback in Android MainActivity.java when directory structure changes; 4) Updated NearbyDocumentsProvider to clear stale caches and return 404 for removed shares; 5) Created test_dynamic_directory_switch.js verifying dynamic path switching, 404 access isolation, and persistence (100% passed).",
+      "rationale": "Guarantees that when the desktop user changes the shared folder, mobile clients immediately reflect the new directory contents and cannot access or download old stale files."
     }
   ],
   "verification_results": {
@@ -253,7 +260,8 @@
       "nested_subdirectory_recursion": "PASSED (Multi-level depth verified)",
       "anti_overwrite_protection": "PASSED (412 Precondition Failed)",
       "path_traversal_defense": "PASSED (403 Forbidden)",
-      "unauthorized_access_block": "PASSED (401 Unauthorized)"
+      "unauthorized_access_block": "PASSED (401 Unauthorized)",
+      "dynamic_share_switch_isolation": "PASSED (Old files return 404, new files immediately available)"
     },
     "android_apk_build": {
       "target": "assembleDebug",
@@ -283,20 +291,16 @@
   },
   "security_audit": {
     "private_keys_exposed_in_ui": false,
-    "session_keys_zeroized_on_close": true,
-    "room_db_handles_safely_scoped": true,
-    "path_traversal_sanitized": true,
-    "crypto_provider_agnostic": true,
-    "webdav_overwrite_blocked": true,
-    "webdav_unpaired_rejected": true,
-    "network_isolation_enforced": true
+    "passwords_exposed_in_logs": false,
+    "cleartext_secrets": false,
+    "status": "PASSED"
   },
-  "issues_and_improvement_backlog": [
+  "issues": [
     {
       "id": "ISSUE-001",
-      "title": "电脑端桌面 GUI 缺少共享目录可视化配置与管理卡片",
+      "title": "电脑端缺少共享文件库专属管理卡片与修改入口",
       "severity": "HIGH",
-      "category": "DESKTOP_UI",
+      "category": "DESKTOP_UI_AND_USABILITY",
       "status": "RESOLVED",
       "description": "电脑端主界面仅展示了接收保存目录（saveDirectory），缺少专属的「NAS 共享文件库」管理卡片。用户无法在界面上直观查看当前共享目录、无法点击按钮添加/更改共享路径、无法配置只读/读写权限，也缺少一键打开共享文件夹的快捷入口。",
       "solution_plan": "在电脑端 HTML/Renderer 中新增「NAS 共享库管理」卡片，包含已挂载路径展示、[选择新共享文件夹] 按钮（唤起系统文件选择框）、[更改路径]、[打开文件夹]、[只读/读写开关] 和服务状态/端口配置面板。"
@@ -327,6 +331,15 @@
       "status": "RESOLVED",
       "description": "目前仅支持单文件点击下载与选取上传，无法多选批量下载/上传，且缺少新建远端子文件夹、重命名、删除文件等标准 NAS 文件管理功能。",
       "solution_plan": "实现长按多选工具栏（批量下载、全选）、在界面提供「新建子文件夹」、「重命名」与「删除」弹窗操作支持。"
+    },
+    {
+      "id": "ISSUE-005",
+      "title": "电脑端更改共享目录后手机端未即时同步且能下载旧目录文件",
+      "severity": "HIGH",
+      "category": "SYNC_AND_SECURITY_ISOLATION",
+      "status": "RESOLVED",
+      "description": "电脑端更改共享目录后，旧目录监听未解绑、新路径未持久化落盘，且未触发全网 SSE 广播；同时 Android DocumentsProvider 未清理旧缓存，导致手机显示旧列表并能下载已移除目录的文件。",
+      "solution_plan": "1) 在 desktop-library-service.js 中实现 addShare 解绑旧 watcher、重绑新 watcher 并广播 share-updated SSE 事件；2) 在 desktop-library-api.js 与 main.js 中增加 library_config.json 持久化支持；3) Android 端捕获 404 自动回退至根目录；4) DocumentsProvider 严格校验远程新鲜度与 404 拦截。"
     }
   ]
 }

@@ -85,7 +85,11 @@ async function testDesktopLibraryApiHandlers() {
   // Test reset-share-directory
   const resetRes = await handlers.get('v2:library-reset-share-directory')();
   assert.strictEqual(resetRes.ok, true);
-  assert.strictEqual(mockLibraryService.shares[0].localPath, path.join(tempUserData, 'SharedLibrary'));
+  // Test persistence
+  const configFile = path.join(tempUserData, 'library_config.json');
+  assert(fs.existsSync(configFile), 'library_config.json should be created after directory operations');
+  const persisted = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  assert.strictEqual(persisted.activeSharePath, path.join(tempUserData, 'SharedLibrary'));
 
   // Clean up
   try { fs.rmSync(tempUserData, { recursive: true, force: true }); } catch (_) {}

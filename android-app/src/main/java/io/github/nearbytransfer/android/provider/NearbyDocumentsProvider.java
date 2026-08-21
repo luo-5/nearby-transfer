@@ -133,13 +133,24 @@ public class NearbyDocumentsProvider extends DocumentsProvider {
 
         String safeFileName = documentId.replace('/', '_');
         File localCachedFile = new File(cacheDir, safeFileName);
+        if (localCachedFile.exists()) {
+            localCachedFile.delete();
+        }
 
         String token = getSessionToken();
         if (token != null) {
             try {
                 String downloadUrl = "/webdav/" + DEFAULT_SHARE_ID + "/" + Uri.encode(documentId);
                 WebDavClient.downloadFile(getTargetServerIp(), getTargetServerPort(), token, downloadUrl, localCachedFile, null);
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                throw new FileNotFoundException("Failed to fetch fresh remote file: " + e.getMessage());
+            }
+        } else {
+            throw new FileNotFoundException("Not authenticated to fetch remote file");
+        }
+
+        if (!localCachedFile.exists() || localCachedFile.length() == 0) {
+            throw new FileNotFoundException("Remote file does not exist on active share");
         }
 
         int accessMode = ParcelFileDescriptor.parseMode(mode);
