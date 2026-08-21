@@ -231,12 +231,19 @@
       "type": "BUG_FIX_AND_STRENGTHENING",
       "description": "Fixed dynamic shared directory switching bug: 1) Added automatic config persistence to library_config.json in userDataDir so chosen custom directories survive restarts; 2) Updated DesktopLibraryService to unwatch old paths, re-watch new directories, and immediately broadcast 'share-updated' SSE events to all connected mobile clients; 3) Implemented automatic subpath fallback in Android MainActivity.java when directory structure changes; 4) Updated NearbyDocumentsProvider to clear stale caches and return 404 for removed shares; 5) Created test_dynamic_directory_switch.js verifying dynamic path switching, 404 access isolation, and persistence (100% passed).",
       "rationale": "Guarantees that when the desktop user changes the shared folder, mobile clients immediately reflect the new directory contents and cannot access or download old stale files."
+    },
+    {
+      "id": "CHANGE-020",
+      "timestamp": "2026-08-21T12:05:45.696Z",
+      "type": "FEATURE_AND_UX",
+      "description": "Implemented full transfer lifecycle controls across Desktop and Android: 1) Added interactive [⏸ 暂停], [▶ 继续], [✕ 终止/取消], and [📁 打开所在文件夹] controls in Desktop Electron transfer cards with IPC bridge (cancel-transfer, pause-transfer, resume-transfer, open-transfer-folder); 2) Added stream-level AbortController / ClientRequest cancellation and readStream pause/resume in src/core/transfer.js; 3) Added [⏸ 暂停] and [✕ 终止] action buttons with AtomicBoolean cancellation and pause signals in Android MainActivity.java & TransferClient.java; 4) Added automated test test/transfer-controls-smoke.js verifying cancellation during active streaming, pause/resume state transitions, and 100% test suite pass across 34 desktop test suites and 301 Android Gradle unit tests.",
+      "rationale": "Directly fulfills user request for real-time transfer termination and pause controls, preventing accidental data transfer and matching top open-source file transfer standards."
     }
   ],
   "verification_results": {
     "desktop_tests": {
-      "total_suites": 33,
-      "passed": 33,
+      "total_suites": 34,
+      "passed": 34,
       "failed": 0,
       "pass_rate": "100%"
     },
@@ -287,6 +294,12 @@
       "linux_terminal_download": "PASSED (GET content verified)",
       "linux_terminal_upload": "PASSED (PUT 201 Created & auto-synced to UI)",
       "firewall_rules": "CONFIGURED"
+    },
+    "transfer_controls": {
+      "active_stream_cancellation": "PASSED",
+      "stream_pause_resume": "PASSED",
+      "electron_ipc_controls": "PASSED",
+      "android_ui_controls": "PASSED"
     }
   },
   "security_audit": {
@@ -346,9 +359,10 @@
       "title": "活跃传输缺少实时暂停、继续与终止控制按钮",
       "severity": "HIGH",
       "category": "TRANSFER_CONTROLS_AND_UX",
-      "status": "PENDING_IMPLEMENTATION",
+      "status": "RESOLVED",
       "description": "当前手机端与电脑端的传输卡片中仅展示单向传输进度条与状态文案，缺少用户主动触发的「暂停（Pause）」、「继续（Resume）」与「终止/取消（Cancel/Terminate）」交互按钮，无法对大文件传输或网络波动进行实时人工控制。",
-      "solution_plan": "1) 电脑端在渲染器 transfer-card 中增加操作按钮行（[暂停] / [继续] / [终止]），联动 v2 transferJob API (pause/resume/cancel) 与 v1 StreamControl 协议；2) 手机端 MainActivity 传输列表项与通知栏中增加控制按钮与回调；3) 完善传输流中断与协议级终止信令。"
+      "solution_plan": "1) 电脑端在渲染器 transfer-card 中增加操作按钮行（[暂停] / [继续] / [终止]），联动 v2 transferJob API (pause/resume/cancel) 与 v1 StreamControl 协议；2) 手机端 MainActivity 传输列表项与通知栏中增加控制按钮与回调；3) 完善传输流中断与协议级终止信令。",
+      "resolved_at": "2026-08-21T12:05:45.695Z"
     }
   ]
 }

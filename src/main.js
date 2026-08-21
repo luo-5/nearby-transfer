@@ -27,6 +27,7 @@ let desktopPairingApi = null;
 let desktopLibraryService = null;
 let v2LanService = null;
 let saveDirectory = null;
+const activeTransferControllers = new Map();
 process.on('uncaughtException', (err) => {
   try {
     fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNCAUGHT: ' + (err.stack || err.message) + '\n', { flag: 'a' });
@@ -160,6 +161,42 @@ ipcMain.handle('select-dropped-file', async (_event, filePath) => {
 
 ipcMain.handle('send-selected-file-to-peer', async (_event, deviceId) => sendFileToPeer(deviceId, selectedFilePath));
 
+ipcMain.handle('cancel-transfer', async (_event, transferId) => {
+  const ctrl = activeTransferControllers.get(transferId);
+  if (ctrl && typeof ctrl.cancel === 'function') {
+    ctrl.cancel();
+    activeTransferControllers.delete(transferId);
+    return { ok: true };
+  }
+  return { ok: false, error: '未找到进行中的传输任务' };
+});
+
+ipcMain.handle('pause-transfer', async (_event, transferId) => {
+  const ctrl = activeTransferControllers.get(transferId);
+  if (ctrl && typeof ctrl.pause === 'function') {
+    ctrl.pause();
+    return { ok: true };
+  }
+  return { ok: false, error: '未找到进行中的传输任务' };
+});
+
+ipcMain.handle('resume-transfer', async (_event, transferId) => {
+  const ctrl = activeTransferControllers.get(transferId);
+  if (ctrl && typeof ctrl.resume === 'function') {
+    ctrl.resume();
+    return { ok: true };
+  }
+  return { ok: false, error: '未找到进行中的传输任务' };
+});
+
+ipcMain.handle('open-transfer-folder', async (_event, filePath) => {
+  if (filePath && typeof filePath === 'string') {
+    shell.showItemInFolder(filePath);
+    return { ok: true };
+  }
+  return { ok: false, error: '文件路径无效' };
+});
+
 ipcMain.handle('choose-and-send', async (_event, deviceId) => {
   if (!device || !discovery) {
     return { ok: false, error: '应用还未准备好' };
@@ -267,11 +304,19 @@ async function sendFileToPeer(deviceId, filePath) {
       peer,
       filePath,
       device,
-      onTransferEvent: emitTransferEvent
+      onTransferInit: (ctrl) => {
+        activeTransferControllers.set(ctrl.transferId, ctrl);
+      },
+      onTransferEvent: (event) => {
+        if (['completed', 'failed', 'cancelled', 'rejected'].includes(event.status)) {
+          activeTransferControllers.delete(event.transferId);
+        }
+        emitTransferEvent(event);
+      }
     });
     return { ok: true, result: transferResult };
   } catch (error) {
-    if (error.message === 'Receiver rejected the transfer') {
+    if (error.message === 'Receiver rejected the transfer' || error.message === '用户已主动取消传输') {
       return { ok: false, error: toUserError(error.message) };
     }
     emitTransferEvent({

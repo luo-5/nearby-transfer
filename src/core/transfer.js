@@ -56,6 +56,69 @@ async function sendFile(options) {
   });
 
   let sent = 0;
+  let readStream = null;
+  let clientRequest = null;
+  let isCancelled = false;
+  let isPaused = false;
+
+  const controller = {
+    transferId,
+    cancel: () => {
+      isCancelled = true;
+      if (readStream) {
+        try { readStream.destroy(new Error('用户已主动取消传输')); } catch (_) {}
+      }
+      if (clientRequest) {
+        try { clientRequest.destroy(new Error('用户已主动取消传输')); } catch (_) {}
+      }
+      onTransferEvent({
+        transferId,
+        direction: 'send',
+        status: 'cancelled',
+        peer,
+        file,
+        bytes: sent,
+        total: stat.size,
+        error: '用户已主动取消传输'
+      });
+    },
+    pause: () => {
+      if (isCancelled || isPaused) return;
+      isPaused = true;
+      if (readStream && !readStream.isPaused()) {
+        readStream.pause();
+      }
+      onTransferEvent({
+        transferId,
+        direction: 'send',
+        status: 'paused',
+        peer,
+        file,
+        bytes: sent,
+        total: stat.size
+      });
+    },
+    resume: () => {
+      if (isCancelled || !isPaused) return;
+      isPaused = false;
+      if (readStream && readStream.isPaused()) {
+        readStream.resume();
+      }
+      onTransferEvent({
+        transferId,
+        direction: 'send',
+        status: 'sending',
+        peer,
+        file,
+        bytes: sent,
+        total: stat.size
+      });
+    }
+  };
+
+  if (typeof options.onTransferInit === 'function') {
+    options.onTransferInit(controller);
+  }
 
   try {
     const requestPayload = {
@@ -74,6 +137,10 @@ async function sendFile(options) {
 
     const decision = await postJson(peer, '/transfer/request', requestPayload, 120000);
 
+    if (isCancelled) {
+      throw new Error('用户已主动取消传输');
+    }
+
     if (!decision.accepted) {
       onTransferEvent({
         transferId,
@@ -90,8 +157,12 @@ async function sendFile(options) {
     const shouldEmitProgress = createProgressLimiter();
     const progress = new Transform({
       transform: (chunk, _encoding, callback) => {
+        if (isCancelled) {
+          callback(new Error('用户已主动取消传输'));
+          return;
+        }
         sent += chunk.length;
-        if (shouldEmitProgress(chunk.length, sent, stat.size)) {
+        if (!isPaused && shouldEmitProgress(chunk.length, sent, stat.size)) {
           onTransferEvent({
             transferId,
             direction: 'send',
@@ -106,32 +177,43 @@ async function sendFile(options) {
       }
     });
 
+    readStream = fs.createReadStream(filePath, { highWaterMark: FILE_STREAM_CHUNK_BYTES });
+    if (isPaused) {
+      readStream.pause();
+    }
+
     const result = await postStreamPipeline(
       peer,
       `/transfer/upload/${encodeURIComponent(transferId)}`,
       [
-        fs.createReadStream(filePath, { highWaterMark: FILE_STREAM_CHUNK_BYTES }),
+        readStream,
         progress,
         new EncryptFrameStream(key)
       ],
       {
         'content-type': 'application/octet-stream'
       },
-      UPLOAD_IDLE_TIMEOUT_MS
+      UPLOAD_IDLE_TIMEOUT_MS,
+      (req) => { clientRequest = req; }
     );
 
-    onTransferEvent({
-      transferId,
-      direction: 'send',
-      status: 'completed',
-      peer,
-      file,
-      bytes: sent,
-      total: stat.size
-    });
+    if (!isCancelled) {
+      onTransferEvent({
+        transferId,
+        direction: 'send',
+        status: 'completed',
+        peer,
+        file,
+        bytes: sent,
+        total: stat.size
+      });
+    }
 
     return result;
   } catch (error) {
+    if (isCancelled) {
+      return { ok: false, cancelled: true };
+    }
     if (!(error instanceof TransferRejectedError)) {
       onTransferEvent({
         transferId,
@@ -199,7 +281,7 @@ function postJson(peer, requestPath, payload, timeoutMs) {
   });
 }
 
-function postStreamPipeline(peer, requestPath, streams, headers, timeoutMs) {
+function postStreamPipeline(peer, requestPath, streams, headers, timeoutMs, onRequestInit) {
   return new Promise((resolve, reject) => {
     const request = http.request({
       hostname: peer.host,
@@ -208,6 +290,10 @@ function postStreamPipeline(peer, requestPath, streams, headers, timeoutMs) {
       method: 'POST',
       headers
     }, (response) => collectJsonResponse(response, resolve, reject));
+
+    if (typeof onRequestInit === 'function') {
+      onRequestInit(request);
+    }
 
     request.on('error', reject);
     if (timeoutMs) {

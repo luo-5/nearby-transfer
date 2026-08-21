@@ -148,6 +148,10 @@ public class MainActivity extends Activity {
     private TextView progressDetailText;
     private TextView progressSpeedText;
     private TextView progressPercentText;
+    private Button cancelTransferButton;
+    private Button pauseTransferButton;
+    private final java.util.concurrent.atomic.AtomicBoolean currentTransferCanceled = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicBoolean currentTransferPaused = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     private String activeTransferId;
     private long transferStartedAt;
@@ -395,6 +399,32 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams speedParams = wrapContent();
         speedParams.setMargins(0, dp(10), 0, 0);
         progressCard.addView(progressSpeedText, speedParams);
+
+        LinearLayout progressControlsLayout = new LinearLayout(this);
+        progressControlsLayout.setOrientation(LinearLayout.HORIZONTAL);
+        progressControlsLayout.setGravity(Gravity.END);
+        LinearLayout.LayoutParams progressControlsParams = matchWrap();
+        progressControlsParams.setMargins(0, dp(10), 0, 0);
+
+        pauseTransferButton = new Button(this);
+        pauseTransferButton.setText("⏸ 暂停");
+        pauseTransferButton.setAllCaps(false);
+        pauseTransferButton.setMinHeight(dp(40));
+        styleButton(pauseTransferButton, false);
+        pauseTransferButton.setOnClickListener(v -> toggleTransferPause());
+
+        cancelTransferButton = new Button(this);
+        cancelTransferButton.setText("✕ 终止");
+        cancelTransferButton.setAllCaps(false);
+        cancelTransferButton.setMinHeight(dp(40));
+        styleButton(cancelTransferButton, false);
+        cancelTransferButton.setOnClickListener(v -> cancelActiveTransfer());
+
+        LinearLayout.LayoutParams cancelBtnParams = wrapContent();
+        cancelBtnParams.setMargins(dp(8), 0, 0, 0);
+        progressControlsLayout.addView(pauseTransferButton, wrapContent());
+        progressControlsLayout.addView(cancelTransferButton, cancelBtnParams);
+        progressCard.addView(progressControlsLayout, progressControlsParams);
         progressCard.setVisibility(View.GONE);
 
         LinearLayout peerCard = card(COLOR_SURFACE);
@@ -1744,6 +1774,36 @@ public class MainActivity extends Activity {
         return new SelectedFile(uri, name, size);
     }
 
+    private void toggleTransferPause() {
+        if (!transferActive) return;
+        boolean currentlyPaused = currentTransferPaused.get();
+        if (currentlyPaused) {
+            currentTransferPaused.set(false);
+            if (pauseTransferButton != null) pauseTransferButton.setText("⏸ 暂停");
+            statusText.setText("已继续传输");
+            appendLog("用户已恢复传输");
+        } else {
+            currentTransferPaused.set(true);
+            if (pauseTransferButton != null) pauseTransferButton.setText("▶ 继续");
+            statusText.setText("传输已暂停");
+            appendLog("用户已暂停传输");
+        }
+    }
+
+    private void cancelActiveTransfer() {
+        if (!transferActive) return;
+        currentTransferCanceled.set(true);
+        currentTransferPaused.set(false);
+        transferActive = false;
+        if (pauseTransferButton != null) pauseTransferButton.setVisibility(View.GONE);
+        if (cancelTransferButton != null) cancelTransferButton.setVisibility(View.GONE);
+        setProgressColor(COLOR_DANGER);
+        progressTitleText.setText("传输已终止");
+        statusText.setText("已主动终止传输");
+        appendLog("用户已主动终止传输");
+        renderSendState();
+    }
+
     private void sendSelectedFile() {
         if (selectedFile == null) {
             appendLog("请先选择文件。");
@@ -1760,6 +1820,15 @@ public class MainActivity extends Activity {
 
         sendButton.setEnabled(false);
         transferActive = true;
+        currentTransferCanceled.set(false);
+        currentTransferPaused.set(false);
+        if (pauseTransferButton != null) {
+            pauseTransferButton.setText("⏸ 暂停");
+            pauseTransferButton.setVisibility(View.VISIBLE);
+        }
+        if (cancelTransferButton != null) {
+            cancelTransferButton.setVisibility(View.VISIBLE);
+        }
         styleButton(sendButton, true);
         progressCard.setVisibility(View.VISIBLE);
         statusText.setText("正在准备发送...");
@@ -1775,15 +1844,15 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             String finalStatus = "发送已结束。";
             try {
-                TransferClient.send(this, device, peer, file, this::onTransferEvent);
+                TransferClient.send(this, device, peer, file, this::onTransferEvent, currentTransferCanceled, currentTransferPaused);
                 finalStatus = "发送完成。";
             } catch (Exception error) {
                 String errorMessage = error.getMessage();
-                String failureStatus = "发送失败：" + errorMessage;
+                String failureStatus = currentTransferCanceled.get() ? "传输已终止" : "发送失败：" + errorMessage;
                 finalStatus = failureStatus;
                 runOnUiThreadIfAlive(() -> {
                     setProgressColor(COLOR_DANGER);
-                    progressTitleText.setText("发送失败");
+                    progressTitleText.setText(currentTransferCanceled.get() ? "传输已终止" : "发送失败");
                     progressSpeedText.setText(errorMessage);
                     appendLog(failureStatus);
                 });
@@ -1791,6 +1860,8 @@ public class MainActivity extends Activity {
                 String statusAfterTransfer = finalStatus;
                 runOnUiThreadIfAlive(() -> {
                     transferActive = false;
+                    if (pauseTransferButton != null) pauseTransferButton.setVisibility(View.GONE);
+                    if (cancelTransferButton != null) cancelTransferButton.setVisibility(View.GONE);
                     renderSendState();
                     statusText.setText(statusAfterTransfer);
                 });

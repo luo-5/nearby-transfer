@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('lanTransfer', {
   selectDroppedFile: (file) => ipcRenderer.invoke('select-dropped-file', webUtils.getPathForFile(file)),
   sendSelectedFileToPeer: (deviceId) => ipcRenderer.invoke('send-selected-file-to-peer', deviceId),
   chooseAndSend: (deviceId) => ipcRenderer.invoke('choose-and-send', deviceId),
+  cancelTransfer: (transferId) => ipcRenderer.invoke('cancel-transfer', transferId),
+  pauseTransfer: (transferId) => ipcRenderer.invoke('pause-transfer', transferId),
+  resumeTransfer: (transferId) => ipcRenderer.invoke('resume-transfer', transferId),
+  openTransferFolder: (filePath) => ipcRenderer.invoke('open-transfer-folder', filePath),
   pairing: Object.freeze({
     listDiscoveredPeers: () => ipcRenderer.invoke('v2:list-discovered-peers'),
     listTrustedPeers: () => ipcRenderer.invoke('v2:list-trusted-peers'),

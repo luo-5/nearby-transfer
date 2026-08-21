@@ -385,7 +385,93 @@ function renderTransfers() {
     progress.append(bar);
 
     details.append(fileName, meta, progress);
-    card.append(details);
+
+    const actions = document.createElement('div');
+    actions.className = 'transfer-actions';
+
+    if (transfer.status === 'sending' || transfer.status === 'receiving') {
+      const pauseBtn = document.createElement('button');
+      pauseBtn.type = 'button';
+      pauseBtn.className = 'secondary pairing-button';
+      pauseBtn.textContent = '⏸ 暂停';
+      pauseBtn.addEventListener('click', async () => {
+        pauseBtn.disabled = true;
+        if (window.lanTransfer && window.lanTransfer.pauseTransfer) {
+          await window.lanTransfer.pauseTransfer(transfer.transferId);
+        }
+      });
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'secondary pairing-button pairing-cancel';
+      cancelBtn.textContent = '✕ 终止';
+      cancelBtn.addEventListener('click', async () => {
+        cancelBtn.disabled = true;
+        if (window.lanTransfer && window.lanTransfer.cancelTransfer) {
+          await window.lanTransfer.cancelTransfer(transfer.transferId);
+        }
+      });
+
+      actions.append(pauseBtn, cancelBtn);
+    } else if (transfer.status === 'paused') {
+      const resumeBtn = document.createElement('button');
+      resumeBtn.type = 'button';
+      resumeBtn.className = 'secondary pairing-button';
+      resumeBtn.textContent = '▶ 继续';
+      resumeBtn.addEventListener('click', async () => {
+        resumeBtn.disabled = true;
+        if (window.lanTransfer && window.lanTransfer.resumeTransfer) {
+          await window.lanTransfer.resumeTransfer(transfer.transferId);
+        }
+      });
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'secondary pairing-button pairing-cancel';
+      cancelBtn.textContent = '✕ 终止';
+      cancelBtn.addEventListener('click', async () => {
+        cancelBtn.disabled = true;
+        if (window.lanTransfer && window.lanTransfer.cancelTransfer) {
+          await window.lanTransfer.cancelTransfer(transfer.transferId);
+        }
+      });
+
+      actions.append(resumeBtn, cancelBtn);
+    } else if (transfer.status === 'completed') {
+      if (transfer.savePath) {
+        const openFolderBtn = document.createElement('button');
+        openFolderBtn.type = 'button';
+        openFolderBtn.className = 'secondary pairing-button';
+        openFolderBtn.textContent = '📁 打开文件';
+        openFolderBtn.addEventListener('click', async () => {
+          if (window.lanTransfer && window.lanTransfer.openTransferFolder) {
+            await window.lanTransfer.openTransferFolder(transfer.savePath);
+          }
+        });
+        actions.append(openFolderBtn);
+      }
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'secondary pairing-button';
+      removeBtn.textContent = '🗑 移除';
+      removeBtn.addEventListener('click', () => {
+        state.transfers.delete(transfer.transferId);
+        renderTransfers();
+      });
+      actions.append(removeBtn);
+    } else {
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'secondary pairing-button';
+      removeBtn.textContent = '🗑 移除';
+      removeBtn.addEventListener('click', () => {
+        state.transfers.delete(transfer.transferId);
+        renderTransfers();
+      });
+      actions.append(removeBtn);
+    }
+
+    card.append(details, actions);
     return card;
   }));
 }
@@ -408,6 +494,8 @@ function translateStatus(status) {
     ['sending', '发送中'],
     ['receiving', '接收中'],
     ['accepted', '已接受'],
+    ['paused', '已暂停'],
+    ['cancelled', '已终止'],
     ['completed', '已完成'],
     ['failed', '失败']
   ]);

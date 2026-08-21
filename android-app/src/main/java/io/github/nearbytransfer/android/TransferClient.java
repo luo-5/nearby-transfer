@@ -22,6 +22,12 @@ final class TransferClient {
     private TransferClient() {}
 
     static void send(Context context, DeviceConfig device, PeerDevice peer, SelectedFile selectedFile, TransferEventSink sink) throws Exception {
+        send(context, device, peer, selectedFile, sink, null, null);
+    }
+
+    static void send(Context context, DeviceConfig device, PeerDevice peer, SelectedFile selectedFile, TransferEventSink sink,
+                     java.util.concurrent.atomic.AtomicBoolean cancelSignal,
+                     java.util.concurrent.atomic.AtomicBoolean pauseSignal) throws Exception {
         if (selectedFile.size < 0) {
             throw new IllegalArgumentException("无法读取文件大小");
         }
@@ -32,6 +38,11 @@ final class TransferClient {
         try (InputStream input = context.getContentResolver().openInputStream(selectedFile.uri)) {
             if (input == null) throw new IllegalArgumentException("无法打开文件");
             sha256 = CryptoUtil.sha256Hex(input);
+        }
+
+        if (cancelSignal != null && cancelSignal.get()) {
+            sink.onTransferEvent(new TransferEvent(transferId, "send", "cancelled", selectedFile.name, 0, selectedFile.size, "用户已终止传输"));
+            throw new InterruptedException("用户已主动取消传输");
         }
 
         KeyPair ephemeral = CryptoUtil.generateX25519KeyPair();
@@ -64,7 +75,7 @@ final class TransferClient {
             throw new IllegalStateException("对方已拒绝接收");
         }
 
-        uploadEncrypted(context, peer, transferId, selectedFile, key, sink);
+        uploadEncrypted(context, peer, transferId, selectedFile, key, sink, cancelSignal, pauseSignal);
         sink.onTransferEvent(new TransferEvent(transferId, "send", "completed", selectedFile.name, selectedFile.size, selectedFile.size, null));
     }
 
@@ -83,7 +94,10 @@ final class TransferClient {
         return readJsonResponse(connection);
     }
 
-    private static void uploadEncrypted(Context context, PeerDevice peer, String transferId, SelectedFile selectedFile, byte[] key, TransferEventSink sink) throws Exception {
+    private static void uploadEncrypted(Context context, PeerDevice peer, String transferId, SelectedFile selectedFile, byte[] key,
+                                        TransferEventSink sink,
+                                        java.util.concurrent.atomic.AtomicBoolean cancelSignal,
+                                        java.util.concurrent.atomic.AtomicBoolean pauseSignal) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("http", peer.host, peer.port, "/transfer/upload/" + transferId).openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(15000);
@@ -104,6 +118,19 @@ final class TransferClient {
             if (input == null) throw new IllegalArgumentException("无法打开文件");
             int read;
             while ((read = input.read(buffer)) != -1) {
+                if (cancelSignal != null && cancelSignal.get()) {
+                    try { connection.disconnect(); } catch (Exception ignored) {}
+                    sink.onTransferEvent(new TransferEvent(transferId, "send", "cancelled", selectedFile.name, sent, selectedFile.size, "用户已终止传输"));
+                    throw new InterruptedException("用户已主动取消传输");
+                }
+                while (pauseSignal != null && pauseSignal.get()) {
+                    if (cancelSignal != null && cancelSignal.get()) {
+                        try { connection.disconnect(); } catch (Exception ignored) {}
+                        sink.onTransferEvent(new TransferEvent(transferId, "send", "cancelled", selectedFile.name, sent, selectedFile.size, "用户已终止传输"));
+                        throw new InterruptedException("用户已主动取消传输");
+                    }
+                    Thread.sleep(200);
+                }
                 byte[] frame = CryptoUtil.encryptFrame(key, buffer, 0, read, prefix, counter++);
                 output.write(frame);
                 sent += read;
