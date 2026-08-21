@@ -75,8 +75,41 @@ function samePath(left, right) {
   return path.resolve(left) === path.resolve(right);
 }
 
+function walkDirectory(dirPath, filesList = [], visited = new Set()) {
+  let realDir = dirPath;
+  try {
+    realDir = fs.realpathSync(dirPath);
+  } catch (_) {}
+  if (visited.has(realDir)) return filesList;
+  visited.add(realDir);
+
+  try {
+    const files = fs.readdirSync(dirPath);
+    for (const file of files) {
+      const fullPath = path.join(dirPath, file);
+      let stat;
+      try {
+        stat = fs.lstatSync(fullPath);
+      } catch (_) {
+        continue;
+      }
+      if (stat.isSymbolicLink()) {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        walkDirectory(fullPath, filesList, visited);
+      } else if (stat.isFile()) {
+        filesList.push({ path: fullPath, size: stat.size, name: path.basename(fullPath) });
+      }
+    }
+  } catch (_) {}
+  return filesList;
+}
+
 module.exports = {
-  ensureSafeDirectory,
   safeFilename,
-  uniqueDestinationPath
+  ensureSafeDirectory,
+  uniqueDestinationPath,
+  samePath,
+  walkDirectory
 };

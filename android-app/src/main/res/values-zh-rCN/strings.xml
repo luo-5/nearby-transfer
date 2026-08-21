@@ -124,13 +124,61 @@
     <string name="status_failed">失败</string>
     <string name="status_cancelled">已取消</string>
 
-    <!-- 文件库相关字符串 -->
+    <!-- 文件库字符串 -->
     <string name="section_shared_libraries">共享文件库</string>
-    <string name="no_libraries_available">暂无可用共享文件库。请连接已开启文件库共享的受信任设备。</string>
+    <string name="no_libraries_available">暂无可用共享库。请先连接到启用了文件库共享的受信任设备。</string>
     <string name="action_upload_to_library">上传文件</string>
     <string name="action_download_file">下载</string>
     <string name="library_readonly_badge">只读</string>
     <string name="library_upload_badge">允许上传</string>
     <string name="empty_folder_message">此文件夹为空。</string>
     <string name="action_go_up">返回上级</string>
+    
+    <!-- 控件与文件库操作扩展字符串 -->
+    <string name="btn_pause_transfer">⏸ 暂停</string>
+    <string name="btn_resume_transfer">▶ 继续</string>
+    <string name="btn_cancel_transfer">✕ 终止</string>
+    <string name="library_connecting">正在准备连接电脑共享库…</string>
+    <string name="library_no_connection">请先连接文件库</string>
+    <string name="btn_back_parent">⬅ 返回上一级</string>
+    <string name="btn_back_parent_desc">返回上一级目录</string>
+    <string name="search_library_hint">🔍 搜索当前目录文件…</string>
+    <string name="sort_default">🔀 默认</string>
+    <string name="sort_name">🔤 名称</string>
+    <string name="sort_time">🕒 最新时间</string>
+    <string name="sort_size">📦 大小</string>
+    <string name="btn_refresh">刷新</string>
+    <string name="btn_refresh_desc">刷新文件库</string>
+    <string name="btn_create_folder">新建文件夹</string>
+    <string name="btn_create_folder_desc">在当前目录下新建文件夹</string>
+    <string name="btn_upload_file">上传文件</string>
+    <string name="btn_upload_file_desc">上传文件至电脑文件库当前目录</string>
+    <string name="empty_library_hint">暂无文件，点击上方“刷新”或“上传文件”。</string>
+    <string name="empty_subfolder_hint">当前子文件夹为空。\n点击上方“上传文件”可向此目录添加内容。</string>
+    <string name="empty_root_hint">共享库中暂无文件。\n点击上方“上传文件”即可分享文件。</string>
+    <string name="connect_failed_prefix">连接失败：</string>
+    <string name="folder_subinfo">文件夹 · 点击进入子目录</string>
+    <string name="action_enter">进入</string>
+    <string name="action_download">下载</string>
+    <string name="dialog_delete_title">删除</string>
+    <string name="dialog_delete_confirm">确定要删除 %1$s 吗？</string>
+    <string name="delete_success_format">删除成功：%1$s</string>
+    <string name="delete_failed_format">删除失败：%1$s</string>
+    <string name="dialog_create_folder_title">新建文件夹</string>
+    <string name="dialog_create_folder_msg">在当前目录：%1$s 下创建子文件夹</string>
+    <string name="create_folder_input_hint">输入新文件夹名称</string>
+    <string name="create_folder_empty_error">文件夹名称不能为空</string>
+    <string name="create_folder_creating_log">正在创建文件夹：%1$s</string>
+    <string name="create_folder_success">文件夹已创建：%1$s</string>
+    <string name="create_folder_failed">创建文件夹失败：%1$s</string>
+    <string name="root_directory_name">根目录</string>
+
+    <!-- Foreground Service & SAF Provider -->
+    <string name="notification_channel_name">文件传输进度与保活</string>
+    <string name="notification_channel_desc">用于在后台和锁屏期间显示文件传输进度并防止传输被系统杀死</string>
+    <string name="notification_transferring">正在传输文件</string>
+    <string name="notification_in_progress">文件传输中</string>
+    <string name="saf_root_title">Nearby Transfer (电脑共享库)</string>
+    <string name="saf_root_summary">电脑端受控 WebDAV / NAS 共享文件夹</string>
+    <string name="saf_doc_title">电脑共享库</string>
 </resources>

@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const http = require('http');
+const https = require('https');
 const crypto = require('crypto');
 const { fingerprintFor } = require('../src/core/crypto');
 const { DesktopLibraryService } = require('../src/v2/desktop-library-service');
@@ -69,11 +69,12 @@ async function testWebDavNas() {
 
   function request(method, reqPath, headers = {}, body = null) {
     return new Promise((resolve, reject) => {
-      const req = http.request({
+      const req = https.request({
         hostname: '127.0.0.1',
         port,
         path: reqPath,
         method,
+        rejectUnauthorized: false,
         headers: {
           'Authorization': `Bearer ${peerToken}`,
           ...headers
@@ -123,7 +124,9 @@ async function testWebDavNas() {
   // 6. Test Unauthenticated / Unpaired Client Block
   console.log('\n--- 6. Testing Unpaired / Unauthorized Block ---');
   const unauthRes = await new Promise((resolve) => {
-    http.get(`http://127.0.0.1:${port}/public-share/hello_nas.txt`, (res) => resolve(res.statusCode));
+    const r = https.request({ hostname: '127.0.0.1', port, path: '/public-share/hello_nas.txt', method: 'GET', rejectUnauthorized: false }, (res) => resolve(res.statusCode));
+    r.on('error', () => resolve(null));
+    r.end();
   });
   console.log('Unauthenticated Request Status:', unauthRes, '(401 Unauthorized expected)');
 

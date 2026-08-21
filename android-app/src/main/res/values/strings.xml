@@ -133,4 +133,52 @@
     <string name="library_upload_badge">Upload Allowed</string>
     <string name="empty_folder_message">This folder is empty.</string>
     <string name="action_go_up">Up</string>
+    
+    <!-- Controls & Extended Library Strings -->
+    <string name="btn_pause_transfer">⏸ Pause</string>
+    <string name="btn_resume_transfer">▶ Resume</string>
+    <string name="btn_cancel_transfer">✕ Cancel</string>
+    <string name="library_connecting">Connecting to shared library…</string>
+    <string name="library_no_connection">Please connect to shared library first</string>
+    <string name="btn_back_parent">⬅ Back</string>
+    <string name="btn_back_parent_desc">Return to parent folder</string>
+    <string name="search_library_hint">🔍 Search current folder…</string>
+    <string name="sort_default">🔀 Default</string>
+    <string name="sort_name">🔤 Name</string>
+    <string name="sort_time">🕒 Recent</string>
+    <string name="sort_size">📦 Size</string>
+    <string name="btn_refresh">Refresh</string>
+    <string name="btn_refresh_desc">Refresh file library</string>
+    <string name="btn_create_folder">New Folder</string>
+    <string name="btn_create_folder_desc">Create folder in current directory</string>
+    <string name="btn_upload_file">Upload File</string>
+    <string name="btn_upload_file_desc">Upload file to shared library</string>
+    <string name="empty_library_hint">No files. Tap Refresh or Upload above.</string>
+    <string name="empty_subfolder_hint">Current folder is empty.\nTap Upload above to add files.</string>
+    <string name="empty_root_hint">Shared library has no files.\nTap Upload above to share files.</string>
+    <string name="connect_failed_prefix">Connection failed: </string>
+    <string name="folder_subinfo">Folder · Tap to enter</string>
+    <string name="action_enter">Enter</string>
+    <string name="action_download">Download</string>
+    <string name="dialog_delete_title">Delete</string>
+    <string name="dialog_delete_confirm">Are you sure you want to delete %1$s?</string>
+    <string name="delete_success_format">Deleted successfully: %1$s</string>
+    <string name="delete_failed_format">Failed to delete: %1$s</string>
+    <string name="dialog_create_folder_title">New Folder</string>
+    <string name="dialog_create_folder_msg">Create folder under: %1$s</string>
+    <string name="create_folder_input_hint">Enter new folder name</string>
+    <string name="create_folder_empty_error">Folder name cannot be empty</string>
+    <string name="create_folder_creating_log">Creating folder: %1$s</string>
+    <string name="create_folder_success">Folder created: %1$s</string>
+    <string name="create_folder_failed">Failed to create folder: %1$s</string>
+    <string name="root_directory_name">Root</string>
+
+    <!-- Foreground Service & SAF Provider -->
+    <string name="notification_channel_name">File Transfer &amp; Keepalive</string>
+    <string name="notification_channel_desc">Shows file transfer progress and prevents transfer service from being killed</string>
+    <string name="notification_transferring">Transferring file</string>
+    <string name="notification_in_progress">File transfer in progress</string>
+    <string name="saf_root_title">Nearby Transfer (PC Shared Library)</string>
+    <string name="saf_root_summary">PC Controlled WebDAV / NAS Shared Folder</string>
+    <string name="saf_doc_title">PC Shared Library</string>
 </resources>

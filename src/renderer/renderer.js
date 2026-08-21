@@ -1,3 +1,5 @@
+const t = (key, ...args) => (window.i18n ? window.i18n.t(key, ...args) : key);
+
 const state = {
   peers: [],
   selectedPeerId: null,
@@ -30,6 +32,8 @@ const PAIRING_CAPABILITIES = Object.freeze(['pairing']);
 const MINIMUM_PAIRING_PERMISSIONS = Object.freeze({ transfer: true });
 
 const elements = {
+  langZhBtn: document.getElementById('langZhBtn'),
+  langEnBtn: document.getElementById('langEnBtn'),
   deviceName: document.getElementById('deviceName'),
   saveDirectory: document.getElementById('saveDirectory'),
   peerCount: document.getElementById('peerCount'),
@@ -67,6 +71,45 @@ const elements = {
   copyWebDavUrlButton: document.getElementById('copyWebDavUrlButton')
 };
 
+function updateLanguageButtons() {
+  if (!window.i18n) return;
+  const current = window.i18n.getCurrentLanguage();
+  if (elements.langZhBtn) elements.langZhBtn.className = current === 'zh' ? 'lang-btn active' : 'lang-btn';
+  if (elements.langEnBtn) elements.langEnBtn.className = current === 'en' ? 'lang-btn active' : 'lang-btn';
+}
+
+if (elements.langZhBtn) {
+  elements.langZhBtn.addEventListener('click', () => {
+    if (window.i18n) {
+      window.i18n.setLanguage('zh');
+      updateLanguageButtons();
+      reRenderAll();
+    }
+  });
+}
+
+if (elements.langEnBtn) {
+  elements.langEnBtn.addEventListener('click', () => {
+    if (window.i18n) {
+      window.i18n.setLanguage('en');
+      updateLanguageButtons();
+      reRenderAll();
+    }
+  });
+}
+
+function reRenderAll() {
+  renderPeers();
+  renderSendState();
+  renderTransfers();
+  refreshLibraryInfo();
+  renderV2Pairing();
+  renderTransferJobs();
+}
+
+updateLanguageButtons();
+if (window.i18n) window.i18n.applyI18nToDOM();
+
 window.lanTransfer.getState().then(applyState);
 initializeV2Pairing();
 initializeTransferJobs();
@@ -77,16 +120,16 @@ async function refreshLibraryInfo() {
   try {
     const status = await window.lanTransfer.library.getStatus();
     if (elements.libraryStatusBadge) {
-      elements.libraryStatusBadge.textContent = status.running ? `运行中 :${status.port}` : '未启动';
+      elements.libraryStatusBadge.textContent = status.running ? `${t('library_ready_badge')} :${status.port}` : t('v2_not_connected');
     }
     if (elements.librarySharePath) {
-      elements.librarySharePath.textContent = (status.primaryShare && status.primaryShare.localPath) || '未配置';
+      elements.librarySharePath.textContent = (status.primaryShare && status.primaryShare.localPath) || '-';
     }
     if (elements.libraryShareMode) {
-      elements.libraryShareMode.textContent = status.isDefault ? '默认共享库' : '自定义共享库';
+      elements.libraryShareMode.textContent = status.isDefault ? t('default_save_mode') : t('custom_save_mode');
     }
     if (elements.libraryWebDavUrl) {
-      elements.libraryWebDavUrl.textContent = status.webDavUrl || `http://127.0.0.1:${status.port || 56578}/webdav/default-share`;
+      elements.libraryWebDavUrl.textContent = status.webDavUrl || `https://127.0.0.1:${status.port || 56578}/webdav/default-share`;
     }
   } catch (err) {
     console.error('Failed to get library status:', err);
@@ -97,7 +140,7 @@ if (elements.changeLibraryPathButton) {
   elements.changeLibraryPathButton.addEventListener('click', async () => {
     const res = await window.lanTransfer.library.chooseShareDirectory();
     if (res && res.ok) {
-      setStatus('NAS 共享文件库目录已更改。');
+      setStatus(t('change_save_dir') + ' OK');
       refreshLibraryInfo();
     }
   });
@@ -113,7 +156,7 @@ if (elements.resetLibraryPathButton) {
   elements.resetLibraryPathButton.addEventListener('click', async () => {
     const res = await window.lanTransfer.library.resetShareDirectory();
     if (res && res.ok) {
-      setStatus('NAS 共享文件库已恢复为默认目录。');
+      setStatus(t('reset_save_dir') + ' OK');
       refreshLibraryInfo();
     }
   });
@@ -125,9 +168,9 @@ if (elements.copyWebDavUrlButton) {
     if (url && url !== '-') {
       try {
         await navigator.clipboard.writeText(url);
-        setStatus('已复制 WebDAV 挂载链接到剪贴板！');
+        setStatus(t('copied'));
       } catch (_e) {
-        setStatus('链接：' + url);
+        setStatus(url);
       }
     }
   });
@@ -154,7 +197,7 @@ if (elements.clearCompletedTransfersButton) {
       }
     }
     renderTransfers();
-    setStatus('已清除历史传输记录。');
+    setStatus(t('no_transfers'));
   });
 }
 
@@ -172,12 +215,12 @@ elements.changeSaveDirectoryButton.addEventListener('click', async () => {
     return;
   }
   if (!result.ok) {
-    setStatus(result.error || '无法更改保存位置。');
+    setStatus(result.error || t('operation_failed'));
     return;
   }
   elements.saveDirectory.textContent = result.saveDirectory || '-';
   elements.saveDirectoryMode.textContent = result.saveDirectoryMode || '-';
-  setStatus('保存位置已更新。');
+  setStatus(t('change_save_dir') + ' OK');
 });
 
 elements.resetSaveDirectoryButton.addEventListener('click', async () => {
@@ -186,12 +229,12 @@ elements.resetSaveDirectoryButton.addEventListener('click', async () => {
     return;
   }
   if (!result.ok) {
-    setStatus(result.error || '无法恢复默认下载目录。');
+    setStatus(result.error || t('operation_failed'));
     return;
   }
   elements.saveDirectory.textContent = result.saveDirectory || '-';
   elements.saveDirectoryMode.textContent = result.saveDirectoryMode || '-';
-  setStatus('已恢复默认下载目录。');
+  setStatus(t('reset_save_dir') + ' OK');
 });
 
 elements.dropZone.addEventListener('click', chooseFile);
@@ -224,7 +267,7 @@ for (const eventName of ['dragleave', 'drop']) {
 document.addEventListener('drop', async (event) => {
   const files = Array.from(event.dataTransfer.files || []);
   if (files.length === 0) {
-    setStatus('请从文件管理器拖入文件。');
+    setStatus(t('drag_hint'));
     return;
   }
 
@@ -247,7 +290,7 @@ function applySelectedFile(result) {
     return;
   }
   if (!result.ok) {
-    setStatus(result.error || '无法使用这个文件。');
+    setStatus(result.error || t('cannot_use_file'));
     return;
   }
 
@@ -255,28 +298,42 @@ function applySelectedFile(result) {
   renderSendState();
 }
 
+let batchProgressHandler = null;
+
 async function sendSelectedFile() {
   if (!state.selectedFile) {
-    setStatus('请先选择文件。');
+    setStatus(t('select_file_first'));
     return;
   }
   if (!state.selectedPeerId) {
-    setStatus('请先选择附近设备。');
+    setStatus(t('select_peer_first'));
     return;
   }
 
   elements.sendButton.disabled = true;
-  setStatus('正在等待对方确认接收...');
+  setStatus(t('waiting_peer_confirm'));
   let finalStatus = null;
+  
+  if (!batchProgressHandler) {
+    batchProgressHandler = (event, data) => {
+      setStatus(t('batch_sending_format', data.current, data.total, data.name));
+    };
+    window.lanTransfer.onBatchProgress(batchProgressHandler);
+  }
+
   try {
     const result = await window.lanTransfer.sendSelectedFileToPeer(state.selectedPeerId);
     if (result && result.ok) {
-      finalStatus = '发送完成。';
+      if (result.total > 1) {
+        finalStatus = t('batch_complete_format', result.successCount);
+      } else {
+        finalStatus = t('send_complete');
+      }
       return;
     }
-    finalStatus = (result && result.error) || '发送失败。';
+    finalStatus = (result && result.error) || t('send_failed');
   } catch (error) {
-    finalStatus = `发送失败：${error.message || '操作失败'}`;
+    finalStatus = t('send_failed_format', error.message || t('operation_failed'));
   } finally {
     renderSendState();
     if (finalStatus) {
@@ -311,10 +368,11 @@ function renderPeers() {
   elements.peerCount.textContent = String(state.peers.length);
   if (state.peers.length === 0) {
     elements.peers.className = 'peers empty';
-    elements.peers.textContent = '正在局域网内搜索设备...';
+    elements.peers.textContent = t('searching_peers');
     return;
   }
 
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   elements.peers.className = 'peers';
   elements.peers.replaceChildren(...state.peers.map((peer) => {
     const button = document.createElement('button');
@@ -335,11 +393,11 @@ function renderPeers() {
 
     const meta = document.createElement('span');
     meta.className = 'peer-meta';
-    meta.textContent = `${peer.host}:${peer.port} | 指纹 ${peer.fingerprint || '未知'}`;
+    meta.textContent = `${peer.host}:${peer.port} | ${isZh ? '指纹' : 'Fingerprint'} ${peer.fingerprint || (isZh ? '未知' : 'Unknown')}`;
 
     const status = document.createElement('span');
     status.className = 'peer-status';
-    status.textContent = peer.deviceId === state.selectedPeerId ? '已选择' : '选择';
+    status.textContent = peer.deviceId === state.selectedPeerId ? (isZh ? '已选择' : 'Selected') : (isZh ? '选择' : 'Select');
 
     details.append(name, meta);
     button.append(details, status);
@@ -353,20 +411,20 @@ function renderSendState() {
     elements.selectedFile.textContent = `${state.selectedFile.name} (${formatBytes(state.selectedFile.size)})`;
   } else {
     elements.selectedFile.className = 'selected-file empty';
-    elements.selectedFile.textContent = '未选择文件。';
+    elements.selectedFile.textContent = t('no_file_selected');
   }
 
   const canSend = Boolean(state.selectedFile && state.selectedPeerId);
   elements.sendButton.disabled = !canSend;
 
   if (!state.selectedFile && !state.selectedPeerId) {
-    setStatus('先选择文件，再选择附近设备。');
+    setStatus(t('initial_status'));
   } else if (!state.selectedFile) {
-    setStatus('请选择文件，或把文件拖到窗口里。');
+    setStatus(t('select_file_first'));
   } else if (!state.selectedPeerId) {
-    setStatus('请在下方选择附近设备。');
+    setStatus(t('select_peer_first'));
   } else {
-    setStatus('已准备好，可以发送。');
+    setStatus(t('send_button') + ' Ready');
   }
 }
 
@@ -374,10 +432,11 @@ function renderTransfers() {
   const transfers = Array.from(state.transfers.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   if (transfers.length === 0) {
     elements.transfers.className = 'transfers empty';
-    elements.transfers.textContent = '暂无传输记录。';
+    elements.transfers.textContent = t('no_transfers');
     return;
   }
 
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   elements.transfers.className = 'transfers';
   elements.transfers.replaceChildren(...transfers.map((transfer) => {
     const card = document.createElement('div');
@@ -407,7 +466,7 @@ function renderTransfers() {
       const pauseBtn = document.createElement('button');
       pauseBtn.type = 'button';
       pauseBtn.className = 'secondary pairing-button';
-      pauseBtn.textContent = '⏸ 暂停';
+      pauseBtn.textContent = t('btn_pause');
       pauseBtn.addEventListener('click', async () => {
         pauseBtn.disabled = true;
         if (window.lanTransfer && window.lanTransfer.pauseTransfer) {
@@ -418,7 +477,7 @@ function renderTransfers() {
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'secondary pairing-button pairing-cancel';
-      cancelBtn.textContent = '✕ 终止';
+      cancelBtn.textContent = t('btn_abort');
       cancelBtn.addEventListener('click', async () => {
         cancelBtn.disabled = true;
         if (window.lanTransfer && window.lanTransfer.cancelTransfer) {
@@ -431,7 +490,7 @@ function renderTransfers() {
       const resumeBtn = document.createElement('button');
       resumeBtn.type = 'button';
       resumeBtn.className = 'secondary pairing-button';
-      resumeBtn.textContent = '▶ 继续';
+      resumeBtn.textContent = t('btn_resume');
       resumeBtn.addEventListener('click', async () => {
         resumeBtn.disabled = true;
         if (window.lanTransfer && window.lanTransfer.resumeTransfer) {
@@ -442,7 +501,7 @@ function renderTransfers() {
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'secondary pairing-button pairing-cancel';
-      cancelBtn.textContent = '✕ 终止';
+      cancelBtn.textContent = t('btn_abort');
       cancelBtn.addEventListener('click', async () => {
         cancelBtn.disabled = true;
         if (window.lanTransfer && window.lanTransfer.cancelTransfer) {
@@ -456,7 +515,7 @@ function renderTransfers() {
         const openFolderBtn = document.createElement('button');
         openFolderBtn.type = 'button';
         openFolderBtn.className = 'secondary pairing-button';
-        openFolderBtn.textContent = '📁 打开文件';
+        openFolderBtn.textContent = t('btn_open_folder');
         openFolderBtn.addEventListener('click', async () => {
           if (window.lanTransfer && window.lanTransfer.openTransferFolder) {
             await window.lanTransfer.openTransferFolder(transfer.savePath);
@@ -467,7 +526,7 @@ function renderTransfers() {
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'secondary pairing-button';
-      removeBtn.textContent = '🗑 移除';
+      removeBtn.textContent = isZh ? '🗑 移除' : '🗑 Remove';
       removeBtn.addEventListener('click', () => {
         state.transfers.delete(transfer.transferId);
         renderTransfers();
@@ -477,7 +536,7 @@ function renderTransfers() {
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'secondary pairing-button';
-      removeBtn.textContent = '🗑 移除';
+      removeBtn.textContent = isZh ? '🗑 移除' : '🗑 Remove';
       removeBtn.addEventListener('click', () => {
         state.transfers.delete(transfer.transferId);
         renderTransfers();
@@ -495,14 +554,16 @@ function setStatus(message) {
 }
 
 function describeTransfer(transfer) {
-  const direction = transfer.direction === 'send' ? '发送' : transfer.direction === 'receive' ? '接收' : '系统';
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  const direction = transfer.direction === 'send' ? (isZh ? '发送' : 'Send') : transfer.direction === 'receive' ? (isZh ? '接收' : 'Receive') : (isZh ? '系统' : 'System');
   const total = transfer.total || (transfer.file && transfer.file.size) || 0;
-  const status = transfer.error ? `${translateStatus(transfer.status)}：${transfer.error}` : translateStatus(transfer.status);
+  const status = transfer.error ? `${translateStatus(transfer.status)}: ${transfer.error}` : translateStatus(transfer.status);
   return `${direction} | ${status} | ${formatBytes(transfer.bytes || 0)} / ${formatBytes(total)}`;
 }
 
 function translateStatus(status) {
-  const statuses = new Map([
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  const statuses = new Map(isZh ? [
     ['requesting', '等待确认'],
     ['rejected', '已拒绝'],
     ['sending', '发送中'],
@@ -512,8 +573,18 @@ function translateStatus(status) {
     ['cancelled', '已终止'],
     ['completed', '已完成'],
     ['failed', '失败']
+  ] : [
+    ['requesting', 'Waiting for confirmation'],
+    ['rejected', 'Rejected'],
+    ['sending', 'Sending'],
+    ['receiving', 'Receiving'],
+    ['accepted', 'Accepted'],
+    ['paused', 'Paused'],
+    ['cancelled', 'Cancelled'],
+    ['completed', 'Completed'],
+    ['failed', 'Failed']
   ]);
-  return statuses.get(status) || status || '未知';
+  return statuses.get(status) || status || (isZh ? '未知' : 'Unknown');
 }
 
 function progressPercent(transfer) {
@@ -547,7 +618,7 @@ function getTransferJobApi() {
 function initializeTransferJobs() {
   const api = getTransferJobApi();
   if (!api) {
-    setTransferJobMessage('当前版本未提供持久化传输任务。', true);
+    setTransferJobMessage(t('no_transfers'), true);
     renderTransferJobs();
     return;
   }
@@ -559,16 +630,16 @@ async function refreshTransferJobs({ silent = false } = {}) {
   const api = getTransferJobApi();
   if (!api || transferJobState.loading) return;
   transferJobState.loading = true;
-  if (!silent) setTransferJobMessage('正在刷新传输任务...');
+  if (!silent) setTransferJobMessage(t('loading'));
   renderTransferJobs();
   try {
     const jobs = await api.list();
     transferJobState.jobs = (Array.isArray(jobs) ? jobs : [])
       .filter((job) => job && typeof job.taskId === 'string' && typeof job.status === 'string')
       .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0));
-    setTransferJobMessage(transferJobState.jobs.length > 0 ? '可在此恢复、暂停、重试或取消持久化任务。' : '暂无持久化传输任务。');
+    setTransferJobMessage(transferJobState.jobs.length > 0 ? (window.i18n.getCurrentLanguage() === 'zh' ? '可在此恢复、暂停、重试或取消持久化任务。' : 'Recover, pause, retry, or cancel persistent transfer tasks.') : t('no_transfers'));
   } catch (error) {
-    setTransferJobMessage(`读取传输任务失败：${errorMessage(error)}`, true);
+    setTransferJobMessage(errorMessage(error), true);
   } finally {
     transferJobState.loading = false;
     renderTransferJobs();
@@ -578,14 +649,15 @@ async function refreshTransferJobs({ silent = false } = {}) {
 function renderTransferJobs() {
   const api = getTransferJobApi();
   const jobs = transferJobState.jobs;
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   elements.v2TransferJobSummary.textContent = String(jobs.length);
   elements.v2TransferJobStatus.textContent = transferJobState.message;
   elements.v2TransferJobStatus.className = transferJobState.messageIsError ? 'pairing-status failed' : 'pairing-status';
   elements.v2TransferJobRefresh.disabled = !api || transferJobState.loading;
-  elements.v2TransferJobRefresh.textContent = transferJobState.loading ? '正在刷新...' : '刷新任务';
+  elements.v2TransferJobRefresh.textContent = transferJobState.loading ? (isZh ? '正在刷新...' : 'Refreshing…') : (isZh ? '刷新任务' : 'Refresh Jobs');
   if (jobs.length === 0) {
     elements.v2TransferJobs.className = 'transfers empty';
-    elements.v2TransferJobs.textContent = transferJobState.loading ? '正在读取传输任务...' : '暂无持久化传输任务。';
+    elements.v2TransferJobs.textContent = transferJobState.loading ? t('loading') : t('no_transfers');
     return;
   }
 
@@ -597,14 +669,14 @@ function renderTransferJobs() {
     const title = document.createElement('div');
     title.className = job.status === 'failed' ? 'transfer-name failed' : 'transfer-name';
     const files = job.manifest && Array.isArray(job.manifest.entries) ? job.manifest.entries : [];
-    title.textContent = files.length === 1 ? files[0].relativePath : `${files.length || 0} 个文件`;
+    title.textContent = files.length === 1 ? files[0].relativePath : (isZh ? `${files.length || 0} 个文件` : `${files.length || 0} files`);
     const meta = document.createElement('div');
     meta.className = 'transfer-meta';
     const progress = job.progress || {};
-    meta.textContent = `${job.direction === 'incoming' ? '接收' : '发送'} | ${translateJobStatus(job.status)} | ${formatBytes(progress.transferredBytes)} / ${formatBytes(progress.totalBytes)}`;
+    meta.textContent = `${job.direction === 'incoming' ? (isZh ? '接收' : 'Receive') : (isZh ? '发送' : 'Send')} | ${translateJobStatus(job.status)} | ${formatBytes(progress.transferredBytes)} / ${formatBytes(progress.totalBytes)}`;
     const diagnostic = document.createElement('div');
     diagnostic.className = 'transfer-diagnostic';
-    diagnostic.textContent = job.errorMessage ? `${job.diagnosticCode || 'ERROR'}：${job.errorMessage}` : (job.diagnosticCode ? `诊断：${job.diagnosticCode}` : `设备：${shortDeviceId(job.peerDeviceId)}`);
+    diagnostic.textContent = job.errorMessage ? `${job.diagnosticCode || 'ERROR'}: ${job.errorMessage}` : (job.diagnosticCode ? (isZh ? `诊断：${job.diagnosticCode}` : `Diag: ${job.diagnosticCode}`) : (isZh ? `设备：${shortDeviceId(job.peerDeviceId)}` : `Device: ${shortDeviceId(job.peerDeviceId)}`));
     const progressTrack = document.createElement('div');
     progressTrack.className = 'progress';
     const bar = document.createElement('span');
@@ -620,7 +692,7 @@ function renderTransferJobs() {
       button.type = 'button';
       button.className = action.kind === 'cancel' ? 'secondary pairing-button pairing-cancel' : 'secondary pairing-button';
       button.disabled = !api || busy;
-      button.textContent = busy ? '正在处理...' : action.label;
+      button.textContent = busy ? (isZh ? '正在处理...' : 'Processing…') : action.label;
       button.addEventListener('click', () => runTransferJobAction(job, action.kind));
       actions.append(button);
     }
@@ -630,11 +702,12 @@ function renderTransferJobs() {
 }
 
 function transferJobActions(job) {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   const actions = [];
-  if (job.status === 'transferring') actions.push({ kind: 'pause', label: '暂停' });
-  if (job.status === 'paused') actions.push({ kind: 'resume', label: '继续' });
-  if (job.status === 'failed') actions.push({ kind: 'retry', label: '重试' });
-  if (!['completed', 'cancelled'].includes(job.status)) actions.push({ kind: 'cancel', label: '取消任务' });
+  if (job.status === 'transferring') actions.push({ kind: 'pause', label: t('btn_pause') });
+  if (job.status === 'paused') actions.push({ kind: 'resume', label: t('btn_resume') });
+  if (job.status === 'failed') actions.push({ kind: 'retry', label: isZh ? '重试' : 'Retry' });
+  if (!['completed', 'cancelled'].includes(job.status)) actions.push({ kind: 'cancel', label: t('btn_cancel') });
   return actions;
 }
 
@@ -642,13 +715,13 @@ async function runTransferJobAction(job, action) {
   const api = getTransferJobApi();
   if (!api || transferJobState.busyTaskIds.has(job.taskId) || typeof api[action] !== 'function') return;
   transferJobState.busyTaskIds.add(job.taskId);
-  setTransferJobMessage('正在更新传输任务...');
+  setTransferJobMessage(window.i18n.getCurrentLanguage() === 'zh' ? '正在更新传输任务...' : 'Updating transfer task…');
   renderTransferJobs();
   try {
     await api[action](job.taskId);
     await refreshTransferJobs({ silent: true });
   } catch (error) {
-    setTransferJobMessage(`传输任务操作失败：${errorMessage(error)}`, true);
+    setTransferJobMessage(errorMessage(error), true);
   } finally {
     transferJobState.busyTaskIds.delete(job.taskId);
     renderTransferJobs();
@@ -661,7 +734,11 @@ function setTransferJobMessage(message, isError = false) {
 }
 
 function translateJobStatus(status) {
-  return ({ queued: '排队中', 'awaiting-approval': '等待接收确认', transferring: '传输中', paused: '已暂停', failed: '失败', completed: '已完成', cancelled: '已取消' })[status] || status;
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  if (isZh) {
+    return ({ queued: '排队中', 'awaiting-approval': '等待接收确认', transferring: '传输中', paused: '已暂停', failed: '失败', completed: '已完成', cancelled: '已取消' })[status] || status;
+  }
+  return ({ queued: 'Queued', 'awaiting-approval': 'Awaiting Approval', transferring: 'Transferring', paused: 'Paused', failed: 'Failed', completed: 'Completed', cancelled: 'Cancelled' })[status] || status;
 }
 
 function jobProgressPercent(job) {
@@ -672,13 +749,13 @@ function jobProgressPercent(job) {
 }
 
 function shortDeviceId(deviceId) {
-  return typeof deviceId === 'string' && deviceId.length > 12 ? `${deviceId.slice(0, 8)}…${deviceId.slice(-4)}` : (deviceId || '未知');
+  return typeof deviceId === 'string' && deviceId.length > 12 ? `${deviceId.slice(0, 8)}…${deviceId.slice(-4)}` : (deviceId || (window.i18n && window.i18n.getCurrentLanguage() === 'zh' ? '未知' : 'Unknown'));
 }
 
 function initializeV2Pairing() {
   const pairingApi = getPairingApi();
   if (!pairingApi) {
-    setPairingMessage('当前版本未提供 v2 配对服务。', true);
+    setPairingMessage(t('v2_not_connected'), true);
     renderV2Pairing();
     return;
   }
@@ -692,7 +769,7 @@ function initializeV2Pairing() {
       pairingState.discoveredPeers = normalizePeers(peers);
       pairingState.loading = false;
       if (!pairingState.messageIsError) {
-        setPairingMessage(pairingState.discoveredPeers.length > 0 ? '已更新 v2 设备发现结果。' : '正在局域网内搜索支持 v2 配对的设备。');
+        setPairingMessage(pairingState.discoveredPeers.length > 0 ? (window.i18n.getCurrentLanguage() === 'zh' ? '已更新 v2 设备发现结果。' : 'Discovered v2 devices updated.') : t('v2_searching'));
       }
       renderV2Pairing();
     });
@@ -703,7 +780,6 @@ function initializeV2Pairing() {
       if (session && typeof session.pairingId === 'string') {
         pairingState.sessions.set(session.pairingId, session);
       } else {
-        // 完成或取消后主进程可能只通知会话列表已变化；以 IPC 列表为准刷新。
         refreshV2Pairing({ silent: true });
       }
       renderV2Pairing();
@@ -729,9 +805,10 @@ async function refreshV2Pairing({ announce = false, silent = false } = {}) {
   const pairingApi = getPairingApi();
   if (!pairingApi) return;
 
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   const version = ++pairingState.refreshVersion;
   pairingState.loading = true;
-  if (announce) setPairingMessage('正在刷新 v2 配对信息...');
+  if (announce) setPairingMessage(isZh ? '正在刷新 v2 配对信息...' : 'Refreshing pairing information…');
   renderV2Pairing();
 
   const [peersResult, sessionsResult, trustedResult] = await Promise.allSettled([
@@ -745,18 +822,18 @@ async function refreshV2Pairing({ announce = false, silent = false } = {}) {
   const errors = [];
 
   if (peersResult.status === 'fulfilled') pairingState.discoveredPeers = normalizePeers(peersResult.value);
-  else errors.push(`发现设备：${errorMessage(peersResult.reason)}`);
+  else errors.push(errorMessage(peersResult.reason));
 
   if (sessionsResult.status === 'fulfilled') replacePairingSessions(sessionsResult.value);
-  else errors.push(`读取配对会话：${errorMessage(sessionsResult.reason)}`);
+  else errors.push(errorMessage(sessionsResult.reason));
 
   if (trustedResult.status === 'fulfilled') pairingState.trustedPeers = normalizeTrustedPeers(trustedResult.value);
-  else errors.push(`读取受信设备：${errorMessage(trustedResult.reason)}`);
+  else errors.push(errorMessage(trustedResult.reason));
 
   if (errors.length > 0) {
-    setPairingMessage(errors.join('；'), true);
+    setPairingMessage(errors.join('; '), true);
   } else if (!silent || !pairingState.messageIsError) {
-    setPairingMessage(pairingState.discoveredPeers.length > 0 ? 'v2 配对设备列表已更新。' : '正在局域网内搜索支持 v2 配对的设备。');
+    setPairingMessage(pairingState.discoveredPeers.length > 0 ? (isZh ? 'v2 配对设备列表已更新。' : 'Discovered v2 peers updated.') : t('v2_searching'));
   }
   renderV2Pairing();
 }
@@ -793,16 +870,17 @@ function normalizeTrustedPeers(peers) {
 }
 
 function compareByName(left, right) {
-  return peerLabel(left).localeCompare(peerLabel(right), 'zh-CN');
+  return peerLabel(left).localeCompare(peerLabel(right));
 }
 
 function renderV2Pairing() {
   const pairingApi = getPairingApi();
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   elements.v2RefreshButton.disabled = !pairingApi || pairingState.loading;
-  elements.v2RefreshButton.textContent = pairingState.loading ? '正在刷新...' : '刷新 v2 设备';
+  elements.v2RefreshButton.textContent = pairingState.loading ? (isZh ? '正在刷新...' : 'Refreshing…') : t('v2_refresh_peers');
   elements.v2PairingStatus.textContent = pairingState.message;
   elements.v2PairingStatus.className = pairingState.messageIsError ? 'pairing-status failed' : 'pairing-status';
-  elements.v2PairingSummary.textContent = pairingApi ? `${pairingState.sessions.size} 个会话` : '不可用';
+  elements.v2PairingSummary.textContent = pairingApi ? `${pairingState.sessions.size} ${isZh ? '个会话' : 'session(s)'}` : t('v2_not_connected');
   renderV2DiscoveredPeers(pairingApi);
   renderV2PairingSessions(pairingApi);
   renderV2TrustedPeers();
@@ -810,10 +888,11 @@ function renderV2Pairing() {
 
 function renderV2DiscoveredPeers(pairingApi) {
   const peers = pairingState.discoveredPeers;
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   elements.v2DiscoveredCount.textContent = String(peers.length);
   if (peers.length === 0) {
     elements.v2DiscoveredPeers.className = 'pairing-list empty';
-    elements.v2DiscoveredPeers.textContent = pairingState.loading ? '正在刷新 v2 设备...' : '未发现可配对的 v2 设备。';
+    elements.v2DiscoveredPeers.textContent = pairingState.loading ? (isZh ? '正在刷新 v2 设备...' : 'Refreshing…') : t('v2_searching');
     return;
   }
 
@@ -829,7 +908,7 @@ function renderV2DiscoveredPeers(pairingApi) {
     name.textContent = peerLabel(peer);
     const fingerprint = document.createElement('span');
     fingerprint.className = 'pairing-meta';
-    fingerprint.textContent = `设备指纹：${shortFingerprint(peer.fingerprint)}`;
+    fingerprint.textContent = `${isZh ? '设备指纹' : 'Fingerprint'}: ${shortFingerprint(peer.fingerprint)}`;
     const discovery = document.createElement('span');
     discovery.className = 'pairing-meta';
     discovery.textContent = formatLastSeen(peer.lastSeen);
@@ -840,7 +919,7 @@ function renderV2DiscoveredPeers(pairingApi) {
     action.className = 'primary pairing-button';
     const isStarting = pairingState.startingPeerIds.has(peer.deviceId);
     action.disabled = !pairingApi || isStarting;
-    action.textContent = isStarting ? '正在开始...' : '开始配对';
+    action.textContent = isStarting ? (isZh ? '正在开始...' : 'Starting…') : t('btn_pair');
     action.addEventListener('click', () => startV2Pairing(peer));
 
     card.append(details, action);
@@ -853,7 +932,7 @@ function renderV2PairingSessions(pairingApi) {
   elements.v2SessionCount.textContent = String(sessions.length);
   if (sessions.length === 0) {
     elements.v2PairingSessions.className = 'pairing-list empty';
-    elements.v2PairingSessions.textContent = '暂无进行中的配对。';
+    elements.v2PairingSessions.textContent = t('v2_no_active_sessions');
     return;
   }
 
@@ -862,6 +941,7 @@ function renderV2PairingSessions(pairingApi) {
 }
 
 function createPairingSessionCard(session, pairingApi) {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   const card = document.createElement('article');
   card.className = 'pairing-card pairing-session-card';
 
@@ -869,23 +949,23 @@ function createPairingSessionCard(session, pairingApi) {
   details.className = 'pairing-details';
   const name = document.createElement('strong');
   name.className = 'pairing-name';
-  name.textContent = session.peer ? peerLabel(session.peer) : '正在等待对方设备信息';
+  name.textContent = session.peer ? peerLabel(session.peer) : (isZh ? '正在等待对方设备信息' : 'Waiting for peer device info');
   const status = document.createElement('span');
   status.className = 'pairing-meta';
-  status.textContent = `状态：${translatePairingStatus(session.status)}`;
+  status.textContent = `${isZh ? '状态' : 'Status'}: ${translatePairingStatus(session.status)}`;
   details.append(name, status);
 
   if (session.peer && session.peer.fingerprint) {
     const fingerprint = document.createElement('span');
     fingerprint.className = 'pairing-meta';
-    fingerprint.textContent = `设备指纹：${shortFingerprint(session.peer.fingerprint)}`;
+    fingerprint.textContent = `${isZh ? '设备指纹' : 'Fingerprint'}: ${shortFingerprint(session.peer.fingerprint)}`;
     details.append(fingerprint);
   }
 
   if (typeof session.pairingCode === 'string' && session.pairingCode.length > 0) {
     const sasLabel = document.createElement('span');
     sasLabel.className = 'pairing-sas-label';
-    sasLabel.textContent = '请双方核对以下安全码（SAS）';
+    sasLabel.textContent = isZh ? '请双方核对以下安全码（SAS）' : 'Verify the following 6-digit security code';
     const sas = document.createElement('output');
     sas.className = 'pairing-sas';
     sas.textContent = session.pairingCode;
@@ -893,7 +973,7 @@ function createPairingSessionCard(session, pairingApi) {
   } else {
     const pending = document.createElement('span');
     pending.className = 'pairing-meta';
-    pending.textContent = '等待获取双方可核对的安全码...';
+    pending.textContent = isZh ? '等待获取双方可核对的安全码...' : 'Waiting for security code…';
     details.append(pending);
   }
 
@@ -914,7 +994,7 @@ function createPairingSessionCard(session, pairingApi) {
     confirm.type = 'button';
     confirm.className = 'primary pairing-button';
     confirm.disabled = !pairingApi || isBusy || !session.pairingCode;
-    confirm.textContent = isBusy ? '正在确认...' : '安全码一致，确认';
+    confirm.textContent = isBusy ? (isZh ? '正在确认...' : 'Confirming…') : t('btn_confirm');
     confirm.addEventListener('click', () => confirmV2Pairing(session));
     actions.append(confirm);
   }
@@ -924,7 +1004,7 @@ function createPairingSessionCard(session, pairingApi) {
     complete.type = 'button';
     complete.className = 'primary pairing-button';
     complete.disabled = !pairingApi || isBusy;
-    complete.textContent = isBusy ? '正在信任...' : '完成信任';
+    complete.textContent = isBusy ? (isZh ? '正在信任...' : 'Saving…') : (isZh ? '完成信任' : 'Save Trust');
     complete.addEventListener('click', () => completeV2Pairing(session));
     actions.append(complete);
   }
@@ -933,7 +1013,7 @@ function createPairingSessionCard(session, pairingApi) {
   cancel.type = 'button';
   cancel.className = 'secondary pairing-button pairing-cancel';
   cancel.disabled = !pairingApi || isBusy;
-  cancel.textContent = isBusy ? '正在处理...' : '取消';
+  cancel.textContent = isBusy ? (isZh ? '正在处理...' : 'Processing…') : t('btn_cancel');
   cancel.addEventListener('click', () => cancelV2Pairing(session));
   actions.append(cancel);
 
@@ -944,10 +1024,11 @@ function createPairingSessionCard(session, pairingApi) {
 function renderV2TrustedPeers() {
   const pairingApi = getPairingApi();
   const peers = pairingState.trustedPeers;
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   elements.v2TrustedCount.textContent = String(peers.length);
   if (peers.length === 0) {
     elements.v2TrustedPeers.className = 'pairing-list empty';
-    elements.v2TrustedPeers.textContent = '暂无受信设备。';
+    elements.v2TrustedPeers.textContent = t('v2_no_trusted_devices');
     return;
   }
 
@@ -964,69 +1045,58 @@ function renderV2TrustedPeers() {
     name.value = peer.displayName || peerLabel(peer);
     name.maxLength = 128;
     name.placeholder = peerLabel(peer);
-    name.setAttribute('aria-label', `设备“${peerLabel(peer)}”的显示名`);
     name.disabled = !pairingApi || isBusy;
     const device = document.createElement('span');
     device.className = 'pairing-meta';
-    device.textContent = `设备：${peerLabel(peer)}`;
+    device.textContent = `${isZh ? '设备' : 'Device'}: ${peerLabel(peer)}`;
     const fingerprint = document.createElement('span');
     fingerprint.className = 'pairing-meta';
-    fingerprint.textContent = `设备指纹：${shortFingerprint(peer.fingerprint)}`;
+    fingerprint.textContent = `${isZh ? '设备指纹' : 'Fingerprint'}: ${shortFingerprint(peer.fingerprint)}`;
     const permissions = document.createElement('span');
     permissions.className = 'pairing-permissions';
     permissions.textContent = describePairingPermissions(peer.permissions);
     const lastSeen = document.createElement('span');
     lastSeen.className = 'pairing-meta';
-    lastSeen.textContent = `最近活动：${formatLastSeen(peer.lastSeen)}`;
+    lastSeen.textContent = `${isZh ? '最近活动' : 'Last Seen'}: ${formatLastSeen(peer.lastSeen)}`;
     const permissionControls = document.createElement('div');
     permissionControls.className = 'pairing-details';
     const permissionInputs = new Map();
-    for (const [key, labelText] of [
+    for (const [key, labelText] of (isZh ? [
       ['transfer', '允许传输'],
       ['libraryRead', '允许读取媒体库'],
       ['libraryUpload', '允许写入媒体库']
-    ]) {
+    ] : [
+      ['transfer', 'Allow Transfer'],
+      ['libraryRead', 'Allow Read Library'],
+      ['libraryUpload', 'Allow Write Library']
+    ])) {
       const label = document.createElement('label');
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.checked = peer.permissions && peer.permissions[key] === true;
-      checkbox.disabled = !pairingApi || isBusy || (key === 'libraryUpload' && !(peer.permissions && peer.permissions.libraryRead === true));
-      checkbox.setAttribute('aria-label', labelText);
-      if (key === 'libraryRead') {
-        checkbox.addEventListener('change', () => {
-          const upload = permissionInputs.get('libraryUpload');
-          if (!checkbox.checked && upload) {
-            upload.checked = false;
-            upload.disabled = true;
-          } else if (upload) {
-            upload.disabled = !checkbox.checked || isBusy;
-          }
-        });
-      }
-      label.append(checkbox, document.createTextNode(` ${labelText}`));
+      checkbox.checked = Boolean(peer.permissions && peer.permissions[key]);
+      checkbox.disabled = !pairingApi || isBusy;
+      checkbox.addEventListener('change', () => {
+        saveV2TrustedPeer(peer, { displayName: name, permissions: permissionInputs });
+      });
       permissionInputs.set(key, checkbox);
+      label.append(checkbox, document.createTextNode(` ${labelText}`));
       permissionControls.append(label);
     }
     details.append(name, device, fingerprint, permissions, lastSeen, permissionControls);
 
     const actions = document.createElement('div');
     actions.className = 'pairing-button-row';
-    const save = document.createElement('button');
-    save.type = 'button';
-    save.className = 'primary pairing-button';
-    save.disabled = !pairingApi || isBusy;
-    save.textContent = isBusy ? '正在保存...' : '保存修改';
-    save.addEventListener('click', () => saveV2TrustedPeer(peer, {
-      displayName: name,
-      permissions: permissionInputs
-    }));
     const revoke = document.createElement('button');
     revoke.type = 'button';
     revoke.className = 'secondary pairing-button pairing-cancel';
     revoke.disabled = !pairingApi || isBusy;
-    revoke.textContent = isBusy ? '正在撤销...' : '撤销信任';
-    revoke.addEventListener('click', () => revokeV2TrustedPeer(peer));
-    actions.append(save, revoke);
+    revoke.textContent = isBusy ? (isZh ? '正在处理...' : 'Processing…') : t('btn_revoke');
+    revoke.addEventListener('click', () => {
+      if (confirm(t('revoke_confirm', peer.displayName || peerLabel(peer)))) {
+        revokeV2TrustedPeer(peer);
+      }
+    });
+    actions.append(revoke);
     card.append(details, actions);
     return card;
   }));
@@ -1036,8 +1106,9 @@ async function saveV2TrustedPeer(peer, controls) {
   const pairingApi = getPairingApi();
   if (!pairingApi || pairingState.busyTrustedPeerIds.has(peer.deviceId)) return;
 
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   pairingState.busyTrustedPeerIds.add(peer.deviceId);
-  setPairingMessage(`正在保存“${peer.displayName || peerLabel(peer)}”的受信设置...`);
+  setPairingMessage(isZh ? `正在保存“${peer.displayName || peerLabel(peer)}”的受信设置...` : `Saving trust settings for "${peer.displayName || peerLabel(peer)}”…`);
   renderV2Pairing();
   try {
     const displayName = controls.displayName.value.trim();
@@ -1045,11 +1116,11 @@ async function saveV2TrustedPeer(peer, controls) {
       ['transfer', 'libraryRead', 'libraryUpload'].map((key) => [key, controls.permissions.get(key).checked])
     );
     const updated = await pairingApi.updateTrustedPeer(peer.deviceId, { displayName, permissions });
-    if (!updated) throw new Error('该设备已不在受信列表中');
+    if (!updated) throw new Error(isZh ? '该设备已不在受信列表中' : 'Device not found in trusted list');
     await refreshV2Pairing({ silent: true });
-    if (!pairingState.messageIsError) setPairingMessage(`已保存“${displayName}”的受信设置。`);
+    if (!pairingState.messageIsError) setPairingMessage(isZh ? `已保存“${displayName}”的受信设置。` : `Saved trust settings for "${displayName}".`);
   } catch (error) {
-    setPairingMessage(`保存受信设备失败：${errorMessage(error)}`, true);
+    setPairingMessage(errorMessage(error), true);
   } finally {
     pairingState.busyTrustedPeerIds.delete(peer.deviceId);
     renderV2Pairing();
@@ -1060,17 +1131,18 @@ async function revokeV2TrustedPeer(peer) {
   const pairingApi = getPairingApi();
   if (!pairingApi || pairingState.busyTrustedPeerIds.has(peer.deviceId)) return;
 
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   pairingState.busyTrustedPeerIds.add(peer.deviceId);
-  setPairingMessage(`正在撤销“${peer.displayName || peerLabel(peer)}”的信任...`);
+  setPairingMessage(isZh ? `正在撤销“${peer.displayName || peerLabel(peer)}”的信任...` : `Revoking trust for "${peer.displayName || peerLabel(peer)}”…`);
   renderV2Pairing();
   try {
     const revoked = await pairingApi.revokeTrustedPeer(peer.deviceId);
-    if (!revoked) throw new Error('该设备已不在受信列表中');
+    if (!revoked) throw new Error(isZh ? '该设备已不在受信列表中' : 'Device not found in trusted list');
     pairingState.trustedPeers = pairingState.trustedPeers.filter((candidate) => candidate.deviceId !== peer.deviceId);
-    setPairingMessage('已撤销设备信任；后续传输前需要重新配对。');
+    setPairingMessage(isZh ? '已撤销设备信任；后续传输前需要重新配对。' : 'Trust revoked. Future transfers will require pairing again.');
     await refreshV2Pairing({ silent: true });
   } catch (error) {
-    setPairingMessage(`撤销信任失败：${errorMessage(error)}`, true);
+    setPairingMessage(errorMessage(error), true);
   } finally {
     pairingState.busyTrustedPeerIds.delete(peer.deviceId);
     renderV2Pairing();
@@ -1081,16 +1153,17 @@ async function startV2Pairing(peer) {
   const pairingApi = getPairingApi();
   if (!pairingApi || pairingState.startingPeerIds.has(peer.deviceId)) return;
 
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   pairingState.startingPeerIds.add(peer.deviceId);
-  setPairingMessage(`正在向“${peerLabel(peer)}”发起配对...`);
+  setPairingMessage(isZh ? `正在向“${peerLabel(peer)}”发起配对...` : `Starting pairing with "${peerLabel(peer)}”…`);
   renderV2Pairing();
   try {
     const session = await pairingApi.start({ peerDeviceId: peer.deviceId, capabilities: PAIRING_CAPABILITIES.slice() });
     if (session && typeof session.pairingId === 'string') pairingState.sessions.set(session.pairingId, session);
-    setPairingMessage(`已发起与“${peerLabel(peer)}”的配对，等待双方安全码。`);
+    setPairingMessage(t('pair_request_sent', peerLabel(peer)));
     await refreshV2Pairing({ silent: true });
   } catch (error) {
-    setPairingMessage(`无法开始配对：${errorMessage(error)}`, true);
+    setPairingMessage(errorMessage(error), true);
   } finally {
     pairingState.startingPeerIds.delete(peer.deviceId);
     renderV2Pairing();
@@ -1098,14 +1171,16 @@ async function startV2Pairing(peer) {
 }
 
 async function confirmV2Pairing(session) {
-  await runV2SessionAction(session, '正在确认双方安全码...', async (pairingApi) => {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  await runV2SessionAction(session, isZh ? '正在确认双方安全码...' : 'Confirming security code…', async (pairingApi) => {
     await pairingApi.confirm(session.pairingId);
-    setPairingMessage('本机已确认安全码，正在等待或同步对方确认。');
+    setPairingMessage(t('pair_confirmed_waiting'));
   });
 }
 
 async function completeV2Pairing(session) {
-  await runV2SessionAction(session, '正在将设备加入受信列表...', async (pairingApi) => {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  await runV2SessionAction(session, isZh ? '正在将设备加入受信列表...' : 'Adding device to trusted list…', async (pairingApi) => {
     const displayName = session.peer && typeof session.peer.deviceName === 'string' ? session.peer.deviceName : undefined;
     const trustedPeer = await pairingApi.complete({
       pairingId: session.pairingId,
@@ -1116,15 +1191,16 @@ async function completeV2Pairing(session) {
       pairingState.trustedPeers = normalizeTrustedPeers([trustedPeer, ...pairingState.trustedPeers]);
     }
     pairingState.sessions.delete(session.pairingId);
-    setPairingMessage('配对完成：设备已受信任，已授予最小“传输”权限。');
+    setPairingMessage(t('pair_complete_trusted', displayName || (isZh ? '设备' : 'Device')));
   });
 }
 
 async function cancelV2Pairing(session) {
-  await runV2SessionAction(session, '正在取消配对...', async (pairingApi) => {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  await runV2SessionAction(session, isZh ? '正在取消配对...' : 'Cancelling pairing…', async (pairingApi) => {
     await pairingApi.cancel(session.pairingId);
     pairingState.sessions.delete(session.pairingId);
-    setPairingMessage('已取消配对。');
+    setPairingMessage(isZh ? '已取消配对。' : 'Pairing cancelled.');
   });
 }
 
@@ -1139,7 +1215,7 @@ async function runV2SessionAction(session, pendingMessage, action) {
     await action(pairingApi);
     await refreshV2Pairing({ silent: true });
   } catch (error) {
-    setPairingMessage(`配对操作失败：${errorMessage(error)}`, true);
+    setPairingMessage(errorMessage(error), true);
   } finally {
     pairingState.busySessionIds.delete(session.pairingId);
     renderV2Pairing();
@@ -1152,54 +1228,74 @@ function setPairingMessage(message, isError = false) {
 }
 
 function peerLabel(peer) {
-  return peer && typeof peer.deviceName === 'string' && peer.deviceName.trim() ? peer.deviceName.trim() : '未命名设备';
+  const fallback = window.i18n && window.i18n.getCurrentLanguage() === 'zh' ? '未命名设备' : 'Unnamed Device';
+  return peer && typeof peer.deviceName === 'string' && peer.deviceName.trim() ? peer.deviceName.trim() : fallback;
 }
 
 function shortFingerprint(fingerprint) {
-  if (typeof fingerprint !== 'string' || fingerprint.length === 0) return '未知';
+  if (typeof fingerprint !== 'string' || fingerprint.length === 0) return window.i18n && window.i18n.getCurrentLanguage() === 'zh' ? '未知' : 'Unknown';
   return fingerprint.length > 20 ? `${fingerprint.slice(0, 10)}…${fingerprint.slice(-8)}` : fingerprint;
 }
 
 function describePairingPermissions(permissions) {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   const granted = [];
-  if (permissions && permissions.transfer) granted.push('传输');
-  if (permissions && permissions.libraryRead) granted.push('读取媒体库');
-  if (permissions && permissions.libraryUpload) granted.push('写入媒体库');
-  return granted.length > 0 ? `已授权：${granted.join('、')}` : '未授予可用权限';
+  if (permissions && permissions.transfer) granted.push(isZh ? '传输' : 'Transfer');
+  if (permissions && permissions.libraryRead) granted.push(isZh ? '读取媒体库' : 'Read Library');
+  if (permissions && permissions.libraryUpload) granted.push(isZh ? '写入媒体库' : 'Upload Library');
+  if (isZh) {
+    return granted.length > 0 ? `已授权：${granted.join('、')}` : '未授予可用权限';
+  }
+  return granted.length > 0 ? `Granted: ${granted.join(', ')}` : 'No permissions granted';
 }
 
 function formatLastSeen(lastSeen) {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   const timestamp = Number(lastSeen);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return '最近发现';
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return isZh ? '最近发现' : 'Recently seen';
   const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-  if (seconds < 10) return '刚刚发现';
-  if (seconds < 60) return `${seconds} 秒前发现`;
-  return `${Math.floor(seconds / 60)} 分钟前发现`;
+  if (seconds < 10) return isZh ? '刚刚发现' : 'Just now';
+  if (seconds < 60) return isZh ? `${seconds} 秒前发现` : `${seconds}s ago`;
+  return isZh ? `${Math.floor(seconds / 60)} 分钟前发现` : `${Math.floor(seconds / 60)}m ago`;
 }
 
 function formatExpiration(expiresAt) {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   const timestamp = Number(expiresAt);
   if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
   const remainingSeconds = Math.ceil((timestamp - Date.now()) / 1000);
-  if (remainingSeconds <= 0) return '会话即将过期，请刷新状态。';
-  if (remainingSeconds < 60) return `安全码将在约 ${remainingSeconds} 秒后过期`;
-  return `安全码将在约 ${Math.ceil(remainingSeconds / 60)} 分钟后过期`;
+  if (remainingSeconds <= 0) return isZh ? '会话即将过期，请刷新状态。' : 'Session expiring soon, please refresh.';
+  if (remainingSeconds < 60) return isZh ? `安全码将在约 ${remainingSeconds} 秒后过期` : `Code expires in ~${remainingSeconds}s`;
+  return isZh ? `安全码将在约 ${Math.ceil(remainingSeconds / 60)} 分钟后过期` : `Code expires in ~${Math.ceil(remainingSeconds / 60)}m`;
 }
 
 function translatePairingStatus(status) {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  if (isZh) {
+    const labels = new Map([
+      ['awaiting-remote-offer', '等待对方响应'],
+      ['awaiting-local-confirmation', '请核对并确认安全码'],
+      ['awaiting-remote-confirmation', '已确认，等待对方确认'],
+      ['ready-to-trust', '双方已确认，可完成信任'],
+      ['completed', '已完成'],
+      ['cancelled', '已取消'],
+      ['expired', '已过期']
+    ]);
+    return labels.get(status) || '处理中';
+  }
   const labels = new Map([
-    ['awaiting-remote-offer', '等待对方响应'],
-    ['awaiting-local-confirmation', '请核对并确认安全码'],
-    ['awaiting-remote-confirmation', '已确认，等待对方确认'],
-    ['ready-to-trust', '双方已确认，可完成信任'],
-    ['completed', '已完成'],
-    ['cancelled', '已取消'],
-    ['expired', '已过期']
+    ['awaiting-remote-offer', 'Awaiting remote response'],
+    ['awaiting-local-confirmation', 'Verify and confirm code'],
+    ['awaiting-remote-confirmation', 'Confirmed, waiting for peer'],
+    ['ready-to-trust', 'Both confirmed, ready to trust'],
+    ['completed', 'Completed'],
+    ['cancelled', 'Cancelled'],
+    ['expired', 'Expired']
   ]);
-  return labels.get(status) || '处理中';
+  return labels.get(status) || 'Processing';
 }
 
 function errorMessage(error) {
   if (error && typeof error.message === 'string' && error.message.trim()) return error.message.trim();
-  return '未知错误';
+  return window.i18n && window.i18n.getCurrentLanguage() === 'zh' ? '未知错误' : 'Unknown error';
 }

@@ -13,6 +13,7 @@ android-app/build/
 .tmp/
 dist-test/
 release-artifacts/
+release_artifacts/
 local.properties
 *.log
 *.part-*

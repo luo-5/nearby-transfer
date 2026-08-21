@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const http = require('http');
+const https = require('https');
 const { DesktopLibraryService } = require('../src/v2/desktop-library-service');
 
 class MockTrustedPeerStore {
@@ -19,7 +19,8 @@ class MockTrustedPeerStore {
 
 function httpRequest(options, body = null) {
   return new Promise((resolve, reject) => {
-    const req = http.request(options, (res) => {
+    options.rejectUnauthorized = false; // Allow self-signed cert in tests
+    const req = https.request(options, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => {

@@ -63,7 +63,9 @@ $testScripts = @(
     "test/desktop-library-service-smoke.js",
     "test/protocol-v2-fixtures-smoke.js",
     "test/transfer-controls-smoke.js",
-    "test/disk-space-precheck-smoke.js"
+    "test/disk-space-precheck-smoke.js",
+    "test/multi-round-batch-dragdrop-smoke.js",
+    "test/multi-round-https-webdav-stress.js"
 )
 
 foreach ($script in $testScripts) {

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('lanTransfer', {
   getState: () => ipcRenderer.invoke('get-state'),
+  setLanguage: (lang) => ipcRenderer.send('set-language', lang),
   chooseSaveDirectory: () => ipcRenderer.invoke('choose-save-directory'),
   resetSaveDirectory: () => ipcRenderer.invoke('reset-save-directory'),
   refreshPeers: () => ipcRenderer.invoke('refresh-peers'),
@@ -9,6 +10,7 @@ contextBridge.exposeInMainWorld('lanTransfer', {
   selectDroppedFile: (file) => ipcRenderer.invoke('select-dropped-file', webUtils.getPathForFile(file)),
   selectDroppedFiles: (files) => ipcRenderer.invoke('select-dropped-files', (files || []).map(f => webUtils.getPathForFile(f)).filter(Boolean)),
   sendSelectedFileToPeer: (deviceId) => ipcRenderer.invoke('send-selected-file-to-peer', deviceId),
+  onBatchProgress: (callback) => ipcRenderer.on('batch-progress', callback),
   chooseAndSend: (deviceId) => ipcRenderer.invoke('choose-and-send', deviceId),
   cancelTransfer: (transferId) => ipcRenderer.invoke('cancel-transfer', transferId),
   pauseTransfer: (transferId) => ipcRenderer.invoke('pause-transfer', transferId),

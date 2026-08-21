@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
+const https = require('https');
 const { DesktopLibraryService } = require('../src/v2/desktop-library-service');
 const { registerLibraryServiceIpcHandlers } = require('../src/v2/desktop-library-api');
 
@@ -34,7 +34,8 @@ class MockIpcMain {
 
 function httpReq(options, postData) {
   return new Promise((resolve, reject) => {
-    const req = http.request(options, (res) => {
+    options.rejectUnauthorized = false;
+    const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => resolve({ statusCode: res.statusCode, headers: res.headers, body: data }));

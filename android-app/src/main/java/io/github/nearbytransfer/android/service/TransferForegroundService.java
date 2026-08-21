@@ -8,8 +8,10 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -32,6 +34,8 @@ public class TransferForegroundService extends Service {
     private static final int NOTIFICATION_ID = 7701;
 
     private NotificationManager notificationManager;
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
 
     public static void startTransfer(Context context, String filename, String title, int progressPercent, String speed) {
         if (context == null) return;
@@ -77,6 +81,18 @@ public class TransferForegroundService extends Service {
         super.onCreate();
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         createNotificationChannel();
+        
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (powerManager != null) {
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NearbyTransfer::TransferWakeLock");
+            wakeLock.acquire(10 * 60 * 1000L /*10 minutes max*/);
+        }
+        
+        WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wifiManager != null) {
+            wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "NearbyTransfer::TransferWifiLock");
+            wifiLock.acquire();
+        }
     }
 
     @Override
@@ -109,6 +125,19 @@ public class TransferForegroundService extends Service {
         return START_NOT_STICKY;
     }
 
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+            wakeLock = null;
+        }
+        if (wifiLock != null && wifiLock.isHeld()) {
+            wifiLock.release();
+            wifiLock = null;
+        }
+    }
+
     private Notification buildNotification(String filename, String title, int progressPercent, String speed) {
         Intent contentIntent = new Intent(this, MainActivity.class);
         contentIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -117,11 +146,13 @@ public class TransferForegroundService extends Service {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT : PendingIntent.FLAG_UPDATE_CURRENT
         );
 
-        String contentText = (filename != null ? filename : "文件传输中") + (speed != null && !speed.isEmpty() ? " · " + speed : "");
+        String defaultContent = getString(R.string.notification_in_progress);
+        String defaultTitle = getString(R.string.notification_transferring);
+        String contentText = (filename != null ? filename : defaultContent) + (speed != null && !speed.isEmpty() ? " · " + speed : "");
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.app_icon)
-            .setContentTitle(title != null ? title : "Nearby Transfer")
+            .setContentTitle(title != null ? title : defaultTitle)
             .setContentText(contentText)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -141,10 +172,10 @@ public class TransferForegroundService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "文件传输进度与保活",
+                getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("用于在后台和锁屏期间显示文件传输进度并防止传输被系统杀死");
+            channel.setDescription(getString(R.string.notification_channel_desc));
             channel.enableVibration(false);
             channel.enableLights(false);
             if (notificationManager != null) {

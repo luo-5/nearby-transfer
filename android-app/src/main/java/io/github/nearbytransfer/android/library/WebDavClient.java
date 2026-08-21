@@ -12,9 +12,16 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 public class WebDavClient {
 
@@ -73,8 +80,9 @@ public class WebDavClient {
     public static SessionResult authenticate(String serverIp, int port, String deviceId) {
         HttpURLConnection conn = null;
         try {
-            URL url = new URL("http://" + serverIp + ":" + port + "/api/session");
+            URL url = new URL("https://" + serverIp + ":" + port + "/api/session");
             conn = (HttpURLConnection) url.openConnection();
+            configureSsl(conn);
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(4000);
             conn.setReadTimeout(5000);
@@ -130,8 +138,9 @@ public class WebDavClient {
         try {
             String pathParam = subPath == null ? "" : URLEncoder.encode(subPath, "UTF-8");
             String shareParam = shareId == null ? "default-share" : URLEncoder.encode(shareId, "UTF-8");
-            URL url = new URL("http://" + serverIp + ":" + port + "/api/list?shareId=" + shareParam + "&path=" + pathParam);
+            URL url = new URL("https://" + serverIp + ":" + port + "/api/list?shareId=" + shareParam + "&path=" + pathParam);
             conn = (HttpURLConnection) url.openConnection();
+            configureSsl(conn);
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(4000);
             conn.setReadTimeout(5000);
@@ -172,9 +181,10 @@ public class WebDavClient {
         HttpURLConnection conn = null;
         File tempFile = new File(destFile.getAbsolutePath() + ".tmp");
         try {
-            String fullUrl = "http://" + serverIp + ":" + port + downloadUrl;
+            String fullUrl = "https://" + serverIp + ":" + port + downloadUrl;
             URL url = new URL(fullUrl);
             conn = (HttpURLConnection) url.openConnection();
+            configureSsl(conn);
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(30000);
@@ -246,9 +256,10 @@ public class WebDavClient {
                 }
             }
             pathBuilder.append("/").append(URLEncoder.encode(fileName, "UTF-8").replace("+", "%20"));
-            String fullUrl = "http://" + serverIp + ":" + port + "/webdav/" + shareId + pathBuilder.toString();
+            String fullUrl = "https://" + serverIp + ":" + port + "/webdav/" + shareId + pathBuilder.toString();
             URL url = new URL(fullUrl);
             conn = (HttpURLConnection) url.openConnection();
+            configureSsl(conn);
             conn.setRequestMethod("PUT");
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(60000);
@@ -307,9 +318,10 @@ public class WebDavClient {
                 }
             }
             pathBuilder.append("/").append(URLEncoder.encode(dirName, "UTF-8").replace("+", "%20"));
-            String fullUrl = "http://" + serverIp + ":" + port + "/webdav/" + shareId + pathBuilder.toString();
+            String fullUrl = "https://" + serverIp + ":" + port + "/webdav/" + shareId + pathBuilder.toString();
             URL url = new URL(fullUrl);
             conn = (HttpURLConnection) url.openConnection();
+            configureSsl(conn);
             conn.setRequestMethod("MKCOL");
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
@@ -337,9 +349,10 @@ public class WebDavClient {
                 }
             }
             pathBuilder.append("/").append(URLEncoder.encode(itemName, "UTF-8").replace("+", "%20"));
-            String fullUrl = "http://" + serverIp + ":" + port + "/webdav/" + shareId + pathBuilder.toString();
+            String fullUrl = "https://" + serverIp + ":" + port + "/webdav/" + shareId + pathBuilder.toString();
             URL url = new URL(fullUrl);
             conn = (HttpURLConnection) url.openConnection();
+            configureSsl(conn);
             conn.setRequestMethod("DELETE");
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
@@ -357,8 +370,9 @@ public class WebDavClient {
     public static void subscribeEvents(String serverIp, int port, String token, EventListener listener, java.util.concurrent.atomic.AtomicBoolean cancelSignal) {
         HttpURLConnection conn = null;
         try {
-            URL url = new URL("http://" + serverIp + ":" + port + "/api/events");
+            URL url = new URL("https://" + serverIp + ":" + port + "/api/events");
             conn = (HttpURLConnection) url.openConnection();
+            configureSsl(conn);
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(6000);
             conn.setReadTimeout(0);
@@ -427,6 +441,37 @@ public class WebDavClient {
             return out.toString(StandardCharsets.UTF_8.name());
         } catch (Exception e) {
             return "";
+        }
+    }
+
+    private static javax.net.ssl.SSLSocketFactory sslSocketFactory = null;
+    private static final HostnameVerifier HOSTNAME_VERIFIER = (hostname, session) -> true;
+
+    private static synchronized void initSsl() {
+        if (sslSocketFactory != null) return;
+        try {
+            TrustManager[] trustAllCerts = new TrustManager[]{
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) { }
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) { }
+                }
+            };
+            SSLContext sc = SSLContext.getInstance("TLS");
+            sc.init(null, trustAllCerts, new java.security.SecureRandom());
+            sslSocketFactory = sc.getSocketFactory();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static void configureSsl(HttpURLConnection conn) {
+        if (conn instanceof HttpsURLConnection) {
+            initSsl();
+            if (sslSocketFactory != null) {
+                ((HttpsURLConnection) conn).setSSLSocketFactory(sslSocketFactory);
+            }
+            ((HttpsURLConnection) conn).setHostnameVerifier(HOSTNAME_VERIFIER);
         }
     }
 }

@@ -1,8 +1,9 @@
 'use strict';
 
-const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const certManager = require('./cert-manager');
 
 class DesktopLibraryService {
   constructor({
@@ -118,7 +119,8 @@ class DesktopLibraryService {
   async start(port = 0) {
     if (this.server) return this.port;
 
-    const server = http.createServer((req, res) => this._handleRequest(req, res));
+    const { cert, key } = certManager.getOrCreateCert();
+    const server = https.createServer({ cert, key }, (req, res) => this._handleRequest(req, res));
     this.server = server;
 
     await new Promise((resolve, reject) => {
@@ -283,6 +285,27 @@ class DesktopLibraryService {
               res.writeHead(403, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ ok: false, error: `Device ${deviceId} is not paired or trusted` }));
               return;
+            }
+            const signingKeyPem = (peer.identity && peer.identity.signingPublicKey) || peer.signingPublicKey || peer.signing_public_key;
+            if (data.signature && signingKeyPem) {
+              try {
+                const authPayload = `nearby-transfer:library-auth:${deviceId}:${data.timestamp || ''}:${data.nonce || ''}`;
+                const isValid = require('crypto').verify(
+                  null,
+                  Buffer.from(authPayload, 'utf8'),
+                  require('crypto').createPublicKey(signingKeyPem),
+                  Buffer.from(data.signature, 'base64')
+                );
+                if (!isValid) {
+                  res.writeHead(401, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ ok: false, error: 'Invalid digital signature for device authentication' }));
+                  return;
+                }
+              } catch (_sigErr) {
+                res.writeHead(401, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: 'Failed to verify authentication signature' }));
+                return;
+              }
             }
             const token = this.createSessionToken(deviceId);
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -575,6 +598,13 @@ class DesktopLibraryService {
       return;
     }
 
+    const baseName = path.basename(targetPath);
+    if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i.test(baseName) || /[<>:"|?*\x00-\x1F]/.test(baseName)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid or reserved filename' }));
+      return;
+    }
+
     // Do not allow overwriting existing files (Append-only / New-file-only policy)
     if (fs.existsSync(targetPath)) {
       res.writeHead(412, { 'Content-Type': 'application/json' });
@@ -618,6 +648,12 @@ class DesktopLibraryService {
     if (!session.permissions || !session.permissions.libraryUpload) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Forbidden: Peer lacks libraryUpload permission' }));
+      return;
+    }
+    const baseName = path.basename(targetPath);
+    if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i.test(baseName) || /[<>:"|?*\x00-\x1F]/.test(baseName)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid or reserved directory name' }));
       return;
     }
     if (fs.existsSync(targetPath)) {

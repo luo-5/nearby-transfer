@@ -407,14 +407,14 @@ public class MainActivity extends Activity {
         progressControlsParams.setMargins(0, dp(10), 0, 0);
 
         pauseTransferButton = new Button(this);
-        pauseTransferButton.setText("⏸ 暂停");
+        pauseTransferButton.setText(getString(R.string.btn_pause_transfer));
         pauseTransferButton.setAllCaps(false);
         pauseTransferButton.setMinHeight(dp(40));
         styleButton(pauseTransferButton, false);
         pauseTransferButton.setOnClickListener(v -> toggleTransferPause());
 
         cancelTransferButton = new Button(this);
-        cancelTransferButton.setText("✕ 终止");
+        cancelTransferButton.setText(getString(R.string.btn_cancel_transfer));
         cancelTransferButton.setAllCaps(false);
         cancelTransferButton.setMinHeight(dp(40));
         styleButton(cancelTransferButton, false);
@@ -529,7 +529,7 @@ public class MainActivity extends Activity {
         LinearLayout librariesCard = card(COLOR_SURFACE);
         addSectionTitle(librariesCard, getString(R.string.section_shared_libraries));
 
-        librariesStatusText = text("正在准备连接电脑共享库…", 13, COLOR_MUTED, Typeface.NORMAL);
+        librariesStatusText = text(getString(R.string.library_connecting), 13, COLOR_MUTED, Typeface.NORMAL);
         librariesStatusText.setPadding(0, 0, 0, dp(8));
         librariesCard.addView(librariesStatusText, matchWrap());
 
@@ -540,8 +540,8 @@ public class MainActivity extends Activity {
         breadcrumbRow.setPadding(0, 0, 0, dp(8));
 
         librariesBackButton = new Button(this);
-        librariesBackButton.setText("⬅ 返回上一级");
-        librariesBackButton.setContentDescription("返回上一级目录");
+        librariesBackButton.setText(getString(R.string.btn_back_parent));
+        librariesBackButton.setContentDescription(getString(R.string.btn_back_parent_desc));
         librariesBackButton.setAllCaps(false);
         librariesBackButton.setTextSize(12);
         styleButton(librariesBackButton, false);
@@ -566,7 +566,7 @@ public class MainActivity extends Activity {
         searchSortRow.setPadding(0, 0, 0, dp(8));
 
         librariesSearchBox = new android.widget.EditText(this);
-        librariesSearchBox.setHint("🔍 搜索当前目录文件…");
+        librariesSearchBox.setHint(getString(R.string.search_library_hint));
         librariesSearchBox.setTextSize(13);
         librariesSearchBox.setTextColor(COLOR_TEXT);
         librariesSearchBox.setHintTextColor(COLOR_MUTED);
@@ -587,8 +587,8 @@ public class MainActivity extends Activity {
         searchSortRow.addView(librariesSearchBox, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
         librariesSortButton = new Button(this);
-        librariesSortButton.setText("🔀 默认");
-        librariesSortButton.setContentDescription("切换排序方式");
+        librariesSortButton.setText(getString(R.string.sort_default));
+        librariesSortButton.setContentDescription(getString(R.string.sort_default));
         librariesSortButton.setAllCaps(false);
         librariesSortButton.setTextSize(12);
         styleButton(librariesSortButton, false);
@@ -604,8 +604,8 @@ public class MainActivity extends Activity {
         libButtonsHeader.setPadding(0, 0, 0, dp(10));
 
         refreshLibrariesButton = new Button(this);
-        refreshLibrariesButton.setText("刷新");
-        refreshLibrariesButton.setContentDescription("刷新文件库");
+        refreshLibrariesButton.setText(getString(R.string.btn_refresh));
+        refreshLibrariesButton.setContentDescription(getString(R.string.btn_refresh_desc));
         refreshLibrariesButton.setAllCaps(false);
         refreshLibrariesButton.setMinHeight(dp(44));
         styleButton(refreshLibrariesButton, false);
@@ -613,8 +613,8 @@ public class MainActivity extends Activity {
         libButtonsHeader.addView(refreshLibrariesButton, new LinearLayout.LayoutParams(0, dp(44), 1));
 
         createFolderButton = new Button(this);
-        createFolderButton.setText("新建文件夹");
-        createFolderButton.setContentDescription("在当前目录下新建文件夹");
+        createFolderButton.setText(getString(R.string.btn_create_folder));
+        createFolderButton.setContentDescription(getString(R.string.btn_create_folder_desc));
         createFolderButton.setAllCaps(false);
         createFolderButton.setMinHeight(dp(44));
         styleButton(createFolderButton, false);
@@ -624,8 +624,8 @@ public class MainActivity extends Activity {
         libButtonsHeader.addView(createFolderButton, createFolderParams);
 
         uploadToLibraryButton = new Button(this);
-        uploadToLibraryButton.setText("上传文件");
-        uploadToLibraryButton.setContentDescription("上传文件至电脑文件库当前目录");
+        uploadToLibraryButton.setText(getString(R.string.btn_upload_file));
+        uploadToLibraryButton.setContentDescription(getString(R.string.btn_upload_file_desc));
         uploadToLibraryButton.setAllCaps(false);
         uploadToLibraryButton.setMinHeight(dp(44));
         styleButton(uploadToLibraryButton, true);
@@ -635,7 +635,7 @@ public class MainActivity extends Activity {
 
         librariesItemsLayout = new LinearLayout(this);
         librariesItemsLayout.setOrientation(LinearLayout.VERTICAL);
-        TextView emptyLibrariesText = text("暂无文件，点击上方“刷新”或“上传文件”。", 13, COLOR_MUTED, Typeface.NORMAL);
+        TextView emptyLibrariesText = text(getString(R.string.empty_library_hint), 13, COLOR_MUTED, Typeface.NORMAL);
         emptyLibrariesText.setGravity(Gravity.CENTER);
         emptyLibrariesText.setPadding(dp(16), dp(20), dp(16), dp(20));
         emptyLibrariesText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
@@ -1292,9 +1292,9 @@ public class MainActivity extends Activity {
         librarySortMode = (librarySortMode + 1) % 3;
         if (librariesSortButton != null) {
             switch (librarySortMode) {
-                case 0: librariesSortButton.setText("🔀 默认"); break;
-                case 1: librariesSortButton.setText("🕒 最新"); break;
-                case 2: librariesSortButton.setText("📊 大小"); break;
+                case 0: librariesSortButton.setText(getString(R.string.sort_default)); break;
+                case 1: librariesSortButton.setText(getString(R.string.sort_time)); break;
+                case 2: librariesSortButton.setText(getString(R.string.sort_size)); break;
             }
         }
         applyFilterAndRender();
@@ -1309,7 +1309,7 @@ public class MainActivity extends Activity {
         }
 
         // 根目录标签
-        TextView rootChip = text("🏠 根目录", 12, libraryCurrentSubPath.isEmpty() ? COLOR_PRIMARY_DARK : COLOR_MUTED, Typeface.BOLD);
+        TextView rootChip = text("🏠 " + getString(R.string.root_directory_name), 12, libraryCurrentSubPath.isEmpty() ? COLOR_PRIMARY_DARK : COLOR_MUTED, Typeface.BOLD);
         rootChip.setPadding(dp(8), dp(4), dp(8), dp(4));
         rootChip.setBackground(rounded(libraryCurrentSubPath.isEmpty() ? COLOR_PRIMARY_SOFT : Color.TRANSPARENT, dp(6)));
         rootChip.setOnClickListener(v -> {
@@ -1384,43 +1384,44 @@ public class MainActivity extends Activity {
 
     private void promptCreateFolder() {
         if (libraryServerIp == null || libraryToken == null) {
-            Toast.makeText(this, "请先连接文件库", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, getString(R.string.library_no_connection), Toast.LENGTH_SHORT).show();
             return;
         }
 
         android.widget.EditText input = new android.widget.EditText(this);
-        input.setHint("输入新文件夹名称");
+        input.setHint(getString(R.string.create_folder_input_hint));
         input.setSingleLine(true);
         input.setPadding(dp(16), dp(12), dp(16), dp(12));
 
+        String currentDirName = libraryCurrentSubPath.isEmpty() ? getString(R.string.root_directory_name) : libraryCurrentSubPath;
         new AlertDialog.Builder(this)
-            .setTitle("新建文件夹")
-            .setMessage("在当前目录：" + (libraryCurrentSubPath.isEmpty() ? "根目录" : libraryCurrentSubPath) + " 下创建子文件夹")
+            .setTitle(getString(R.string.dialog_create_folder_title))
+            .setMessage(getString(R.string.dialog_create_folder_msg, currentDirName))
             .setView(input)
-            .setPositiveButton("创建", (dialog, which) -> {
+            .setPositiveButton(getString(R.string.action_confirm), (dialog, which) -> {
                 String folderName = input.getText().toString().trim();
                 if (folderName.isEmpty()) {
-                    Toast.makeText(this, "文件夹名称不能为空", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, getString(R.string.create_folder_empty_error), Toast.LENGTH_SHORT).show();
                     return;
                 }
-                appendLog("正在创建文件夹：" + folderName);
+                appendLog(getString(R.string.create_folder_creating_log, folderName));
                 executor.execute(() -> {
                     try {
                         WebDavClient.createDirectory(libraryServerIp, libraryServerPort, libraryToken, libraryShareId, libraryCurrentSubPath, folderName);
                         runOnUiThreadIfAlive(() -> {
-                            Toast.makeText(this, "文件夹已创建：" + folderName, Toast.LENGTH_SHORT).show();
-                            appendLog("文件夹创建成功：" + folderName);
+                            Toast.makeText(this, getString(R.string.create_folder_success, folderName), Toast.LENGTH_SHORT).show();
+                            appendLog(getString(R.string.create_folder_success, folderName));
                             refreshLibrariesList(false);
                         });
                     } catch (Exception e) {
                         runOnUiThreadIfAlive(() -> {
-                            Toast.makeText(this, "创建文件夹失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
-                            appendLog("创建文件夹失败：" + e.getMessage());
+                            Toast.makeText(this, getString(R.string.create_folder_failed, e.getMessage()), Toast.LENGTH_LONG).show();
+                            appendLog(getString(R.string.create_folder_failed, e.getMessage()));
                         });
                     }
                 });
             })
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.action_cancel), null)
             .show();
     }
 
@@ -1496,8 +1497,8 @@ public class MainActivity extends Activity {
         if (librariesItemsLayout == null) return;
         librariesItemsLayout.removeAllViews();
         if (items.isEmpty()) {
-            String msg = error != null ? ("连接失败：" + error) :
-                (!libraryCurrentSubPath.isEmpty() ? "当前子文件夹为空。\n点击上方“上传文件”可向此目录添加内容。" : "共享库中暂无文件。\n点击上方“上传文件”即可分享文件。");
+            String msg = error != null ? (getString(R.string.connect_failed_prefix) + error) :
+                (!libraryCurrentSubPath.isEmpty() ? getString(R.string.empty_subfolder_hint) : getString(R.string.empty_root_hint));
             TextView empty = text(msg, 13, COLOR_MUTED, Typeface.NORMAL);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(dp(16), dp(20), dp(16), dp(20));
@@ -1532,7 +1533,7 @@ public class MainActivity extends Activity {
 
             String subInfo;
             if (item.isDirectory) {
-                subInfo = "文件夹 · 点击进入子目录";
+                subInfo = getString(R.string.folder_subinfo);
             } else {
                 String timeStr = item.lastModified > 0 ? (" · " + df.format(new Date(item.lastModified))) : "";
                 subInfo = formatBytes(item.size) + timeStr;
@@ -1545,7 +1546,7 @@ public class MainActivity extends Activity {
 
             if (item.isDirectory) {
                 Button enterBtn = new Button(this);
-                enterBtn.setText("进入");
+                enterBtn.setText(getString(R.string.action_enter));
                 enterBtn.setAllCaps(false);
                 enterBtn.setMinHeight(dp(36));
                 enterBtn.setTextSize(13);
@@ -1562,7 +1563,7 @@ public class MainActivity extends Activity {
                 });
             } else {
                 Button downloadBtn = new Button(this);
-                downloadBtn.setText("下载");
+                downloadBtn.setText(getString(R.string.action_download));
                 downloadBtn.setAllCaps(false);
                 downloadBtn.setMinHeight(dp(36));
                 downloadBtn.setTextSize(13);
@@ -1570,6 +1571,30 @@ public class MainActivity extends Activity {
                 downloadBtn.setOnClickListener(v -> downloadLibraryFile(item));
                 itemRow.addView(downloadBtn, wrapContent());
             }
+
+            itemRow.setOnLongClickListener(v -> {
+                new AlertDialog.Builder(this)
+                    .setTitle(getString(R.string.dialog_delete_title))
+                    .setMessage(getString(R.string.dialog_delete_confirm, item.name))
+                    .setPositiveButton(getString(R.string.dialog_delete_title), (dialog, which) -> {
+                        executor.execute(() -> {
+                            try {
+                                WebDavClient.deleteItem(libraryServerIp, libraryServerPort, libraryToken, libraryShareId, libraryCurrentSubPath, item.name);
+                                runOnUiThreadIfAlive(() -> {
+                                    Toast.makeText(this, getString(R.string.delete_success_format, item.name), Toast.LENGTH_SHORT).show();
+                                    refreshLibrariesList(false);
+                                });
+                            } catch (Exception e) {
+                                runOnUiThreadIfAlive(() -> {
+                                    Toast.makeText(this, getString(R.string.delete_failed_format, e.getMessage()), Toast.LENGTH_LONG).show();
+                                });
+                            }
+                        });
+                    })
+                    .setNegativeButton(getString(R.string.action_cancel), null)
+                    .show();
+                return true;
+            });
 
             LinearLayout.LayoutParams rowParams = matchWrap();
             rowParams.setMargins(0, 0, 0, dp(8));
@@ -1838,14 +1863,14 @@ public class MainActivity extends Activity {
         boolean currentlyPaused = currentTransferPaused.get();
         if (currentlyPaused) {
             currentTransferPaused.set(false);
-            if (pauseTransferButton != null) pauseTransferButton.setText("⏸ 暂停");
-            statusText.setText("已继续传输");
-            appendLog("用户已恢复传输");
+            if (pauseTransferButton != null) pauseTransferButton.setText(getString(R.string.btn_pause_transfer));
+            statusText.setText(getString(R.string.transfer_in_progress));
+            appendLog(getString(R.string.transfer_in_progress));
         } else {
             currentTransferPaused.set(true);
-            if (pauseTransferButton != null) pauseTransferButton.setText("▶ 继续");
-            statusText.setText("传输已暂停");
-            appendLog("用户已暂停传输");
+            if (pauseTransferButton != null) pauseTransferButton.setText(getString(R.string.btn_resume_transfer));
+            statusText.setText(getString(R.string.status_paused));
+            appendLog(getString(R.string.status_paused));
         }
     }
 

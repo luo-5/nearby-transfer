@@ -80,8 +80,9 @@ public class NearbyDocumentsProvider extends DocumentsProvider {
         MatrixCursor.RowBuilder row = result.newRow();
         row.add(DocumentsContract.Root.COLUMN_ROOT_ID, ROOT_ID);
         row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, ROOT_ID);
-        row.add(DocumentsContract.Root.COLUMN_TITLE, "Nearby Transfer (电脑共享库)");
-        row.add(DocumentsContract.Root.COLUMN_SUMMARY, "电脑端受控 WebDAV / NAS 共享文件夹");
+        Context ctx = getContext();
+        row.add(DocumentsContract.Root.COLUMN_TITLE, ctx != null ? ctx.getString(R.string.saf_root_title) : "Nearby Transfer (PC Library)");
+        row.add(DocumentsContract.Root.COLUMN_SUMMARY, ctx != null ? ctx.getString(R.string.saf_root_summary) : "PC Controlled WebDAV / NAS Shared Folder");
         row.add(DocumentsContract.Root.COLUMN_FLAGS,
             DocumentsContract.Root.FLAG_SUPPORTS_CREATE |
             DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD
@@ -161,7 +162,8 @@ public class NearbyDocumentsProvider extends DocumentsProvider {
         MatrixCursor.RowBuilder row = result.newRow();
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, documentId);
         if (ROOT_ID.equals(documentId)) {
-            row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, "电脑共享库");
+            Context ctx = getContext();
+            row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, ctx != null ? ctx.getString(R.string.saf_doc_title) : "PC Shared Library");
             row.add(DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.MIME_TYPE_DIR);
             row.add(DocumentsContract.Document.COLUMN_FLAGS, DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE);
             row.add(DocumentsContract.Document.COLUMN_SIZE, 0);

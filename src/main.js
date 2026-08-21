@@ -4,7 +4,7 @@ const fs = require('fs');
 const { loadOrCreateDevice, updateDeviceConfig, toPublicDevice } = require('./core/config');
 const { Discovery } = require('./core/discovery');
 const { TransferServer } = require('./core/server');
-const { ensureSafeDirectory } = require('./core/path-utils');
+const { ensureSafeDirectory, walkDirectory } = require('./core/path-utils');
 const { sendFile } = require('./core/transfer');
 const { TrustedPeerStore } = require('./v2/trusted-peer-store');
 const { PairingSessionStore } = require('./v2/pairing-session-store');
@@ -100,8 +100,9 @@ app.on('before-quit', () => {
 ipcMain.handle('get-state', () => buildState());
 
 ipcMain.handle('choose-save-directory', async () => {
+  const isZh = currentLanguage === 'zh';
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '选择接收文件保存位置',
+    title: isZh ? '选择接收文件保存位置' : 'Select Directory to Save Received Files',
     defaultPath: saveDirectory || app.getPath('downloads'),
     properties: ['openDirectory', 'createDirectory']
   });
@@ -136,8 +137,9 @@ ipcMain.handle('refresh-peers', () => {
 });
 
 ipcMain.handle('choose-file', async () => {
+  const isZh = currentLanguage === 'zh';
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '选择要发送的文件',
+    title: isZh ? '选择要发送的文件' : 'Select Files to Send',
     properties: ['openFile', 'multiSelections']
   });
   if (result.canceled || result.filePaths.length === 0) {
@@ -177,23 +179,34 @@ ipcMain.handle('choose-file', async () => {
   };
 });
 
+let currentLanguage = 'zh';
+
+ipcMain.on('set-language', (_event, lang) => {
+  if (lang === 'en' || lang === 'zh') {
+    currentLanguage = lang;
+  }
+});
+
 ipcMain.handle('select-dropped-files', async (_event, filePaths) => {
   if (!Array.isArray(filePaths) || filePaths.length === 0) {
-    return { ok: false, error: '未选择任何文件' };
+    return { ok: false, error: currentLanguage === 'zh' ? '未选择任何文件' : 'No files selected' };
   }
   const validFiles = [];
   let totalSize = 0;
   for (const fp of filePaths) {
     try {
       const stat = await fs.promises.stat(fp);
-      if (stat.isFile()) {
+      if (stat.isDirectory()) {
+        walkDirectory(fp, validFiles);
+        totalSize = validFiles.reduce((sum, f) => sum + f.size, 0);
+      } else if (stat.isFile()) {
         validFiles.push({ path: fp, name: path.basename(fp), size: stat.size });
         totalSize += stat.size;
       }
     } catch (_) {}
   }
   if (validFiles.length === 0) {
-    return { ok: false, error: '所选路径中未包含有效文件' };
+    return { ok: false, error: currentLanguage === 'zh' ? '所选路径中未包含有效文件' : 'No valid files found in selected paths' };
   }
   selectedFilePaths = validFiles.map(f => f.path);
   selectedFilePath = selectedFilePaths[0];
@@ -203,10 +216,11 @@ ipcMain.handle('select-dropped-files', async (_event, filePaths) => {
       file: { name: validFiles[0].name, size: validFiles[0].size, count: 1 }
     };
   }
+  const isZh = currentLanguage === 'zh';
   return {
     ok: true,
     file: {
-      name: `已选择 ${validFiles.length} 个文件 (${validFiles[0].name} 等)`,
+      name: isZh ? `已选择 ${validFiles.length} 个文件 (${validFiles[0].name} 等)` : `${validFiles.length} files selected (${validFiles[0].name}, etc.)`,
       size: totalSize,
       count: validFiles.length
     }
@@ -229,14 +243,36 @@ ipcMain.handle('send-selected-file-to-peer', async (_event, deviceId) => {
     if (selectedFilePath) selectedFilePaths = [selectedFilePath];
     else return { ok: false, error: '请先选择文件' };
   }
-  let lastResult = { ok: true };
-  for (const fp of selectedFilePaths) {
-    lastResult = await sendFileToPeer(deviceId, fp);
-    if (!lastResult.ok) {
-      break;
+  let successCount = 0;
+  let failCount = 0;
+  let lastError = null;
+  const total = selectedFilePaths.length;
+  
+  for (let i = 0; i < total; i++) {
+    const fp = selectedFilePaths[i];
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('batch-progress', {
+        current: i + 1,
+        total,
+        name: require('path').basename(fp)
+      });
+    }
+    const result = await sendFileToPeer(deviceId, fp);
+    if (result.ok) {
+      successCount++;
+    } else {
+      failCount++;
+      lastError = result.error;
     }
   }
-  return lastResult;
+  
+  if (failCount === 0) {
+    return { ok: true };
+  } else if (successCount === 0) {
+    return { ok: false, error: lastError || '全部文件发送失败' };
+  } else {
+    return { ok: false, error: `部分发送失败 (成功 ${successCount}，失败 ${failCount})` };
+  }
 });
 
 ipcMain.handle('cancel-transfer', async (_event, transferId) => {
@@ -552,27 +588,35 @@ function getDefaultSaveDirectory() {
 }
 
 function getSaveDirectoryMode() {
+  const isZh = currentLanguage === 'zh';
   const defaultDirectory = path.resolve(getDefaultSaveDirectory());
   const currentDirectory = path.resolve(saveDirectory || defaultDirectory);
-  return currentDirectory === defaultDirectory ? '默认下载目录' : '自定义目录';
+  return currentDirectory === defaultDirectory ? (isZh ? '默认下载目录' : 'Default Downloads Folder') : (isZh ? '自定义目录' : 'Custom Folder');
 }
 
 async function confirmIncomingTransfer(incoming) {
-  const detail = [
+  const isZh = currentLanguage === 'zh';
+  const detail = isZh ? [
     `发送方：${incoming.sender.deviceName}`,
     `指纹：${incoming.sender.fingerprint}`,
     `文件：${incoming.file.originalName || incoming.file.name}`,
     `大小：${formatBytes(incoming.file.size)}`,
     `保存到：${incoming.savePath}`
+  ].join('\n') : [
+    `Sender: ${incoming.sender.deviceName}`,
+    `Fingerprint: ${incoming.sender.fingerprint}`,
+    `File: ${incoming.file.originalName || incoming.file.name}`,
+    `Size: ${formatBytes(incoming.file.size)}`,
+    `Save to: ${incoming.savePath}`
   ].join('\n');
 
   const result = await dialog.showMessageBox(mainWindow || undefined, {
     type: 'question',
-    buttons: ['接收', '拒绝'],
+    buttons: isZh ? ['接收', '拒绝'] : ['Accept', 'Reject'],
     defaultId: 0,
     cancelId: 1,
     noLink: true,
-    message: '接收这个文件吗？',
+    message: isZh ? '接收这个文件吗？' : 'Accept this file?',
     detail
   });
 
