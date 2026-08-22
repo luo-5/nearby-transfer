@@ -158,12 +158,8 @@ object V2TransferJobPersistence {
         val applicationContext = context.applicationContext
             ?: throw IllegalArgumentException("An application Context is required.")
         return runBlocking(Dispatchers.IO) {
-            val database = NearbyTransferDatabase.build(applicationContext)
-            try {
-                operation(RoomTransferJobRepository(database))
-            } finally {
-                database.close()
-            }
+            val database = NearbyTransferDatabase.getInstance(applicationContext)
+            operation(RoomTransferJobRepository(database))
         }
     }
 }

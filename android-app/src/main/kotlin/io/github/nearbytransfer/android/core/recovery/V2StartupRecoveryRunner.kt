@@ -75,14 +75,15 @@ class V2StartupRecoveryRunner(
     private val sourceProviderFactory: (Path) -> PublicationSourceProvider = ::AppPrivatePublicationSourceProvider,
     private val cleanerFactory: (Path) -> AppPrivateStagingCleaner = ::AppPrivateStagingCleaner,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val scope: CoroutineScope? = null,
 ) {
     private val started = AtomicBoolean(false)
 
     /** Starts at most one background sweep and returns immediately to the caller. */
     fun startAsync(onComplete: ((V2StartupRecoverySummary) -> Unit)? = null): Job? {
         if (!started.compareAndSet(false, true)) return null
-        return scope.launch {
+        val effectiveScope = scope ?: CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        return effectiveScope.launch {
             val summary = runOnce()
             onComplete?.invoke(summary)
         }
@@ -273,3 +274,4 @@ class V2StartupRecoveryRunner(
         )
     }
 }
+

@@ -39,23 +39,19 @@ object V2TransferPeerAccess {
             ?: throw IllegalArgumentException("An application Context is required.")
 
         return runBlocking(Dispatchers.IO) {
-            val database = NearbyTransferDatabase.build(applicationContext)
-            try {
-                val peer = RoomTrustedPeerRepository(database.trustedPeerDao())
-                    .findByDeviceId(deviceId)
-                    ?: return@runBlocking null
-                if (!peer.canTransfer()) return@runBlocking null
-                if (peer.signingPublicKey.isBlank() || peer.encryptionPublicKey.isBlank()) {
-                    return@runBlocking null
-                }
-                AuthorizedPeer(
-                    deviceId = peer.deviceId,
-                    signingPublicKey = peer.signingPublicKey,
-                    encryptionPublicKey = peer.encryptionPublicKey,
-                )
-            } finally {
-                database.close()
+            val database = NearbyTransferDatabase.getInstance(applicationContext)
+            val peer = RoomTrustedPeerRepository(database.trustedPeerDao())
+                .findByDeviceId(deviceId)
+                ?: return@runBlocking null
+            if (!peer.canTransfer()) return@runBlocking null
+            if (peer.signingPublicKey.isBlank() || peer.encryptionPublicKey.isBlank()) {
+                return@runBlocking null
             }
+            AuthorizedPeer(
+                deviceId = peer.deviceId,
+                signingPublicKey = peer.signingPublicKey,
+                encryptionPublicKey = peer.encryptionPublicKey,
+            )
         }
     }
 }

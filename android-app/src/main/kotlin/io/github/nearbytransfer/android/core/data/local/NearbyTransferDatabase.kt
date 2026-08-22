@@ -44,6 +44,9 @@ abstract class NearbyTransferDatabase : RoomDatabase() {
     companion object {
         const val DATABASE_NAME = "nearby-transfer-v2.db"
 
+        @Volatile
+        private var INSTANCE: NearbyTransferDatabase? = null
+
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL(
@@ -166,6 +169,17 @@ abstract class NearbyTransferDatabase : RoomDatabase() {
 
         @JvmField
         val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+
+        /**
+         * Returns the Application-scoped singleton database instance, creating it on first access.
+         * Callers must not close the returned instance; it is managed by the process lifetime.
+         */
+        @JvmStatic
+        fun getInstance(context: Context): NearbyTransferDatabase {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: build(context).also { INSTANCE = it }
+            }
+        }
 
         /** Preferred builder so every caller uses the complete migration chain. */
         @JvmStatic

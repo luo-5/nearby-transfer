@@ -12,6 +12,7 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -20,6 +21,8 @@ import io.github.nearbytransfer.android.MainActivity;
 import io.github.nearbytransfer.android.R;
 
 public class TransferForegroundService extends Service {
+
+    private static final String TAG = "TransferFgService";
 
     public static final String ACTION_START_TRANSFER = "io.github.nearbytransfer.action.START_TRANSFER";
     public static final String ACTION_UPDATE_PROGRESS = "io.github.nearbytransfer.action.UPDATE_PROGRESS";
@@ -43,12 +46,12 @@ public class TransferForegroundService extends Service {
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
 
-    public static void startTransfer(Context context, String filename, String title, int progressPercent, String speed) {
-        startTransfer(context, filename, title, progressPercent, speed, "", false);
+    public static boolean startTransfer(Context context, String filename, String title, int progressPercent, String speed) {
+        return startTransfer(context, filename, title, progressPercent, speed, "", false);
     }
 
-    public static void startTransfer(Context context, String filename, String title, int progressPercent, String speed, String taskId, boolean isPaused) {
-        if (context == null) return;
+    public static boolean startTransfer(Context context, String filename, String title, int progressPercent, String speed, String taskId, boolean isPaused) {
+        if (context == null) return false;
         Intent intent = new Intent(context, TransferForegroundService.class);
         intent.setAction(ACTION_START_TRANSFER);
         intent.putExtra(EXTRA_FILENAME, filename);
@@ -63,15 +66,19 @@ public class TransferForegroundService extends Service {
             } else {
                 context.startService(intent);
             }
-        } catch (Exception ignored) {}
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to start transfer foreground service", e);
+            return false;
+        }
     }
 
-    public static void updateProgress(Context context, String filename, String title, int progressPercent, String speed) {
-        updateProgress(context, filename, title, progressPercent, speed, "", false);
+    public static boolean updateProgress(Context context, String filename, String title, int progressPercent, String speed) {
+        return updateProgress(context, filename, title, progressPercent, speed, "", false);
     }
 
-    public static void updateProgress(Context context, String filename, String title, int progressPercent, String speed, String taskId, boolean isPaused) {
-        if (context == null) return;
+    public static boolean updateProgress(Context context, String filename, String title, int progressPercent, String speed, String taskId, boolean isPaused) {
+        if (context == null) return false;
         Intent intent = new Intent(context, TransferForegroundService.class);
         intent.setAction(ACTION_UPDATE_PROGRESS);
         intent.putExtra(EXTRA_FILENAME, filename);
@@ -82,16 +89,24 @@ public class TransferForegroundService extends Service {
         intent.putExtra(EXTRA_IS_PAUSED, isPaused);
         try {
             context.startService(intent);
-        } catch (Exception ignored) {}
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to update transfer progress notification", e);
+            return false;
+        }
     }
 
-    public static void stopTransfer(Context context) {
-        if (context == null) return;
+    public static boolean stopTransfer(Context context) {
+        if (context == null) return false;
         Intent intent = new Intent(context, TransferForegroundService.class);
         intent.setAction(ACTION_STOP_TRANSFER);
         try {
             context.startService(intent);
-        } catch (Exception ignored) {}
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to stop transfer foreground service", e);
+            return false;
+        }
     }
 
     @Override
@@ -102,28 +117,28 @@ public class TransferForegroundService extends Service {
         
         PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (powerManager != null) {
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NearbyTransfer::TransferWakeLock");
-            wakeLock.acquire(10 * 60 * 1000L /*10 minutes max*/);
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NearbyTransfer:WakeLock");
         }
-        
         WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         if (wifiManager != null) {
-            wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "NearbyTransfer::TransferWifiLock");
+            wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "NearbyTransfer:WifiLock");
             wifiLock.acquire();
+        }
+        if (wakeLock != null) {
+            wakeLock.acquire(60 * 60 * 1000L);
         }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null || ACTION_STOP_TRANSFER.equals(intent.getAction())) {
-            stopForeground(true);
+        if (intent == null) {
             stopSelf();
             return START_NOT_STICKY;
         }
 
         String filename = intent.getStringExtra(EXTRA_FILENAME);
         String title = intent.getStringExtra(EXTRA_TITLE);
-        int progress = intent.getIntExtra(EXTRA_PROGRESS, 0);
+        int progress = intent.getIntExtra(EXTRA_PROGRESS, -1);
         String speed = intent.getStringExtra(EXTRA_SPEED);
         String taskId = intent.getStringExtra(EXTRA_TASK_ID);
         boolean isPaused = intent.getBooleanExtra(EXTRA_IS_PAUSED, false);
