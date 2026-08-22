@@ -1,11 +1,38 @@
 const t = (key, ...args) => (window.i18n ? window.i18n.t(key, ...args) : key);
 
+const SELECTED_PEER_STORAGE_KEY = 'nearby_transfer_selected_peer';
+
 const state = {
   peers: [],
   selectedPeerId: null,
   selectedFile: null,
   transfers: new Map()
 };
+
+function loadPersistedSelectedPeerId() {
+  try {
+    const stored = window.localStorage && window.localStorage.getItem(SELECTED_PEER_STORAGE_KEY);
+    if (stored && typeof stored === 'string') {
+      state.selectedPeerId = stored;
+    }
+  } catch (error) {
+    // localStorage may be unavailable; fall back to no persisted selection
+  }
+}
+
+function persistSelectedPeerId(deviceId) {
+  try {
+    if (deviceId && typeof deviceId === 'string') {
+      window.localStorage.setItem(SELECTED_PEER_STORAGE_KEY, deviceId);
+    } else {
+      window.localStorage.removeItem(SELECTED_PEER_STORAGE_KEY);
+    }
+  } catch (error) {
+    // best-effort persistence; ignore storage failures
+  }
+}
+
+loadPersistedSelectedPeerId();
 
 const transferJobState = {
   jobs: [],
@@ -463,9 +490,15 @@ function applyState(nextState) {
 }
 
 function keepSelectedPeerOnline() {
-  if (state.selectedPeerId && !state.peers.some((peer) => peer.deviceId === state.selectedPeerId)) {
-    state.selectedPeerId = null;
-  }
+  // Intentionally do NOT clear selectedPeerId when the peer goes offline.
+  // The selection is persisted so it auto-restores when the peer reappears;
+  // renderSendState surfaces an "offline" hint while it is gone. Selecting a
+  // different peer overwrites the persisted value, which is the graceful
+  // fallback when a peer reinstalled its app and got a new deviceId.
+}
+
+function selectedPeerIsOffline() {
+  return Boolean(state.selectedPeerId) && !state.peers.some((peer) => peer.deviceId === state.selectedPeerId);
 }
 
 function renderPeers() {
@@ -484,6 +517,7 @@ function renderPeers() {
     button.className = peer.deviceId === state.selectedPeerId ? 'peer-card selected' : 'peer-card';
     button.addEventListener('click', () => {
       state.selectedPeerId = peer.deviceId;
+      persistSelectedPeerId(peer.deviceId);
       renderPeers();
       renderSendState();
     });
@@ -518,15 +552,15 @@ function renderSendState() {
     elements.selectedFile.textContent = t('no_file_selected');
   }
 
-  const canSend = Boolean(state.selectedFile && state.selectedPeerId);
+  const canSend = Boolean(state.selectedFile && state.selectedPeerId && !selectedPeerIsOffline());
   elements.sendButton.disabled = !canSend;
 
-  if (!state.selectedFile && !state.selectedPeerId) {
-    setStatus(t('initial_status'));
+  if (!state.selectedPeerId) {
+    setStatus(t('select_peer_first'));
+  } else if (selectedPeerIsOffline()) {
+    setStatus(t('selected_peer_offline'));
   } else if (!state.selectedFile) {
     setStatus(t('select_file_first'));
-  } else if (!state.selectedPeerId) {
-    setStatus(t('select_peer_first'));
   } else {
     setStatus(t('send_button') + ' Ready');
   }

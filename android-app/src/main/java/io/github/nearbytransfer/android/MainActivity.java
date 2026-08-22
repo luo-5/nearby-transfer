@@ -426,7 +426,7 @@ public class MainActivity extends Activity {
         sendButton.setMinHeight(dp(48));
         styleButton(sendButton, true);
         sendButton.setOnClickListener(v -> sendSelectedFile());
-        transferSection.addView(fileCard, cardParams());
+        // fileCard is added after peerCard below so the device list renders first.
 
         progressCard = card(COLOR_SURFACE);
         addSectionTitle(progressCard, getString(R.string.section_transfer_progress));
@@ -521,6 +521,7 @@ public class MainActivity extends Activity {
         sendButtonParams.setMargins(0, dp(8), 0, 0);
         peerCard.addView(sendButton, sendButtonParams);
         transferSection.addView(peerCard, cardParams());
+        transferSection.addView(fileCard, cardParams());
         transferSection.addView(progressCard, cardParams());
 
         LinearLayout jobsCard = card(COLOR_SURFACE);
@@ -1990,12 +1991,12 @@ public class MainActivity extends Activity {
     }
 
     private void sendSelectedFile() {
-        if (selectedFile == null) {
-            appendLog("请先选择文件。");
-            return;
-        }
         if (selectedPeer == null) {
             appendLog("请先选择附近设备。");
+            return;
+        }
+        if (selectedFile == null) {
+            appendLog("请先选择文件。");
             return;
         }
         if (device == null) {

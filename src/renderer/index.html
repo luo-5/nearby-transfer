@@ -19,18 +19,6 @@
       </div>
     </div>
 
-    <section class="send-panel">
-      <div id="dropZone" class="drop-zone" role="button" tabindex="0">
-        <span class="drop-icon">+</span>
-        <span class="drop-title" data-i18n="choose_file">选择文件</span>
-        <span class="drop-help" data-i18n="drag_help">也可以直接把文件拖到这里</span>
-      </div>
-
-      <div id="selectedFile" class="selected-file empty" data-i18n="no_file_selected">未选择文件。</div>
-      <button id="sendButton" class="primary" type="button" disabled data-i18n="send_button">发送</button>
-      <p id="statusText" class="status-text" data-i18n="initial_status">先选择文件，再选择附近设备。</p>
-    </section>
-
     <section class="grid">
       <article class="panel peers-panel">
         <div class="panel-title-row">
@@ -40,6 +28,18 @@
         <div id="peers" class="peers empty" data-i18n="searching_peers">正在局域网内搜索设备...</div>
         <button id="refreshButton" class="secondary" type="button" data-i18n="refresh_peers">刷新设备</button>
       </article>
+
+      <section class="send-panel">
+        <div id="dropZone" class="drop-zone" role="button" tabindex="0">
+          <span class="drop-icon">+</span>
+          <span class="drop-title" data-i18n="choose_file">选择文件</span>
+          <span class="drop-help" data-i18n="drag_help">也可以直接把文件拖到这里</span>
+        </div>
+
+        <div id="selectedFile" class="selected-file empty" data-i18n="no_file_selected">未选择文件。</div>
+        <button id="sendButton" class="primary" type="button" disabled data-i18n="send_button">发送</button>
+        <p id="statusText" class="status-text" data-i18n="initial_status">先选择附近设备，再选择要发送的文件。</p>
+      </section>
 
       <article class="panel identity">
         <h2 data-i18n="this_device">本机</h2>
