@@ -2,6 +2,33 @@
 
 All notable changes to Nearby Transfer will be documented in this file.
 
+## Unreleased
+
+### Security and stability (on `next/1.0`, not yet released)
+
+- Hardened the incoming-transfer confirmation dialog so a 60-second timeout auto-rejects and a stale late user click is ignored; removed dead `pendingDialogs` plumbing that could not dismiss a native MessageBox.
+- Made the desktop library PUT endpoint return `413 Payload Too Large` when a chunked upload crosses the 50 GiB cap, instead of resetting the connection or emitting a misleading 500.
+- Desktop security patches: moved the running-ports file to `app.getPath('userData')`, restricted library auth tokens to the `Authorization: Bearer` header only, re-checked trusted-peer status on every library request and revoked stale tokens, and added symlink-escape protection (`_isPathWithinShare`) across list/PROPFIND/PUT paths.
+- Android P0 fixes: converted `NearbyTransferDatabase` to an application-scoped singleton, fixed a coroutine scope leak in `V2StartupRecoveryRunner`, and replaced silent `catch (ignored)` blocks with `Log.w` in `TransferForegroundService` and `V2IncomingTransferCoordinator`.
+- Restored `ACTION_STOP_TRANSFER` handling in `TransferForegroundService.onStartCommand` (regression from the Android P0 patch) and added a `resetInstance()` test seam for the Room singleton.
+- Build: enabled `android.overridePathCheck` for the non-ASCII repo path and made `run_tests.ps1` honor an existing `ANDROID_SDK_ROOT`.
+
+## 1.2.1
+
+- Released the 7-protocol driver engine (`turbo-parallel`, `quic-udp`, `smb-share`, `webdav-sync`, `v2-stream`, `v1-classic`, `ftps-secure`) with category-based hot switching.
+- Kept the zero-runtime-dependency desktop architecture (pure `node:crypto` self-signed TLS via `src/v2/cert-manager.js`).
+- Aligned Android transfer controls (notification pause/resume/cancel, foreground service) with desktop.
+
+## 1.2.0
+
+- Added bilingual (zh/en) i18n, enhanced security, and transfer pause/resume/cancel controls across desktop and Android.
+- Added disk-space precheck, Android foreground service, multi-NIC reload, and batch file drag-and-drop.
+- Added receiver-side cancel, batch history clearing, Android back navigation, and WebDAV cancel/pause.
+
+## 1.1.0
+
+- Released recursive multi-level directory sync, breadcrumb navigation, and the desktop library manager for NAS WebDAV.
+
 ## 1.0.0 - In development
 
 ### Foundation
@@ -40,7 +67,7 @@ All notable changes to Nearby Transfer will be documented in this file.
 - Added deterministic failure, lifecycle, concurrency, corruption, migration, and recovery tests across Node and Android JVM suites.
 - Added a reproducible Gradle Wrapper, CI unit-test gates, dependency updates, least-privilege workflow permissions, and repository agent guidance.
 
-## 0.2.0 - Unreleased
+## 0.2.0 - folded into 1.1.0 / 1.2.0
 
 ### Security and reliability
 

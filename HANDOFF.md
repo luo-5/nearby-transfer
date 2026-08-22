@@ -19,6 +19,13 @@
   ```
 * **版本号规范**：严禁随意跳跃大版本号（当前为 `1.2.1`，下一个补丁版本为 `1.2.2` 或次版本 `1.3.0`）。
 
+> ⚠️ **`next/1.0` 已领先 `main`/`v1.2.1` release**：下列修复已合入 `next/1.0` 但尚未发版，接棒前请知悉：
+> - **PR #14（P0 critical）**：删除 `src/main.js` 重复 `createWindow()`、补 `src/renderer/i18n.js` 语言偏好持久化 key、修 `src/core/server.js` 的 `DecryptFrameStream` 构造与 `headersSent` 保护、脚本改用 `gh auth` 替换 token-in-URL。
+> - **PR #15（桌面安全）**：接收弹窗 60s 超时自动拒绝、端口文件移至 `app.getPath('userData')`、Library 服务 Token 仅认 `Authorization: Bearer`、每请求校验可信对端并吊销已撤销 token、`_isPathWithinShare` 符号链接逃逸防护、PUT 上传 50 GiB 上限。
+> - **PR #16（Android P0）**：Room DB 改单例（`NearbyTransferDatabase.getInstance()`）、`V2StartupRecoveryRunner` 协程作用域泄漏修复、`TransferForegroundService`/`V2IncomingTransferCoordinator` 静默异常改 `Log.w`。
+> - **跟进修复**：恢复 `TransferForegroundService.onStartCommand` 的 `ACTION_STOP_TRANSFER` 处理（PR #16 误删）；为单例 DB 加 `resetInstance()` 测试接缝并适配过时测试；修接收弹窗超时后丢弃迟到点击、PUT 超限显式返回 413。
+> - **构建环境**：`gradle.properties` 加 `android.overridePathCheck=true`（仓库路径含非 ASCII）；`run_tests.ps1` 改为优先复用 `ANDROID_SDK_ROOT`。
+
 ---
 
 ## 🏗️ 项目架构与最新技术成果 (v1.2.1)
@@ -51,7 +58,7 @@
 ## 💻 新电脑环境准备与快速启动
 
 新电脑需配置以下基础运行环境：
-1. **Node.js**：>= 20.0.0 (推荐 Node 24 LTS)
+1. **Node.js**：>= 24.0.0 (Node 24 LTS)
 2. **Java / JDK**：Java 17 (推荐 Eclipse Adoptium / Temurin 17)
 3. **Android SDK**：API Level 35 (Android 15), Build-Tools 35.0.0
 
