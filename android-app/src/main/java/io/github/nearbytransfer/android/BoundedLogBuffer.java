@@ -22,6 +22,11 @@ final class BoundedLogBuffer {
             return false;
         }
 
+        String last = entries.peekLast();
+        if (normalized.equals(last)) {
+            return false;
+        }
+
         while (entries.size() >= maxEntries) {
             entries.removeFirst();
         }

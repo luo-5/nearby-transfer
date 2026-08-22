@@ -66,4 +66,24 @@ public class BoundedLogBufferTest {
         assertTrue(buffer.snapshot().isEmpty());
         assertEquals("", buffer.render());
     }
+
+    @Test
+    public void collapsesConsecutiveDuplicates() {
+        BoundedLogBuffer buffer = new BoundedLogBuffer(5);
+
+        assertTrue(buffer.add("发现设备：Phone-A 192.0.2.1:47777"));
+        assertFalse(buffer.add("发现设备：Phone-A 192.0.2.1:47777"));
+        assertFalse(buffer.add("发现设备：Phone-A 192.0.2.1:47777"));
+        assertTrue(buffer.add("设备离线：Phone-A"));
+        assertTrue(buffer.add("发现设备：Phone-A 192.0.2.1:47777"));
+
+        assertEquals(
+            List.of(
+                "发现设备：Phone-A 192.0.2.1:47777",
+                "设备离线：Phone-A",
+                "发现设备：Phone-A 192.0.2.1:47777"
+            ),
+            buffer.snapshot()
+        );
+    }
 }

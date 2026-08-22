@@ -302,12 +302,15 @@ final class DiscoveryService {
             return;
         }
 
+        boolean isNewPeer = !peers.containsKey(peer.deviceId);
         peers.put(peer.deviceId, peer);
         if (!session.isOperational()) {
             peers.remove(peer.deviceId);
             return;
         }
-        notifyStatus("发现设备：" + peer.deviceName + " " + peer.host + ":" + peer.port);
+        if (isNewPeer) {
+            notifyStatus("发现设备：" + peer.deviceName + " " + peer.host + ":" + peer.port);
+        }
         peerListener.onPeers(listPeers());
     }
 
@@ -318,11 +321,16 @@ final class DiscoveryService {
 
         long now = System.currentTimeMillis();
         boolean changed = false;
+        List<PeerDevice> expired = new ArrayList<>();
         for (Map.Entry<String, PeerDevice> entry : peers.entrySet()) {
             if (now - entry.getValue().lastSeen > PEER_TTL_MS) {
                 peers.remove(entry.getKey());
+                expired.add(entry.getValue());
                 changed = true;
             }
+        }
+        for (PeerDevice peer : expired) {
+            notifyStatus("设备离线：" + peer.deviceName);
         }
         if (changed) {
             peerListener.onPeers(listPeers());
