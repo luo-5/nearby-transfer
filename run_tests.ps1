@@ -4,14 +4,14 @@ if (-not (Test-Path $nodeExe)) {
     $nodeExe = (Get-Command node -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
 }
 $javaHome = (Get-ChildItem 'C:\Program Files\AdoptOpenJDK', 'C:\Program Files\Eclipse Adoptium', 'C:\Program Files\Java' -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-$sdkRoot = "C:\Users\31752\AppData\Local\Android\Sdk"
+$sdkRoot = if ($env:ANDROID_SDK_ROOT -and (Test-Path $env:ANDROID_SDK_ROOT)) { $env:ANDROID_SDK_ROOT } else { "C:\Users\31752\AppData\Local\Android\Sdk" }
 
 $env:JAVA_HOME = $javaHome
 $env:ANDROID_HOME = $sdkRoot
 $env:ANDROID_SDK_ROOT = $sdkRoot
 $env:PATH = "C:\Program Files\nodejs;$javaHome\bin;$env:PATH"
 
-"sdk.dir=C\:/Users/31752/AppData/Local/Android/Sdk" | Set-Content -Path "local.properties" -Encoding UTF8
+"sdk.dir=$($sdkRoot.Replace('\','/'))" | Set-Content -Path "local.properties" -Encoding UTF8
 
 Write-Host "=== 1. Checking Node & Java Runtimes ==="
 & $nodeExe --version
