@@ -30,11 +30,13 @@ class V2TrustedPeerPersistenceTest {
 
     @Before
     fun setUp() {
+        NearbyTransferDatabase.resetInstance()
         context.deleteDatabase(NearbyTransferDatabase.DATABASE_NAME)
     }
 
     @After
     fun cleanUp() {
+        NearbyTransferDatabase.resetInstance()
         context.deleteDatabase(NearbyTransferDatabase.DATABASE_NAME)
     }
 
@@ -216,7 +218,7 @@ class V2TrustedPeerPersistenceTest {
     }
 
     @Test
-    fun eachJavaBoundaryOperationClosesItsRoomConnection() {
+    fun reusesSingletonDatabaseAcrossBoundaryOperations() {
         val identity = createIdentity("Close-check phone")
         onBackground { V2TrustedPeerPersistence.persistCompletedPairing(context, identity, 10L) }
         repeat(3) {
@@ -225,7 +227,7 @@ class V2TrustedPeerPersistenceTest {
         }
         onBackground { V2TrustedPeerPersistence.revokeTrustedPeer(context, identity.deviceId, 20L) }
 
-        assertTrue(context.deleteDatabase(NearbyTransferDatabase.DATABASE_NAME))
+        assertTrue(NearbyTransferDatabase.getInstance(context).isOpen)
     }
 
     private fun readStoredPeer(deviceId: String) = runBlocking(Dispatchers.IO) {

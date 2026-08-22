@@ -131,7 +131,8 @@ public class TransferForegroundService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null) {
+        if (intent == null || ACTION_STOP_TRANSFER.equals(intent.getAction())) {
+            stopForeground(true);
             stopSelf();
             return START_NOT_STICKY;
         }

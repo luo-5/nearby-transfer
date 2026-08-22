@@ -28,11 +28,13 @@ class V2TransferPeerAccessTest {
 
     @Before
     fun setUp() {
+        NearbyTransferDatabase.resetInstance()
         context.deleteDatabase(NearbyTransferDatabase.DATABASE_NAME)
     }
 
     @After
     fun tearDown() {
+        NearbyTransferDatabase.resetInstance()
         context.deleteDatabase(NearbyTransferDatabase.DATABASE_NAME)
     }
 
@@ -108,7 +110,7 @@ class V2TransferPeerAccessTest {
     }
 
     @Test
-    fun closesDatabaseAfterEachLookup() {
+    fun reusesSingletonDatabaseAcrossLookups() {
         val peer = peer()
         store(peer)
 
@@ -117,7 +119,7 @@ class V2TransferPeerAccessTest {
                 V2TransferPeerAccess.findAuthorizedPeer(context, peer.deviceId)
             })
         }
-        assertTrue(context.deleteDatabase(NearbyTransferDatabase.DATABASE_NAME))
+        assertTrue(NearbyTransferDatabase.getInstance(context).isOpen)
     }
 
     private fun store(peer: TrustedPeer) = runBlocking(Dispatchers.IO) {

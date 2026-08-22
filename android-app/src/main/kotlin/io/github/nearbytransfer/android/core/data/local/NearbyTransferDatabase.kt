@@ -181,6 +181,14 @@ abstract class NearbyTransferDatabase : RoomDatabase() {
             }
         }
 
+        /** Test seam: closes and forgets the cached singleton so the next [getInstance] rebuilds it. */
+        fun resetInstance() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
+            }
+        }
+
         /** Preferred builder so every caller uses the complete migration chain. */
         @JvmStatic
         fun build(context: Context): NearbyTransferDatabase = Room.databaseBuilder(
