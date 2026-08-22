@@ -990,7 +990,8 @@ function renderV2Pairing() {
 }
 
 function renderV2DiscoveredPeers(pairingApi) {
-  const peers = pairingState.discoveredPeers;
+  const trustedDeviceIds = new Set(pairingState.trustedPeers.map((peer) => peer.deviceId));
+  const peers = pairingState.discoveredPeers.filter((peer) => !trustedDeviceIds.has(peer.deviceId));
   const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   elements.v2DiscoveredCount.textContent = String(peers.length);
   if (peers.length === 0) {

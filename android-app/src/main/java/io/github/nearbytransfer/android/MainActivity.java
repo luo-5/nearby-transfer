@@ -2322,13 +2322,17 @@ public class MainActivity extends Activity {
         if (v2PairingController != null) {
             v2Peers = v2PairingController.listPeers();
         }
-        v2PeersLayout.removeAllViews();
-        if (v2Peers.isEmpty()) {
-            v2PeersLayout.setVisibility(View.GONE);
-            return;
+        java.util.Set<String> trustedDeviceIds = new java.util.HashSet<>();
+        for (V2TrustedPeerPersistence.TrustedPeerSummary trusted : trustedPeers) {
+            if ("TRUSTED".equals(trusted.getTrustStatus().name())) {
+                trustedDeviceIds.add(trusted.getDeviceId());
+            }
         }
-        v2PeersLayout.setVisibility(View.VISIBLE);
+        v2PeersLayout.removeAllViews();
+        boolean anyPairable = false;
         for (V2DiscoveryService.Peer peer : v2Peers) {
+            if (trustedDeviceIds.contains(peer.deviceId)) continue;
+            anyPairable = true;
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
             item.setPadding(dp(14), dp(14), dp(14), dp(14));
@@ -2344,6 +2348,10 @@ public class MainActivity extends Activity {
             pairButton.setMinHeight(dp(48));
             styleButton(pairButton, true);
             pairButton.setOnClickListener(v -> {
+                if (isPeerTrusted(peer.deviceId)) {
+                    v2StatusText.setText("该设备已配对，无需重复配对。");
+                    return;
+                }
                 v2StatusText.setText("正在连接 " + peer.deviceName + "…");
                 v2PairingController.startPairing(peer);
             });
@@ -2352,6 +2360,17 @@ public class MainActivity extends Activity {
             params.setMargins(0, 0, 0, dp(10));
             v2PeersLayout.addView(item, params);
         }
+        v2PeersLayout.setVisibility(anyPairable ? View.VISIBLE : View.GONE);
+    }
+
+    private boolean isPeerTrusted(String deviceId) {
+        if (deviceId == null) return false;
+        for (V2TrustedPeerPersistence.TrustedPeerSummary trusted : trustedPeers) {
+            if ("TRUSTED".equals(trusted.getTrustStatus().name()) && deviceId.equals(trusted.getDeviceId())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void renderV2Sessions() {
