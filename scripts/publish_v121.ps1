@@ -20,26 +20,21 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Nothing to commit or already committed."
 }
 
-Write-Host "`n=== 4. Pushing to origin main ==="
-& git push origin main
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to push to origin main"
-}
+Write-Host "`n=== 4. Pushing to origin main and next/1.0 ==="
+& git push origin next/1.0:main
+& git push origin next/1.0
 
 Write-Host "`n=== 5. Creating and Pushing Tag v1.2.1 ==="
-& git tag -d v1.2.1 2>$null
-& git push origin :refs/tags/v1.2.1 2>$null
-& git tag -a v1.2.1 -m "Nearby Transfer v1.2.1 - 7 Mainstream Protocols Matrix Release"
+& git tag -f -a v1.2.1 -m "Nearby Transfer v1.2.1 - 7 Mainstream Protocols Matrix Release"
 & git push origin v1.2.1 --force
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to push tag v1.2.1"
-}
 
 Write-Host "`n=== 6. Publishing GitHub Release v1.2.1 ==="
 $releaseNotes = Get-Content "RELEASE_NOTES_v1.2.1.md" -Raw
 
-# Delete existing release draft if any
-& gh release delete v1.2.1 --yes 2>$null
+# Try delete existing release if any
+try {
+    & gh release delete v1.2.1 --yes
+} catch {}
 
 & gh release create v1.2.1 `
     "release_artifacts/nearby-transfer-1.2.1-android.apk#nearby-transfer-1.2.1-android.apk" `
