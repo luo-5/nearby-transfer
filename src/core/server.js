@@ -256,7 +256,7 @@ class TransferServer {
     this.activeIncoming.set(transferId, { request, response, tempPath });
 
     try {
-      const decrypted = new DecryptFrameStream(pending.key, pending.file.sha256, pending.file.size);
+      const decrypted = new DecryptFrameStream(pending.key);
       await pipeline(request, decrypted, progress, fs.createWriteStream(tempPath, {
         flags: 'wx',
         highWaterMark: FILE_STREAM_CHUNK_BYTES
@@ -480,6 +480,7 @@ function createProgressLimiter() {
 }
 
 function respondJson(response, statusCode, payload) {
+  if (response.headersSent) { response.destroy(); return; }
   response.statusCode = statusCode;
   response.setHeader('content-type', 'application/json; charset=utf-8');
   response.end(JSON.stringify(payload));

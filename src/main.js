@@ -724,23 +724,3 @@ function toUserError(message) {
   return translations.get(message) || message || '操作失败';
 }
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 980,
-    height: 720,
-    minWidth: 800,
-    minHeight: 600,
-    show: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true
-    }
-  });
-
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-}
