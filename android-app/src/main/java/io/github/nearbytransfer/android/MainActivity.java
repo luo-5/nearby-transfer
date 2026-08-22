@@ -93,6 +93,7 @@ public class MainActivity extends Activity {
     private V2IncomingTransferCoordinator v2IncomingCoordinator;
     private List<V2DiscoveryService.Peer> v2Peers = new ArrayList<>();
     private List<V2TrustedPeerPersistence.TrustedPeerSummary> trustedPeers = new ArrayList<>();
+    private final java.util.Set<String> autoCompletedPairingIds = new java.util.HashSet<>();
     private SelectedFile selectedFile;
     private PeerDevice selectedPeer;
     private List<PeerDevice> peers = new ArrayList<>();
@@ -1012,9 +1013,13 @@ public class MainActivity extends Activity {
                             }
                             appendLog("协议 v2 配对状态：" + pairingStatusLabel(session.status));
                             if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
-                                v2StatusText.setText("双方已确认配对码；请点击“保存信任”。");
+                                v2StatusText.setText("双方已确认配对码，正在自动保存信任...");
                                 if (selectedTab != TAB_DEVICES) {
                                     statusText.setText("安全配对待确认，请打开“设备”页。");
+                                }
+                                if (v2PairingController != null
+                                    && autoCompletedPairingIds.add(session.pairingId)) {
+                                    v2PairingController.completePairing(session.pairingId);
                                 }
                             } else if (session.status == V2PairingSessionStore.Status.AWAITING_LOCAL_CONFIRMATION
                                 && selectedTab != TAB_DEVICES) {
@@ -2417,14 +2422,9 @@ public class MainActivity extends Activity {
                 confirm.setOnClickListener(v -> v2PairingController.confirmPairing(session.pairingId));
                 item.addView(confirm, matchWrap());
             } else if (session.status == V2PairingSessionStore.Status.READY_TO_TRUST) {
-                Button trust = new Button(this);
-                trust.setText(getString(R.string.btn_save_trust));
-                trust.setContentDescription(getString(R.string.btn_save_trust));
-                trust.setAllCaps(false);
-                trust.setMinHeight(dp(48));
-                styleButton(trust, true);
-                trust.setOnClickListener(v -> v2PairingController.completePairing(session.pairingId));
-                item.addView(trust, matchWrap());
+                TextView autoNote = text("双方已确认配对码，正在自动保存信任...", 13, COLOR_MUTED, Typeface.ITALIC);
+                autoNote.setPadding(0, dp(4), 0, dp(4));
+                item.addView(autoNote, matchWrap());
             }
             Button cancel = new Button(this);
             cancel.setText(getString(R.string.btn_cancel_pairing));

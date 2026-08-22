@@ -23,6 +23,7 @@ const pairingState = {
   refreshVersion: 0,
   startingPeerIds: new Set(),
   busySessionIds: new Set(),
+  autoCompletedPairingIds: new Set(),
   busyTrustedPeerIds: new Set(),
   message: '正在准备实验性配对服务...',
   messageIsError: false
@@ -882,6 +883,12 @@ function initializeV2Pairing() {
     window.lanTransfer.onV2PairingSession((session) => {
       if (session && typeof session.pairingId === 'string') {
         pairingState.sessions.set(session.pairingId, session);
+        if (session.status === 'ready-to-trust'
+            && !pairingState.busySessionIds.has(session.pairingId)
+            && !pairingState.autoCompletedPairingIds.has(session.pairingId)) {
+          pairingState.autoCompletedPairingIds.add(session.pairingId);
+          autoCompleteV2Pairing(session);
+        }
       } else {
         refreshV2Pairing({ silent: true });
       }
@@ -1104,13 +1111,10 @@ function createPairingSessionCard(session, pairingApi) {
   }
 
   if (session.status === 'ready-to-trust') {
-    const complete = document.createElement('button');
-    complete.type = 'button';
-    complete.className = 'primary pairing-button';
-    complete.disabled = !pairingApi || isBusy;
-    complete.textContent = isBusy ? (isZh ? '正在信任...' : 'Saving…') : (isZh ? '完成信任' : 'Save Trust');
-    complete.addEventListener('click', () => completeV2Pairing(session));
-    actions.append(complete);
+    const note = document.createElement('span');
+    note.className = 'pairing-meta';
+    note.textContent = isBusy ? (isZh ? '正在自动保存信任...' : 'Saving trust…') : t('pair_auto_completing');
+    actions.append(note);
   }
 
   const cancel = document.createElement('button');
@@ -1297,6 +1301,18 @@ async function completeV2Pairing(session) {
     pairingState.sessions.delete(session.pairingId);
     setPairingMessage(t('pair_complete_trusted', displayName || (isZh ? '设备' : 'Device')));
   });
+}
+
+async function autoCompleteV2Pairing(session) {
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  setPairingMessage(isZh ? '双方已确认安全码，正在自动保存信任...' : 'Both confirmed, saving trust automatically…');
+  try {
+    await completeV2Pairing(session);
+  } catch (error) {
+    pairingState.autoCompletedPairingIds.delete(session.pairingId);
+    setPairingMessage(errorMessage(error), true);
+    renderV2Pairing();
+  }
 }
 
 async function cancelV2Pairing(session) {

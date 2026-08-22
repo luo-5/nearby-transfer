@@ -55,7 +55,7 @@
     <string name="no_v2_peers">No protocol v2 devices discovered nearby.</string>
     <string name="btn_start_pairing">Pair</string>
     <string name="btn_cancel_pairing">Cancel</string>
-    <string name="btn_confirm_pairing">Confirm code</string>
+    <string name="btn_confirm_pairing">Confirm &amp; Complete Pairing</string>
     <string name="btn_save_trust">Save trust</string>
     <string name="btn_revoke_trust">Revoke</string>
     <string name="dialog_revoke_trust_title">Revoke Trusted Device</string>

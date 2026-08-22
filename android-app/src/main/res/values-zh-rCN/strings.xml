@@ -55,7 +55,7 @@
     <string name="no_v2_peers">附近暂未发现支持协议 v2 的设备。</string>
     <string name="btn_start_pairing">配对</string>
     <string name="btn_cancel_pairing">取消</string>
-    <string name="btn_confirm_pairing">确认配对码</string>
+    <string name="btn_confirm_pairing">确认并完成配对</string>
     <string name="btn_save_trust">保存信任</string>
     <string name="btn_revoke_trust">解除信任</string>
     <string name="dialog_revoke_trust_title">解除信任设备</string>
