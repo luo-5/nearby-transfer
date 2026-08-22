@@ -30,7 +30,11 @@
 - **Android 移动端**：
   - “设置”选项卡集成 7 大协议分类单选对话框，持久化至 `SharedPreferences`。
 
-### 3. 🧪 自动化测试与工程质量
+### 3. 📱 Android 端流控体验对齐 (ISSUE-006)
+- **通知栏流控**：新增了传输通知栏中的 “暂停”、“继续” 与 “取消” 交互按钮。
+- **持久化任务队列管理**：新增了 V2 协议持久化传输任务 (Transfer Jobs) 管理界面，可在 MainActivity 中对后台任务进行暂停/恢复与取消控制。
+
+### 4. 🧪 自动化测试与工程质量
 - 新增 `protocols-engine-smoke.js` 与 `protocol-matrix-switcher-smoke.js` 单元测试。
 - 桌面端 39 套自动化测试套件 + Android 单元测试 100% 全部通过。
 

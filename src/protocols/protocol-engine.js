@@ -73,16 +73,7 @@ class ProtocolEngine {
 
   async sendFile(peer, filePath, options = {}) {
     const driver = this.getActiveDriver();
-    try {
-      return await driver.sendFile(peer, filePath, options);
-    } catch (err) {
-      // Automatic Fallback to V2 Robust Stream if specialized protocol fails
-      if (driver.id !== PROTOCOLS.V2_STREAM) {
-        const fallbackDriver = this.drivers.get(PROTOCOLS.V2_STREAM);
-        return await fallbackDriver.sendFile(peer, filePath, { ...options, fallbackFrom: driver.id });
-      }
-      throw err;
-    }
+    return await driver.sendFile(peer, filePath, options);
   }
 
   async receiveFile(session, targetDir, options = {}) {

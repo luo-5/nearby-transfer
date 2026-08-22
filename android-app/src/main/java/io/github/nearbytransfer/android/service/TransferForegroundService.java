@@ -29,6 +29,12 @@ public class TransferForegroundService extends Service {
     public static final String EXTRA_TITLE = "extra_title";
     public static final String EXTRA_PROGRESS = "extra_progress";
     public static final String EXTRA_SPEED = "extra_speed";
+    public static final String EXTRA_TASK_ID = "extra_task_id";
+    public static final String EXTRA_IS_PAUSED = "extra_is_paused";
+
+    public static final String ACTION_PAUSE_TRANSFER = "io.github.nearbytransfer.action.PAUSE_TRANSFER";
+    public static final String ACTION_RESUME_TRANSFER = "io.github.nearbytransfer.action.RESUME_TRANSFER";
+    public static final String ACTION_CANCEL_TRANSFER = "io.github.nearbytransfer.action.CANCEL_TRANSFER";
 
     private static final String CHANNEL_ID = "nearby_transfer_progress_channel";
     private static final int NOTIFICATION_ID = 7701;
@@ -38,6 +44,10 @@ public class TransferForegroundService extends Service {
     private WifiManager.WifiLock wifiLock;
 
     public static void startTransfer(Context context, String filename, String title, int progressPercent, String speed) {
+        startTransfer(context, filename, title, progressPercent, speed, "", false);
+    }
+
+    public static void startTransfer(Context context, String filename, String title, int progressPercent, String speed, String taskId, boolean isPaused) {
         if (context == null) return;
         Intent intent = new Intent(context, TransferForegroundService.class);
         intent.setAction(ACTION_START_TRANSFER);
@@ -45,6 +55,8 @@ public class TransferForegroundService extends Service {
         intent.putExtra(EXTRA_TITLE, title != null ? title : "正在传输文件");
         intent.putExtra(EXTRA_PROGRESS, progressPercent);
         intent.putExtra(EXTRA_SPEED, speed != null ? speed : "-");
+        intent.putExtra(EXTRA_TASK_ID, taskId != null ? taskId : "");
+        intent.putExtra(EXTRA_IS_PAUSED, isPaused);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent);
@@ -55,6 +67,10 @@ public class TransferForegroundService extends Service {
     }
 
     public static void updateProgress(Context context, String filename, String title, int progressPercent, String speed) {
+        updateProgress(context, filename, title, progressPercent, speed, "", false);
+    }
+
+    public static void updateProgress(Context context, String filename, String title, int progressPercent, String speed, String taskId, boolean isPaused) {
         if (context == null) return;
         Intent intent = new Intent(context, TransferForegroundService.class);
         intent.setAction(ACTION_UPDATE_PROGRESS);
@@ -62,6 +78,8 @@ public class TransferForegroundService extends Service {
         intent.putExtra(EXTRA_TITLE, title != null ? title : "正在传输文件");
         intent.putExtra(EXTRA_PROGRESS, progressPercent);
         intent.putExtra(EXTRA_SPEED, speed != null ? speed : "-");
+        intent.putExtra(EXTRA_TASK_ID, taskId != null ? taskId : "");
+        intent.putExtra(EXTRA_IS_PAUSED, isPaused);
         try {
             context.startService(intent);
         } catch (Exception ignored) {}
@@ -107,8 +125,10 @@ public class TransferForegroundService extends Service {
         String title = intent.getStringExtra(EXTRA_TITLE);
         int progress = intent.getIntExtra(EXTRA_PROGRESS, 0);
         String speed = intent.getStringExtra(EXTRA_SPEED);
+        String taskId = intent.getStringExtra(EXTRA_TASK_ID);
+        boolean isPaused = intent.getBooleanExtra(EXTRA_IS_PAUSED, false);
 
-        Notification notification = buildNotification(filename, title, progress, speed);
+        Notification notification = buildNotification(filename, title, progress, speed, taskId, isPaused);
 
         if (ACTION_START_TRANSFER.equals(intent.getAction())) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -138,7 +158,7 @@ public class TransferForegroundService extends Service {
         }
     }
 
-    private Notification buildNotification(String filename, String title, int progressPercent, String speed) {
+    private Notification buildNotification(String filename, String title, int progressPercent, String speed, String taskId, boolean isPaused) {
         Intent contentIntent = new Intent(this, MainActivity.class);
         contentIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pendingIntent = PendingIntent.getActivity(
@@ -164,6 +184,28 @@ public class TransferForegroundService extends Service {
         } else {
             builder.setProgress(0, 0, true);
         }
+
+        int pendingFlags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT : PendingIntent.FLAG_UPDATE_CURRENT;
+
+        if (isPaused) {
+            Intent resumeIntent = new Intent(ACTION_RESUME_TRANSFER);
+            resumeIntent.setPackage(getPackageName());
+            if (taskId != null) resumeIntent.putExtra(EXTRA_TASK_ID, taskId);
+            PendingIntent resumePending = PendingIntent.getBroadcast(this, 1, resumeIntent, pendingFlags);
+            builder.addAction(new NotificationCompat.Action.Builder(0, "继续", resumePending).build());
+        } else {
+            Intent pauseIntent = new Intent(ACTION_PAUSE_TRANSFER);
+            pauseIntent.setPackage(getPackageName());
+            if (taskId != null) pauseIntent.putExtra(EXTRA_TASK_ID, taskId);
+            PendingIntent pausePending = PendingIntent.getBroadcast(this, 2, pauseIntent, pendingFlags);
+            builder.addAction(new NotificationCompat.Action.Builder(0, "暂停", pausePending).build());
+        }
+
+        Intent cancelIntent = new Intent(ACTION_CANCEL_TRANSFER);
+        cancelIntent.setPackage(getPackageName());
+        if (taskId != null) cancelIntent.putExtra(EXTRA_TASK_ID, taskId);
+        PendingIntent cancelPending = PendingIntent.getBroadcast(this, 3, cancelIntent, pendingFlags);
+        builder.addAction(new NotificationCompat.Action.Builder(0, "取消", cancelPending).build());
 
         return builder.build();
     }

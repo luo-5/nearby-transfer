@@ -45,6 +45,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_PICK_FILE = 1001;
@@ -104,6 +106,7 @@ public class MainActivity extends Activity {
     private ScrollView contentScroll;
     private ScrollView logScroll;
     private LinearLayout peersLayout;
+    private LinearLayout jobsLayout;
     private LinearLayout v2PeersLayout;
     private LinearLayout v2SessionsLayout;
     private LinearLayout trustedPeersLayout;
@@ -173,6 +176,33 @@ public class MainActivity extends Activity {
     private TextView protocolBadgeText;
     private TextView protocolDescText;
 
+    private final BroadcastReceiver transferActionReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            String taskId = intent.getStringExtra(io.github.nearbytransfer.android.service.TransferForegroundService.EXTRA_TASK_ID);
+            if (io.github.nearbytransfer.android.service.TransferForegroundService.ACTION_PAUSE_TRANSFER.equals(action)) {
+                if (taskId == null || taskId.isEmpty()) {
+                    if (transferActive && !currentTransferPaused.get()) toggleTransferPause();
+                } else {
+                    executeJobTransition(taskId, "PAUSED", null, true);
+                }
+            } else if (io.github.nearbytransfer.android.service.TransferForegroundService.ACTION_RESUME_TRANSFER.equals(action)) {
+                if (taskId == null || taskId.isEmpty()) {
+                    if (transferActive && currentTransferPaused.get()) toggleTransferPause();
+                } else {
+                    executeJobTransition(taskId, "QUEUED", null, true);
+                }
+            } else if (io.github.nearbytransfer.android.service.TransferForegroundService.ACTION_CANCEL_TRANSFER.equals(action)) {
+                if (taskId == null || taskId.isEmpty()) {
+                    cancelActiveTransfer();
+                } else {
+                    executeJobTransition(taskId, "CANCELLED", null, false);
+                }
+            }
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -181,6 +211,16 @@ public class MainActivity extends Activity {
         restoreSelectedFile(savedInstanceState);
         refreshTrustedPeers();
         requestPermissionsThenStart();
+
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(io.github.nearbytransfer.android.service.TransferForegroundService.ACTION_PAUSE_TRANSFER);
+        filter.addAction(io.github.nearbytransfer.android.service.TransferForegroundService.ACTION_RESUME_TRANSFER);
+        filter.addAction(io.github.nearbytransfer.android.service.TransferForegroundService.ACTION_CANCEL_TRANSFER);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(transferActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(transferActionReceiver, filter);
+        }
     }
 
     @Override
@@ -244,10 +284,13 @@ public class MainActivity extends Activity {
             transferServer = null;
             discoveryService = null;
             v2PairingController = null;
-            v2IncomingCoordinator = null;
+        v2IncomingCoordinator = null;
         }
         stopCoreServices(serverToStop, discoveryToStop, pairingToStop, coordinatorToStop);
         executor.shutdownNow();
+        try {
+            unregisterReceiver(transferActionReceiver);
+        } catch (Exception ignored) {}
         super.onDestroy();
     }
 
@@ -478,6 +521,22 @@ public class MainActivity extends Activity {
         peerCard.addView(sendButton, sendButtonParams);
         transferSection.addView(peerCard, cardParams());
         transferSection.addView(progressCard, cardParams());
+
+        LinearLayout jobsCard = card(COLOR_SURFACE);
+        addSectionTitle(jobsCard, "持久化传输任务 (Transfer Jobs)");
+        Button refreshJobsButton = new Button(this);
+        refreshJobsButton.setText("刷新任务列表");
+        refreshJobsButton.setAllCaps(false);
+        refreshJobsButton.setMinHeight(dp(48));
+        styleButton(refreshJobsButton, false);
+        refreshJobsButton.setOnClickListener(v -> refreshTransferJobsList());
+        jobsCard.addView(refreshJobsButton, matchWrap());
+        
+        jobsLayout = new LinearLayout(this);
+        jobsLayout.setOrientation(LinearLayout.VERTICAL);
+        jobsLayout.setPadding(0, dp(10), 0, 0);
+        jobsCard.addView(jobsLayout, matchWrap());
+        transferSection.addView(jobsCard, cardParams());
 
         // --- 设备与配对板块 ---
         LinearLayout v2Card = card(COLOR_SURFACE);
@@ -2031,6 +2090,96 @@ public class MainActivity extends Activity {
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
             // Activity destruction can race with a user-triggered refresh. No UI callback is needed then.
         }
+    }
+
+    private void refreshTransferJobsList() {
+        if (activityDestroyed || jobsLayout == null) return;
+        try {
+            executor.execute(() -> {
+                try {
+                    List<io.github.nearbytransfer.android.core.data.TransferJob> loaded = new ArrayList<>(
+                        io.github.nearbytransfer.android.core.data.V2TransferJobPersistence.listUnfinished(getApplicationContext())
+                    );
+                    runOnUiThreadIfAlive(() -> renderTransferJobs(loaded));
+                } catch (Exception error) {
+                    runOnUiThreadIfAlive(() -> appendLog("刷新持久化任务失败: " + error.getMessage()));
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {}
+    }
+
+    private void renderTransferJobs(List<io.github.nearbytransfer.android.core.data.TransferJob> loadedJobs) {
+        if (jobsLayout == null || activityDestroyed) return;
+        jobsLayout.removeAllViews();
+        if (loadedJobs.isEmpty()) {
+            TextView empty = text("暂无持久化任务", 14, COLOR_MUTED, Typeface.NORMAL);
+            empty.setPadding(0, dp(8), 0, dp(8));
+            jobsLayout.addView(empty, matchWrap());
+            return;
+        }
+
+        for (io.github.nearbytransfer.android.core.data.TransferJob job : loadedJobs) {
+            LinearLayout item = new LinearLayout(this);
+            item.setOrientation(LinearLayout.VERTICAL);
+            item.setPadding(dp(12), dp(10), dp(12), dp(10));
+            item.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
+            LinearLayout.LayoutParams itemParams = matchWrap();
+            itemParams.setMargins(0, 0, 0, dp(8));
+
+            String dir = job.getDirection().name();
+            String state = job.getState().name();
+            TextView name = text(dir + " - " + job.getTaskId().substring(0, Math.min(8, job.getTaskId().length())), 15, COLOR_TEXT, Typeface.BOLD);
+            TextView status = text("状态: " + state, 13, COLOR_MUTED, Typeface.NORMAL);
+            item.addView(name, matchWrap());
+            item.addView(status, matchWrap());
+
+            LinearLayout controls = new LinearLayout(this);
+            controls.setOrientation(LinearLayout.HORIZONTAL);
+            controls.setPadding(0, dp(8), 0, 0);
+
+            if ("TRANSFERRING".equals(state) || "QUEUED".equals(state)) {
+                Button pauseBtn = new Button(this);
+                pauseBtn.setText("暂停");
+                pauseBtn.setMinHeight(dp(36));
+                styleButton(pauseBtn, false);
+                pauseBtn.setOnClickListener(v -> executeJobTransition(job.getTaskId(), "PAUSED", null, true));
+                controls.addView(pauseBtn, wrapContent());
+            } else if ("PAUSED".equals(state) || "FAILED".equals(state)) {
+                Button resumeBtn = new Button(this);
+                resumeBtn.setText("继续");
+                resumeBtn.setMinHeight(dp(36));
+                styleButton(resumeBtn, false);
+                resumeBtn.setOnClickListener(v -> executeJobTransition(job.getTaskId(), "QUEUED", null, true));
+                controls.addView(resumeBtn, wrapContent());
+            }
+
+            Button cancelBtn = new Button(this);
+            cancelBtn.setText("取消");
+            cancelBtn.setMinHeight(dp(36));
+            styleButton(cancelBtn, false);
+            cancelBtn.setOnClickListener(v -> executeJobTransition(job.getTaskId(), "CANCELLED", null, false));
+            LinearLayout.LayoutParams cancelParams = wrapContent();
+            cancelParams.setMargins(dp(8), 0, 0, 0);
+            controls.addView(cancelBtn, cancelParams);
+            item.addView(controls, matchWrap());
+            jobsLayout.addView(item, itemParams);
+        }
+    }
+
+    private void executeJobTransition(String taskId, String newState, String failureReason, Boolean recoverable) {
+        if (activityDestroyed) return;
+        try {
+            executor.execute(() -> {
+                try {
+                    io.github.nearbytransfer.android.core.data.V2TransferJobPersistence.transition(
+                        getApplicationContext(), taskId, newState, System.currentTimeMillis(), failureReason, recoverable
+                    );
+                    refreshTransferJobsList();
+                } catch (Exception error) {
+                    runOnUiThreadIfAlive(() -> appendLog("更新任务状态失败: " + error.getMessage()));
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {}
     }
 
     private void renderTrustedPeers() {
