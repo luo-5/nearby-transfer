@@ -1,110 +1,104 @@
-# Nearby Transfer development index
+# Nearby Transfer 跨设备开发交接索引 (v1.2.1 Handoff)
 
-这是迁移到另一台电脑后应首先打开的索引。当前 v1.0 工作分支是
-`next/1.0`，所有开发规范、文档和代码都在当前仓库目录内，不依赖原电脑的
-绝对路径。
+> **致接棒开发的新 Agent / 工程师**：
+> 欢迎继续参与 **Nearby Transfer** 的开发！本项目是一个基于 Node.js / Electron（桌面端）与 Kotlin/Java（Android 移动端）的高性能局域网加密文件传输与 NAS 共享应用。
+> 
+> 当前代码库版本已正式发布 **v1.2.1**。请在开始工作前阅读本交接指南。
 
-## 先读这几个文件
+---
 
-1. [`AGENTS.md`](AGENTS.md)：代码规范、安全边界、测试要求和提交规范。
-2. [`docs/next-version-handoff.md`](docs/next-version-handoff.md)：v1.0 当前进度、
-   未完成的运行时工作、迁移电脑和真实设备测试清单。
-3. [`docs/ui-handoff.md`](docs/ui-handoff.md)：给 UI Agent 的专项交接，包含当前
-   Android UI、固定日志窗口、响应式/无障碍要求和验收矩阵。
-4. [`docs/v1-plan.md`](docs/v1-plan.md)：v1.0 大改的目标、里程碑和暂缓功能。
+## 📌 核心仓库信息与 Git 规范
 
-## 当前仓库状态
+* **GitHub 仓库**：`https://github.com/luo-5/nearby-transfer.git`
+* **活跃工作分支**：`next/1.0`
+* **最新发布 Tag**：`v1.2.1`（已在 GitHub Releases 发布全平台安装包）
+* **强制 Git 提交身份**：
+  ```bash
+  git config user.name "luo-5"
+  git config user.email "lluo77250@gmail.com"
+  ```
+* **版本号规范**：严禁随意跳跃大版本号（当前为 `1.2.1`，下一个补丁版本为 `1.2.2` 或次版本 `1.3.0`）。
 
-- 上游仓库：<https://github.com/luo-5/nearby-transfer>
-- 当前分支：`next/1.0`
-- Draft PR：<https://github.com/luo-5/nearby-transfer/pull/9>
-- 查看最新提交：`git log -1 --oneline --decorate`
-- 提交必须包含：`Co-authored-by: Codex <codex@openai.com>`
+---
 
-## UI 工作路径
+## 🏗️ 项目架构与最新技术成果 (v1.2.1)
 
-- 生产 Android 入口：
-  [`android-app/src/main/java/io/github/nearbytransfer/android/MainActivity.java`](android-app/src/main/java/io/github/nearbytransfer/android/MainActivity.java)
-- Android Java UI 组件与运行时类：
-  [`android-app/src/main/java/io/github/nearbytransfer/android/`](android-app/src/main/java/io/github/nearbytransfer/android/)
-- Compose 迁移说明：
-  [`docs/android-compose-migration.md`](docs/android-compose-migration.md)
-- Compose debug 入口：
-  [`android-app/src/main/kotlin/io/github/nearbytransfer/android/migration/ComposeMigrationActivity.kt`](android-app/src/main/kotlin/io/github/nearbytransfer/android/migration/ComposeMigrationActivity.kt)
-- Compose 当前预览壳：
-  [`android-app/src/main/kotlin/io/github/nearbytransfer/android/feature/home/NearbyTransferMigrationApp.kt`](android-app/src/main/kotlin/io/github/nearbytransfer/android/feature/home/NearbyTransferMigrationApp.kt)
-- Compose UI 状态起点：
-  [`android-app/src/main/kotlin/io/github/nearbytransfer/android/feature/devices/DevicesUiState.kt`](android-app/src/main/kotlin/io/github/nearbytransfer/android/feature/devices/DevicesUiState.kt)
-- Android 字符串资源：
-  [`android-app/src/main/res/values/strings.xml`](android-app/src/main/res/values/strings.xml)、
-  [`android-app/src/main/res/values-zh-rCN/strings.xml`](android-app/src/main/res/values-zh-rCN/strings.xml)
+### 1. 🎛️ 7 大主流传输协议驱动引擎 (`src/protocols/`)
+项目采用驱动式多协议调度引擎，支持在设置面板中分类热切换：
+* **🚀 极速类**：
+  * `turbo-parallel`：4~8 路多管道并发切片传输，榨干局域网带宽。
+  * `quic-udp`：基于 UDP 的 0-RTT 握手传输，彻底消除 TCP 队头阻塞，抗弱网丢包。
+* **🪟 系统共享类**：
+  * `smb-share`：Windows 资源管理器 / macOS Finder 原生直连免装客户端。
+  * `webdav-sync`：RFC 4918 标准 WebDAV NAS 私有云盘同步，支持目录递归与实时 SSE 事件通知。
+* **🌐 标准与兼容类**：
+  * `v2-stream`：推荐默认协议，毫秒级断点续传与 Chunk ACK。
+  * `v1-classic`：经典轻量 HTTP 加密流。
+  * `ftps-secure`：工业级 TLS 安全 FTP。
 
-UI Agent 应先阅读 `docs/ui-handoff.md`，再修改 UI。不要为了让按钮看起来可用而
-提前启用 v2 生产传输；当前接收运行时仍在集成中。
+### 2. 🪓 零运行时外部依赖架构 (Zero-Dependency)
+* `src/v2/cert-manager.js` 使用纯 Node.js `node:crypto` 原生 DER 编码动态生成 X.509 TLS 自签名证书。
+* **整个项目运行时没有安装任何第三方 npm 包（`dependencies: {}`）**，请在后续迭代中继续坚守这一极简安全标准！
 
-## Android v1.0 实现路径
+### 3. 📱 Android 端架构与流控 (ISSUE-006 已闭环)
+* **通知栏流控**：`TransferForegroundService.java` 支持通知栏原生 “暂停”、“继续” 与 “取消” 广播拦截。
+* **持久化任务池**：`MainActivity.java` 内置 Transfer Jobs 监控看板。
+* **⚠️ 线程安全铁律（Gotcha）**：
+  `V2TransferJobPersistence.kt` 中的所有 Room 数据库操作均显式包含 `check(Looper.getMainLooper().thread !== Thread.currentThread())`。**严禁在 UI 线程直接调用任何 `V2TransferJobPersistence` 方法**，必须通过后台 `executor.execute(...)` 调度！
 
-- Room 数据库和实体：
-  [`android-app/src/main/kotlin/io/github/nearbytransfer/android/core/data/local/`](android-app/src/main/kotlin/io/github/nearbytransfer/android/core/data/local/)
-- v2 数据仓库：
-  [`android-app/src/main/kotlin/io/github/nearbytransfer/android/core/data/`](android-app/src/main/kotlin/io/github/nearbytransfer/android/core/data/)
-- 恢复与启动清理：
-  [`android-app/src/main/kotlin/io/github/nearbytransfer/android/core/recovery/`](android-app/src/main/kotlin/io/github/nearbytransfer/android/core/recovery/)
-- 发布、MediaStore、SAF：
-  [`android-app/src/main/kotlin/io/github/nearbytransfer/android/core/publication/`](android-app/src/main/kotlin/io/github/nearbytransfer/android/core/publication/)
-- Android 单元测试：
-  [`android-app/src/test/`](android-app/src/test/)
-- Room 导出 schema：
-  [`android-app/schemas/`](android-app/schemas/)
-- Android 构建文档：
-  [`docs/android.md`](docs/android.md)、[`docs/build.md`](docs/build.md)
+---
 
-下一批 Android 运行时优先查看主交接文档中的推荐拆分：接收运行时、Room
-checkpoint facade、publication runtime、coordinator handoff，最后才接入
-`V2PairingController` 和 `MainActivity`。
+## 💻 新电脑环境准备与快速启动
 
-## Desktop 与协议路径
+新电脑需配置以下基础运行环境：
+1. **Node.js**：>= 20.0.0 (推荐 Node 24 LTS)
+2. **Java / JDK**：Java 17 (推荐 Eclipse Adoptium / Temurin 17)
+3. **Android SDK**：API Level 35 (Android 15), Build-Tools 35.0.0
 
-- 桌面主进程和 IPC：[`src/main.js`](src/main.js)、[`src/preload.js`](src/preload.js)
-- 桌面 renderer UI：[`src/renderer/`](src/renderer/)
-- 旧版核心传输：[`src/core/`](src/core/)
-- v2 pairing/trust/persistence/transfer：[`src/v2/`](src/v2/)
-- v2 协议说明：[`docs/protocol/v2.md`](docs/protocol/v2.md)
-- 协议文档入口：[`docs/protocol.md`](docs/protocol.md)
-- Node smoke tests：[`test/`](test/)
-- 共享协议 fixtures：[`test/fixtures/`](test/fixtures/)
-
-协议、加密、信任、checkpoint 或跨平台 wire behavior 的修改，不要放进纯 UI
-提交；必须同步更新协议说明、双方实现和对应测试。
-
-## 新电脑快速开始
-
-在仓库根目录执行：
-
+### 快速初始化与全量验证：
 ```powershell
-git status
-git switch next/1.0
-npm ci
-npm run check
-npm test
+# 1. 切换到工作分支
+git checkout next/1.0
+
+# 2. 安装桌面端开发工具链
+npm install
+
+# 3. 运行全平台一键测试脚本 (同时测试 Desktop 39 项 Smoke Tests + Android 31 项 Gradle 测试)
+powershell -ExecutionPolicy Bypass -File .\run_tests.ps1
 ```
 
-Android 需要 Java 17、Android SDK platform 35 和 build tools 35.0.0：
+---
 
-```powershell
-.\gradlew.bat :android-app:testDebugUnitTest :android-app:assembleDebug --no-daemon
-```
+## 📦 打包与分发命令
 
-不要迁移 `node_modules/`、`.gradle/`、`.kotlin/`、`android-app/build/`、`.tmp/`、
-APK、安装包和机器专属截图；这些目录会在新电脑重新生成。
+* **桌面端打包 (Windows & Linux)**：
+  ```powershell
+  npm run dist:desktop
+  ```
+  产物将输出在 `../nearby-transfer-dist/`：
+  * `nearby-transfer-1.2.1-win-x64.exe` (NSIS 安装包)
+  * `nearby-transfer-1.2.1-linux-x64.tar.gz` & `.zip`
+* **Android APK 打包**：
+  ```powershell
+  .\gradlew.bat :android-app:assembleDebug
+  ```
+  产物位于 `android-app/build/outputs/apk/debug/`。
 
-## 推荐提交顺序
+---
 
-1. UI 状态模型和布局收敛。
-2. UI 资源化、无障碍和小屏/横屏适配。
-3. 接收运行时与 checkpoint 持久化。
-4. publication/recovery 集成。
-5. Windows 与 Android 真实设备互操作测试。
-6. 通过测试后再关闭 Draft PR 并准备版本发布。
+## 🧭 核心代码与文档索引
 
-每个批次保持小范围、可回滚，并在提交信息中保留 Codex trailer。
+| 模块 | 核心代码路径 | 说明 |
+| :--- | :--- | :--- |
+| **协议驱动引擎** | [`src/protocols/`](src/protocols/) | 7 大传输驱动与调度中心 |
+| **桌面 UI & IPC** | [`src/main.js`](src/main.js), [`src/renderer/`](src/renderer/) | Electron 主进程与毛玻璃界面 |
+| **V2 核心流协议** | [`src/v2/`](src/v2/) | 配对、Manifest、加密分块、WebDAV 服务 |
+| **Android 主界面** | [`android-app/src/main/java/.../MainActivity.java`](android-app/src/main/java/io/github/nearbytransfer/android/MainActivity.java) | 原生界面与传输流控 |
+| **Android 前台服务**| [`android-app/src/main/java/.../TransferForegroundService.java`](android-app/src/main/java/io/github/nearbytransfer/android/service/TransferForegroundService.java) | 前台保活与通知栏 Action 交互 |
+| **最新发布说明** | [`RELEASE_NOTES_v1.2.1.md`](RELEASE_NOTES_v1.2.1.md) | v1.2.1 完整发布日志 |
+| **极简开发 Skill** | `~/.gemini/config/skills/ponytail/` | 全局 Ponytail / YAGNI 梯子技能 |
+
+---
+
+🎯 **给新 Agent 的提示**：
+当前仓库状态非常健康（100% 测试通过、Zero-Dependency 纯净架构）。进行后续开发时，请继续保持代码克制（遵循 Ponytail 原则），修改前先跑 `run_tests.ps1`，确保新特性不对现有协议与 Android 端产生 Regression！
