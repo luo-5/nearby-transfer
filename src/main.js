@@ -30,7 +30,6 @@ let saveDirectory = null;
 let selectedFilePath = null;
 let selectedFilePaths = [];
 const activeTransferControllers = new Map();
-let pendingDialogs = new Set();
 process.on('uncaughtException', (err) => {
   try {
     fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNCAUGHT: ' + (err.stack || err.message) + '\n', { flag: 'a' });
@@ -70,12 +69,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  // Close any pending confirmation dialogs
-  for (const dialogWindow of pendingDialogs) {
-    try { dialogWindow.close(); } catch (_) {}
-  }
-  pendingDialogs.clear();
-
   if (desktopLibraryService) {
     desktopLibraryService.stop().catch(() => { });
     desktopLibraryService = null;
@@ -664,7 +657,9 @@ async function confirmIncomingTransfer(incoming) {
     `Save to: ${incoming.savePath}`
   ].join('\n');
 
-  // Use a timeout wrapper to auto-reject after 60 seconds
+  // Auto-reject if the user does not respond within 60 seconds. A native modal
+  // MessageBox cannot be dismissed programmatically, so on timeout we resolve the
+  // promise with "reject" and drop any later click as a stale value.
   const TIMEOUT_MS = 60000;
 
   const dialogPromise = dialog.showMessageBox(mainWindow || undefined, {
@@ -677,11 +672,21 @@ async function confirmIncomingTransfer(incoming) {
     detail
   });
 
-  const timeoutPromise = new Promise((resolve) =>
-    setTimeout(() => resolve({ response: 1 }), TIMEOUT_MS)
-  );
+  let settled = false;
+  const timeoutPromise = new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (!settled) { settled = true; resolve({ response: 1 }); }
+    }, TIMEOUT_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
 
   const result = await Promise.race([dialogPromise, timeoutPromise]);
+
+  if (!settled) {
+    settled = true;
+    // The MessageBox may still be visible; ignore its eventual resolution.
+    dialogPromise.then(() => {}, () => {});
+  }
 
   return { accepted: result.response === 0 };
 }

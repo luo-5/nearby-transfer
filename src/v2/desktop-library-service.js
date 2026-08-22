@@ -682,11 +682,13 @@ class DesktopLibraryService {
     }
 
     let totalBytes = 0;
+    let oversized = false;
     const writeStream = fs.createWriteStream(targetPath, { flags: 'wx' });
 
     req.on('data', (chunk) => {
       totalBytes += chunk.length;
       if (totalBytes > MAX_UPLOAD_BYTES) {
+        oversized = true;
         req.destroy();
         writeStream.destroy();
         try { fs.unlinkSync(targetPath); } catch (_) {}
@@ -696,14 +698,27 @@ class DesktopLibraryService {
     req.pipe(writeStream);
 
     writeStream.on('finish', () => {
+      if (oversized) return; // already responded 413 while draining
       res.writeHead(201, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'created', path: targetPath }));
     });
 
     writeStream.on('error', (err) => {
-      if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: `Failed to write file: ${err.message}` }));
+      if (res.headersSent) return;
+      if (oversized) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Payload Too Large: Upload exceeds maximum size limit' }));
+        return;
+      }
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to write file: ${err.message}` }));
+    });
+
+    req.on('error', () => {
+      if (res.headersSent) return;
+      if (oversized) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Payload Too Large: Upload exceeds maximum size limit' }));
       }
     });
   }
