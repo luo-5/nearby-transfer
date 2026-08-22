@@ -1,6 +1,7 @@
 package io.github.nearbytransfer.android;
 
 import android.content.Context;
+import android.util.Log;
 
 import io.github.nearbytransfer.android.core.data.V2TransferJobPersistence;
 import io.github.nearbytransfer.android.core.data.V2TransferPeerAccess;
@@ -24,6 +25,7 @@ import java.util.concurrent.TimeoutException;
 
 /** Authenticates, persists, and obtains explicit approval for one incoming transfer at a time. */
 final class V2IncomingTransferCoordinator implements V2LanService.TransferHandler, Closeable {
+    private static final String TAG = "V2IncomingXfer";
     static final long DEFAULT_APPROVAL_TIMEOUT_MS = 60_000L;
     static final long MAX_APPROVAL_TIMEOUT_MS = 5 * 60_000L;
     private static final int MAX_ENTRY_SUMMARIES = 3;
@@ -498,13 +500,18 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
             connection.sendDecisionFrame(V2TransferBootstrap.createDecisionFrame(
                 manifest, decision, localSigningPrivateKey, clock.nowEpochMillis()
             ));
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to send decision frame for task " + manifest.taskId, e);
+            transitionQuietly(manifest.taskId, "FAILED", "Failed to send decision frame.", true);
+        }
     }
 
     private void transitionQuietly(String taskId, String state, String failureReason, boolean recoverable) {
         try {
             jobs.transition(taskId, state, clock.nowEpochMillis(), failureReason, recoverable);
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to transition job " + taskId + " to " + state, e);
+        }
     }
 
     private static void closeQuietly(Socket socket) {
@@ -512,3 +519,4 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
         try { socket.close(); } catch (Exception ignored) { }
     }
 }
+
