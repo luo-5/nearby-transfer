@@ -160,9 +160,23 @@ public class MainActivity extends Activity {
     private long transferLastSpeed;
     private boolean transferActive;
 
+    private static final String PREF_TRANSFER_PROTOCOL = "transfer_protocol";
+    private static final String PROTOCOL_V2 = "v2-stream";
+    private static final String PROTOCOL_TURBO = "turbo-parallel";
+    private static final String PROTOCOL_QUIC = "quic-udp";
+    private static final String PROTOCOL_SMB = "smb-share";
+    private static final String PROTOCOL_WEBDAV = "webdav-sync";
+    private static final String PROTOCOL_V1 = "v1-classic";
+    private static final String PROTOCOL_FTPS = "ftps-secure";
+
+    private String currentProtocol = PROTOCOL_V2;
+    private TextView protocolBadgeText;
+    private TextView protocolDescText;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        currentProtocol = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_TRANSFER_PROTOCOL, PROTOCOL_V2);
         buildUi();
         restoreSelectedFile(savedInstanceState);
         refreshTrustedPeers();
@@ -695,6 +709,29 @@ public class MainActivity extends Activity {
         localDetailsLayout.addView(resetSaveButton, resetSaveParams);
         localCard.addView(localDetailsLayout, matchWrap());
         settingsSection.addView(localCard, cardParams());
+
+        // --- 传输协议设置板块 ---
+        LinearLayout protocolCard = card(COLOR_SURFACE);
+        addSectionTitle(protocolCard, getString(R.string.action_select_protocol));
+        protocolBadgeText = pill(getProtocolDisplayName(currentProtocol), COLOR_PRIMARY_SOFT, COLOR_PRIMARY_DARK);
+        protocolDescText = text(getProtocolSummary(currentProtocol), 13, COLOR_MUTED, Typeface.NORMAL);
+        protocolDescText.setPadding(dp(12), dp(10), dp(12), dp(10));
+        protocolDescText.setBackground(roundedStroke(COLOR_SURFACE_TINT, dp(8), COLOR_BORDER, 1));
+        
+        Button selectProtocolButton = new Button(this);
+        selectProtocolButton.setText(getString(R.string.dialog_select_protocol_title));
+        selectProtocolButton.setContentDescription(getString(R.string.dialog_select_protocol_title));
+        selectProtocolButton.setAllCaps(false);
+        selectProtocolButton.setMinHeight(dp(48));
+        styleButton(selectProtocolButton, false);
+        selectProtocolButton.setOnClickListener(v -> showProtocolSelectionDialog());
+        
+        protocolCard.addView(protocolBadgeText, wrapContent());
+        LinearLayout.LayoutParams protoDescParams = matchWrap();
+        protoDescParams.setMargins(0, dp(10), 0, dp(12));
+        protocolCard.addView(protocolDescText, protoDescParams);
+        protocolCard.addView(selectProtocolButton, matchWrap());
+        settingsSection.addView(protocolCard, cardParams());
 
         // --- 诊断日志板块 ---
         LinearLayout logCard = card(COLOR_SURFACE);
@@ -2665,4 +2702,73 @@ public class MainActivity extends Activity {
         }
         return String.format(Locale.ROOT, unit == 0 ? "%.0f %s" : "%.1f %s", value, units[unit]);
     }
+
+    private String getProtocolDisplayName(String proto) {
+        if (PROTOCOL_TURBO.equals(proto)) return getString(R.string.protocol_turbo_title);
+        if (PROTOCOL_QUIC.equals(proto)) return getString(R.string.protocol_quic_title);
+        if (PROTOCOL_SMB.equals(proto)) return getString(R.string.protocol_smb_title);
+        if (PROTOCOL_WEBDAV.equals(proto)) return getString(R.string.protocol_webdav_title);
+        if (PROTOCOL_V1.equals(proto)) return getString(R.string.protocol_v1_title);
+        if (PROTOCOL_FTPS.equals(proto)) return getString(R.string.protocol_ftps_title);
+        return getString(R.string.protocol_v2_title);
+    }
+
+    private String getProtocolSummary(String proto) {
+        if (PROTOCOL_TURBO.equals(proto)) return getString(R.string.protocol_turbo_desc);
+        if (PROTOCOL_QUIC.equals(proto)) return getString(R.string.protocol_quic_desc);
+        if (PROTOCOL_SMB.equals(proto)) return getString(R.string.protocol_smb_desc);
+        if (PROTOCOL_WEBDAV.equals(proto)) return getString(R.string.protocol_webdav_desc);
+        if (PROTOCOL_V1.equals(proto)) return getString(R.string.protocol_v1_desc);
+        if (PROTOCOL_FTPS.equals(proto)) return getString(R.string.protocol_ftps_desc);
+        return getString(R.string.protocol_v2_desc);
+    }
+
+    private void showProtocolSelectionDialog() {
+        String[] protocolKeys = new String[] {
+            PROTOCOL_V2,
+            PROTOCOL_TURBO,
+            PROTOCOL_QUIC,
+            PROTOCOL_SMB,
+            PROTOCOL_WEBDAV,
+            PROTOCOL_V1,
+            PROTOCOL_FTPS
+        };
+        String[] items = new String[] {
+            getString(R.string.protocol_v2_title) + "\n" + getString(R.string.protocol_v2_desc),
+            getString(R.string.protocol_turbo_title) + "\n" + getString(R.string.protocol_turbo_desc),
+            getString(R.string.protocol_quic_title) + "\n" + getString(R.string.protocol_quic_desc),
+            getString(R.string.protocol_smb_title) + "\n" + getString(R.string.protocol_smb_desc),
+            getString(R.string.protocol_webdav_title) + "\n" + getString(R.string.protocol_webdav_desc),
+            getString(R.string.protocol_v1_title) + "\n" + getString(R.string.protocol_v1_desc),
+            getString(R.string.protocol_ftps_title) + "\n" + getString(R.string.protocol_ftps_desc)
+        };
+        int currentIndex = 0;
+        for (int i = 0; i < protocolKeys.length; i++) {
+            if (protocolKeys[i].equals(currentProtocol)) {
+                currentIndex = i;
+                break;
+            }
+        }
+        new AlertDialog.Builder(this)
+            .setTitle(getString(R.string.dialog_select_protocol_title))
+            .setSingleChoiceItems(items, currentIndex, (dialog, which) -> {
+                currentProtocol = protocolKeys[which];
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(PREF_TRANSFER_PROTOCOL, currentProtocol)
+                    .apply();
+                if (protocolBadgeText != null) {
+                    protocolBadgeText.setText(getProtocolDisplayName(currentProtocol));
+                }
+                if (protocolDescText != null) {
+                    protocolDescText.setText(getProtocolSummary(currentProtocol));
+                }
+                Toast.makeText(this, getString(R.string.protocol_switched_format, getProtocolDisplayName(currentProtocol)), Toast.LENGTH_SHORT).show();
+                appendLog(getString(R.string.protocol_switched_format, getProtocolDisplayName(currentProtocol)));
+                dialog.dismiss();
+            })
+            .setNegativeButton(getString(R.string.dialog_cancel), null)
+            .show();
+    }
 }
+

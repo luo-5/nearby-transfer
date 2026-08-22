@@ -65,11 +65,112 @@ const elements = {
   librarySharePath: document.getElementById('librarySharePath'),
   libraryShareMode: document.getElementById('libraryShareMode'),
   libraryWebDavUrl: document.getElementById('libraryWebDavUrl'),
+  currentProtocolBadge: document.getElementById('currentProtocolBadge'),
   changeLibraryPathButton: document.getElementById('changeLibraryPathButton'),
   openLibraryFolderButton: document.getElementById('openLibraryFolderButton'),
   resetLibraryPathButton: document.getElementById('resetLibraryPathButton'),
   copyWebDavUrlButton: document.getElementById('copyWebDavUrlButton')
 };
+
+let selectedProtocol = 'v2-stream';
+let selectedProtocolCategory = 'all';
+
+function updateProtocolBadge(proto) {
+  if (!elements.currentProtocolBadge) return;
+  const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+  const labelMap = {
+    'v2-stream': isZh ? 'V2 稳定流' : 'V2 Stream',
+    'turbo-parallel': isZh ? 'Turbo 极速' : 'Turbo Parallel',
+    'quic-udp': isZh ? 'QUIC 弱网' : 'QUIC UDP',
+    'smb-share': isZh ? 'SMB 共享' : 'SMB 3.0',
+    'webdav-sync': isZh ? 'WebDAV NAS' : 'WebDAV Sync',
+    'v1-classic': isZh ? 'V1 轻量' : 'V1 Classic',
+    'ftps-secure': isZh ? 'FTPS 安全' : 'FTPS Secure'
+  };
+  elements.currentProtocolBadge.textContent = labelMap[proto] || proto;
+}
+
+function filterProtocolCards(category) {
+  selectedProtocolCategory = category;
+  const tabBtns = document.querySelectorAll('.proto-tab-btn');
+  tabBtns.forEach(btn => {
+    if (btn.getAttribute('data-category') === category) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  const cards = document.querySelectorAll('.protocol-card');
+  cards.forEach(card => {
+    const cardCat = card.getAttribute('data-category');
+    if (category === 'all' || cardCat === category) {
+      card.classList.remove('hidden');
+    } else {
+      card.classList.add('hidden');
+    }
+  });
+}
+
+function renderProtocolCards() {
+  const cards = document.querySelectorAll('.protocol-card');
+  cards.forEach(card => {
+    const proto = card.getAttribute('data-protocol');
+    const isActive = proto === selectedProtocol;
+    if (isActive) {
+      card.classList.add('active');
+      card.setAttribute('aria-checked', 'true');
+    } else {
+      card.classList.remove('active');
+      card.setAttribute('aria-checked', 'false');
+    }
+  });
+  updateProtocolBadge(selectedProtocol);
+}
+
+function initializeProtocolSelector() {
+  const tabBtns = document.querySelectorAll('.proto-tab-btn');
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cat = btn.getAttribute('data-category') || 'all';
+      filterProtocolCards(cat);
+    });
+  });
+
+  const cards = document.querySelectorAll('.protocol-card');
+  cards.forEach(card => {
+    const proto = card.getAttribute('data-protocol');
+    const onSelect = async () => {
+      selectedProtocol = proto;
+      renderProtocolCards();
+      if (window.lanTransfer && typeof window.lanTransfer.setProtocol === 'function') {
+        try {
+          await window.lanTransfer.setProtocol(proto);
+        } catch (e) {
+          console.error('Failed to set protocol:', e);
+        }
+      }
+    };
+    card.addEventListener('click', onSelect);
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onSelect();
+      }
+    });
+  });
+
+  if (window.lanTransfer && typeof window.lanTransfer.getProtocol === 'function') {
+    window.lanTransfer.getProtocol().then(res => {
+      if (res && res.protocol) {
+        selectedProtocol = res.protocol;
+        renderProtocolCards();
+      }
+    }).catch(e => {
+      console.warn('Failed to get initial protocol:', e);
+    });
+  }
+}
 
 function updateLanguageButtons() {
   if (!window.i18n) return;
@@ -105,12 +206,14 @@ function reRenderAll() {
   refreshLibraryInfo();
   renderV2Pairing();
   renderTransferJobs();
+  updateProtocolBadge(selectedProtocol);
 }
 
 updateLanguageButtons();
 if (window.i18n) window.i18n.applyI18nToDOM();
 
 window.lanTransfer.getState().then(applyState);
+initializeProtocolSelector();
 initializeV2Pairing();
 initializeTransferJobs();
 refreshLibraryInfo();

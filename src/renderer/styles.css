@@ -343,7 +343,7 @@ dd {
   overflow: hidden;
 }
 
-.progress > span {
+.progress>span {
   background: var(--accent-strong);
   display: block;
   height: 100%;
@@ -591,3 +591,239 @@ dd {
   justify-content: flex-end;
 }
 
+/* ==========================================================================
+   Protocol Settings Panel & Multi-Protocol Matrix
+   ========================================================================== */
+.protocol-settings-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.protocol-category-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.proto-tab-btn {
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.proto-tab-btn:hover {
+  border-color: rgba(104, 225, 199, 0.6);
+  color: var(--text);
+}
+
+.proto-tab-btn.active {
+  background: var(--accent);
+  color: #0f172a;
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(104, 225, 199, 0.35);
+}
+
+.protocol-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 14px;
+}
+
+.protocol-card {
+  background: var(--panel-strong);
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  user-select: none;
+}
+
+.protocol-card.hidden {
+  display: none !important;
+}
+
+.protocol-card:hover {
+  border-color: rgba(104, 225, 199, 0.6);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.protocol-card.active {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(104, 225, 199, 0.12) 0%, rgba(18, 28, 38, 0.7) 100%);
+  box-shadow: 0 0 0 1px var(--accent), 0 8px 28px rgba(104, 225, 199, 0.18);
+}
+
+.protocol-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.protocol-radio-indicator {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.protocol-card.active .protocol-radio-indicator {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 10px rgba(104, 225, 199, 0.8);
+}
+
+.protocol-card.active .protocol-radio-indicator::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #0f172a;
+}
+
+.protocol-card-title-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.protocol-name {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.protocol-tag {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+.tag-recommended {
+  background: rgba(104, 225, 199, 0.18);
+  color: #68e1c7;
+  border: 1px solid rgba(104, 225, 199, 0.4);
+}
+
+.tag-speed {
+  background: rgba(255, 159, 67, 0.18);
+  color: #ff9f43;
+  border: 1px solid rgba(255, 159, 67, 0.4);
+}
+
+.tag-quic {
+  background: rgba(255, 107, 129, 0.18);
+  color: #ff6b81;
+  border: 1px solid rgba(255, 107, 129, 0.4);
+}
+
+.tag-smb {
+  background: rgba(46, 213, 115, 0.18);
+  color: #2ed573;
+  border: 1px solid rgba(46, 213, 115, 0.4);
+}
+
+.tag-nas {
+  background: rgba(165, 94, 234, 0.18);
+  color: #a55eea;
+  border: 1px solid rgba(165, 94, 234, 0.4);
+}
+
+.tag-light {
+  background: rgba(84, 160, 255, 0.18);
+  color: #54a0ff;
+  border: 1px solid rgba(84, 160, 255, 0.4);
+}
+
+.tag-ftps {
+  background: rgba(254, 202, 87, 0.18);
+  color: #feca57;
+  border: 1px solid rgba(254, 202, 87, 0.4);
+}
+
+.protocol-details {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 0.83rem;
+  line-height: 1.45;
+}
+
+.protocol-pro-item,
+.protocol-con-item,
+.protocol-scenario-item,
+.protocol-client-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.bullet {
+  font-weight: 800;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  flex-shrink: 0;
+}
+
+.bullet-pro {
+  color: #2ed573;
+}
+
+.bullet-con {
+  color: #ff4757;
+}
+
+.bullet-scenario {
+  color: #ffa502;
+}
+
+.bullet-client {
+  font-size: 0.82rem;
+}
+
+.protocol-text {
+  color: var(--muted);
+}
+
+.protocol-client-text {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.protocol-card.active .protocol-text {
+  color: #cbd5e1;
+}
+
+.protocol-card.active .protocol-client-text {
+  color: #68e1c7;
+}
+
+@media (max-width: 768px) {
+  .protocol-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -72,6 +72,55 @@ const translations = {
     pair_request_sent: '已向 %1$s 发起配对，请在对方设备查看安全码。',
     pair_confirmed_waiting: '本机已确认，正在等待对方确认...',
     pair_complete_trusted: '配对成功！已将 %1$s 加入可信设备。',
+    protocol_settings_title: '传输协议矩阵设置',
+    protocol_settings_subtitle: '支持自研极速流、系统原生共享与国际标准存储 7 大主流协议热切换',
+    protocol_category_all: '全部 (7)',
+    protocol_category_fast: '🚀 极速传输',
+    protocol_category_system: '🪟 系统共享',
+    protocol_category_standard: '🌐 标准服务',
+    protocol_v2_name: 'V2 高可靠流式协议',
+    protocol_v2_badge: '自研 / 稳定推荐',
+    protocol_v2_pros: '优势：毫秒级断点续传、分块确认(ACK)防丢包、双向暂停恢复与网络自动重连。',
+    protocol_v2_cons: '缺点：带有二进制分帧与 ACK 心跳开销。',
+    protocol_v2_scenario: '适用：跨端日常互传、大文件传输、Wi-Fi 波动弱网环境。',
+    protocol_v2_client: '兼容：Nearby Transfer 官方桌面与移动端',
+    protocol_turbo_name: 'Turbo 极速多通道并发协议',
+    protocol_turbo_badge: '4~8路并发 / 千兆极限',
+    protocol_turbo_pros: '优势：4~8 路并发管道高速分片吞吐，极限压榨 Wi-Fi 6 / 2.5G 千兆局域网硬件带宽。',
+    protocol_turbo_cons: '缺点：并发占用较多系统 Socket，对老旧弱单核路由器有一定压力。',
+    protocol_turbo_scenario: '适用：强信号 5GHz Wi-Fi / 有线千兆内网、传输 5GB+ 4K 电影与超大文件。',
+    protocol_turbo_client: '兼容：Nearby Transfer Turbo 极速引擎',
+    protocol_quic_name: 'QUIC / UDP 极速抗弱网协议',
+    protocol_quic_badge: 'UDP / 0-RTT 弱网利器',
+    protocol_quic_pros: '优势：基于 UDP 彻底无队头阻塞，丢包率 20%~30% 时仍能维持极高速率，0-RTT 极速握手。',
+    protocol_quic_cons: '缺点：部分严格企业/校园网防火墙会限制或阻断 UDP 流量。',
+    protocol_quic_scenario: '适用：弱信号 Wi-Fi 边缘、公共咖啡厅热点、手机移动热点共享。',
+    protocol_quic_client: '兼容：Nearby Transfer QUIC 加速引擎',
+    protocol_smb_name: 'SMB 3.0 局域网网络邻居协议',
+    protocol_smb_badge: '免装客户端 / 系统原生',
+    protocol_smb_pros: '优势：Windows 资源管理器与 macOS Finder 原生直接挂载，无需安装任何 App 即可直接双击打开与编辑。',
+    protocol_smb_cons: '缺点：跨网段容易被防火墙拦截 445 端口，协议握手较重。',
+    protocol_smb_scenario: '适用：办公室局域网电脑互访、家庭局域网多设备文件免装客户端直拷。',
+    protocol_smb_client: '兼容：Windows 资源管理器、Mac Finder、Linux Samba',
+    protocol_webdav_name: 'WebDAV 直连云盘同步协议',
+    protocol_webdav_badge: 'RFC 4918 / 云盘挂载',
+    protocol_webdav_pros: '优势：基于标准 RFC 4918 协议，支持手机直接挂载电脑磁盘、在线浏览与按需下载点播。',
+    protocol_webdav_cons: '缺点：散碎小文件浏览时有 XML 元数据解析开销。',
+    protocol_webdav_scenario: '适用：手机文件管理器挂载电脑共享库、照片库增量自动备份、在线视频播放。',
+    protocol_webdav_client: '兼容：Android SAF、Solid Explorer、WPS、Infuse',
+    protocol_v1_name: 'V1 经典 HTTP 流加密协议',
+    protocol_v1_badge: '轻量 / 极低开销',
+    protocol_v1_pros: '优势：标准 RESTful HTTP 流式传输，防火墙穿透性极好，内存与 CPU 占用极低。',
+    protocol_v1_cons: '缺点：不支持细粒度分块断点重续，传输中断需整体重试。',
+    protocol_v1_scenario: '适用：低功耗/低配设备、老旧路由器、散碎小文件与日常照片。',
+    protocol_v1_client: '兼容：通用 HTTP 客户端、Web 浏览器、Nearby Transfer v1',
+    protocol_ftps_name: 'FTPS 极速安全传输服务协议',
+    protocol_ftps_badge: 'TLS 加密 / 专业工具',
+    protocol_ftps_pros: '优势：数十年工业级验证的高速传输协议，完美适配第三方专业文件管理工具。',
+    protocol_ftps_cons: '缺点：主动/被动模式对复杂 NAT 端口映射要求较高。',
+    protocol_ftps_scenario: '适用：专业开发者、Linux 终端脚本同步、开发板与 NAS 极速拉取。',
+    protocol_ftps_client: '兼容：FileZilla、Total Commander、ES 文件浏览器、lftp',
+    protocol_active_badge: '当前生效',
     lang_toggle_zh: '中文',
     lang_toggle_en: 'English'
   },
@@ -146,6 +195,55 @@ const translations = {
     pair_request_sent: 'Pairing request sent to %1$s. Please verify the code on their device.',
     pair_confirmed_waiting: 'Confirmed on this device. Waiting for remote device confirmation…',
     pair_complete_trusted: 'Pairing successful! %1$s has been added to trusted devices.',
+    protocol_settings_title: 'Transfer Protocol Matrix',
+    protocol_settings_subtitle: 'Seamlessly switch across 7 mainstream protocols (Fast P2P, OS Native, Standard Services)',
+    protocol_category_all: 'All Protocols (7)',
+    protocol_category_fast: '🚀 Fast P2P',
+    protocol_category_system: '🪟 OS Native Share',
+    protocol_category_standard: '🌐 Standard Services',
+    protocol_v2_name: 'V2 Robust Stream Protocol',
+    protocol_v2_badge: 'In-House / Recommended',
+    protocol_v2_pros: 'Pros: Resumable checkpoints, chunk-level ACKs, bidirectional pause/resume & auto reconnect.',
+    protocol_v2_cons: 'Cons: Lightweight binary framing and ACK heartbeat overhead.',
+    protocol_v2_scenario: 'Best for: Cross-device transfers, large files, fluctuating Wi-Fi.',
+    protocol_v2_client: 'Clients: Nearby Transfer Desktop & Mobile',
+    protocol_turbo_name: 'Turbo Parallel Multi-Stream',
+    protocol_turbo_badge: '4~8 Streams / Gigabit Limit',
+    protocol_turbo_pros: 'Pros: 4~8 parallel streams, multi-chunk parallel throughput, saturating Wi-Fi 6 & 2.5G LAN.',
+    protocol_turbo_cons: 'Cons: Consumes more system sockets; higher load on weak routers.',
+    protocol_turbo_scenario: 'Best for: Strong 5GHz Wi-Fi / Gigabit LAN, 5GB+ 4K movies & large archives.',
+    protocol_turbo_client: 'Clients: Nearby Transfer Turbo Engine',
+    protocol_quic_name: 'QUIC / UDP Fast Loss-Tolerant',
+    protocol_quic_badge: 'UDP / 0-RTT Anti-Loss',
+    protocol_quic_pros: 'Pros: Zero head-of-line blocking on UDP, maintains high speed with 20%~30% loss, 0-RTT handshake.',
+    protocol_quic_cons: 'Cons: Some strict enterprise / campus firewalls may throttle or block UDP.',
+    protocol_quic_scenario: 'Best for: Weak Wi-Fi edges, public coffee shop hotspots, cellular hotspot tethering.',
+    protocol_quic_client: 'Clients: Nearby Transfer QUIC Engine',
+    protocol_smb_name: 'SMB 3.0 LAN Network Share',
+    protocol_smb_badge: 'No App Needed / OS Native',
+    protocol_smb_pros: 'Pros: Native direct mount on Windows Explorer & Mac Finder without installing apps, in-place edit.',
+    protocol_smb_cons: 'Cons: Port 445 often blocked across subnets; heavier protocol handshake.',
+    protocol_smb_scenario: 'Best for: Office LAN PC-to-PC file browsing, home LAN direct copy without installing apps.',
+    protocol_smb_client: 'Clients: Windows File Explorer, Mac Finder, Linux Samba',
+    protocol_webdav_name: 'WebDAV Direct Cloud Sync',
+    protocol_webdav_badge: 'RFC 4918 / Cloud Mount',
+    protocol_webdav_pros: 'Pros: RFC 4918 standard, mount as mobile drive, online browsing & on-demand video streaming.',
+    protocol_webdav_cons: 'Cons: XML metadata parsing overhead on massive small file hierarchies.',
+    protocol_webdav_scenario: 'Best for: Mobile file manager disk mounting, automated photo backups, video streaming.',
+    protocol_webdav_client: 'Clients: Android SAF, Solid Explorer, WPS, Infuse',
+    protocol_v1_name: 'V1 Classic HTTP Stream',
+    protocol_v1_badge: 'Lightweight / Low CPU',
+    protocol_v1_pros: 'Pros: Standard RESTful HTTP stream, great firewall compatibility, lowest CPU & RAM usage.',
+    protocol_v1_cons: 'Cons: No fine-grained chunk resume; full restart needed on connection drop.',
+    protocol_v1_scenario: 'Best for: Low-end devices, legacy routers, small photos & documents.',
+    protocol_v1_client: 'Clients: Web Browsers, generic HTTP clients, Nearby Transfer v1',
+    protocol_ftps_name: 'FTPS Secure High-Speed Transfer',
+    protocol_ftps_badge: 'TLS Encrypted / Pro Tools',
+    protocol_ftps_pros: 'Pros: Decades of industrial verification, perfect compatibility with professional FTP tools.',
+    protocol_ftps_cons: 'Cons: Active/passive modes require NAT port configurations.',
+    protocol_ftps_scenario: 'Best for: Developers, Linux terminal sync, devboards and NAS rapid pull.',
+    protocol_ftps_client: 'Clients: FileZilla, Total Commander, ES File Explorer, lftp',
+    protocol_active_badge: 'Active',
     lang_toggle_zh: '中文',
     lang_toggle_en: 'English'
   }
@@ -154,12 +252,19 @@ const translations = {
 let currentLang = 'zh';
 
 function getInitialLanguage() {
-  const saved = localStorage.getItem('nearby_transfer_lang');
-  if (saved && (saved === 'zh' || saved === 'en')) {
-    return saved;
-  }
-  const sysLang = (navigator.language || '').toLowerCase();
-  return sysLang.startsWith('zh') ? 'zh' : 'en';
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('nearby_transfer_lang');
+      if (saved && (saved === 'zh' || saved === 'en')) {
+        return saved;
+      }
+    }
+    if (typeof navigator !== 'undefined') {
+      const sysLang = (navigator.language || '').toLowerCase();
+      return sysLang.startsWith('zh') ? 'zh' : 'en';
+    }
+  } catch (_) {}
+  return 'zh';
 }
 
 function t(key, ...args) {
@@ -178,7 +283,7 @@ function setLanguage(lang) {
   currentLang = lang;
   try {
     localStorage.setItem(STORAGE_KEY, lang);
-  } catch (_) {}
+  } catch (_) { }
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   document.title = t('app_title');
   if (typeof window !== 'undefined' && window.lanTransfer && typeof window.lanTransfer.setLanguage === 'function') {

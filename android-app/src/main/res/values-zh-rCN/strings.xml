@@ -181,4 +181,23 @@
     <string name="saf_root_title">Nearby Transfer (电脑共享库)</string>
     <string name="saf_root_summary">电脑端受控 WebDAV / NAS 共享文件夹</string>
     <string name="saf_doc_title">电脑共享库</string>
+
+    <!-- 传输协议设置 -->
+    <string name="action_select_protocol">传输协议</string>
+    <string name="dialog_select_protocol_title">选择传输协议</string>
+    <string name="protocol_v2_title">1. V2 高可靠流式协议 (默认推荐)</string>
+    <string name="protocol_v2_desc">✓ 毫秒级断点续传、分块确认(ACK)防丢包、双向暂停恢复与网络重连\n✕ 带有轻量二进制分帧与心跳开销\n★ 适用：跨端日常互传、大文件、Wi-Fi 波动弱网环境</string>
+    <string name="protocol_turbo_title">2. Turbo 极速多通道并发协议</string>
+    <string name="protocol_turbo_desc" formatted="false">✓ 4~8 路并发管道高速分片吞吐，极限压榨 Wi-Fi 6 与千兆网卡(提速200%+)\n✕ 占用较多连接，老旧路由器压力大\n★ 适用：5GHz 强信号、千兆内网、传输 5GB+ 4K 电影与大文件</string>
+    <string name="protocol_quic_title">3. QUIC / UDP 极速抗弱网协议</string>
+    <string name="protocol_quic_desc" formatted="false">✓ 基于 UDP 无队头阻塞，丢包率 20%~30% 时仍能维持极高速率\n✕ 严格企业网/校园网可能限制 UDP 流量\n★ 适用：弱信号 Wi-Fi 边缘、公共咖啡厅热点、手机移动热点</string>
+    <string name="protocol_smb_title">4. SMB 3.0 局域网网络邻居协议</string>
+    <string name="protocol_smb_desc">✓ Windows 资源管理器与 Mac Finder 原生直接挂载，无需安装 App\n✕ 跨网段容易被防火墙拦截 445 端口\n★ 适用：办公室电脑互访、家庭局域网多设备文件免装客户端直拷</string>
+    <string name="protocol_webdav_title">5. WebDAV 直连云盘同步协议</string>
+    <string name="protocol_webdav_desc">✓ RFC 4918 标准协议，支持手机直接挂载电脑磁盘、在线浏览点播\n✕ 散碎海量小文件浏览有 XML 元数据开销\n★ 适用：手机文件管理器挂载电脑共享库、照片库增量自动备份</string>
+    <string name="protocol_v1_title">6. V1 经典 HTTP 流加密协议</string>
+    <string name="protocol_v1_desc">✓ 标准 RESTful HTTP 流式传输，防火墙穿透好，极低 CPU/内存\n✕ 不支持细粒度断点续传\n★ 适用：低功耗/低配设备、老旧路由器、散碎小文件与日常照片</string>
+    <string name="protocol_ftps_title">7. FTPS 极速安全传输服务协议</string>
+    <string name="protocol_ftps_desc">✓ 工业级通用文件传输协议，完美适配 FileZilla / ES 文件浏览器\n✕ 主动/被动模式对复杂 NAT 端口映射要求高\n★ 适用：专业开发者、Linux 终端脚本同步、开发板与 NAS 极速拉取</string>
+    <string name="protocol_switched_format">已切换为：%1$s</string>
 </resources>

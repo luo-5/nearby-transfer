@@ -1,6 +1,6 @@
 {
   "name": "nearby-transfer",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Encrypted nearby device file transfer and NAS WebDAV library sync app for desktop and Android.",
   "engines": {

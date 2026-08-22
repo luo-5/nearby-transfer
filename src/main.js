@@ -33,13 +33,13 @@ const activeTransferControllers = new Map();
 process.on('uncaughtException', (err) => {
   try {
     fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNCAUGHT: ' + (err.stack || err.message) + '\n', { flag: 'a' });
-  } catch (_e) {}
+  } catch (_e) { }
 });
 
 process.on('unhandledRejection', (err) => {
   try {
     fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNHANDLED REJECTION: ' + (err ? (err.stack || err.message) : 'unknown') + '\n', { flag: 'a' });
-  } catch (_e) {}
+  } catch (_e) { }
 });
 
 app.whenReady().then(async () => {
@@ -56,7 +56,7 @@ app.whenReady().then(async () => {
 }).catch((error) => {
   try {
     fs.writeFileSync('main_error.log', (error.stack || error.message) + '\n', 'utf8');
-  } catch (_e) {}
+  } catch (_e) { }
   console.error('MAIN ERROR:', error);
   dialog.showErrorBox('附近传输启动失败', error.stack || error.message);
   app.quit();
@@ -70,11 +70,11 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (desktopLibraryService) {
-    desktopLibraryService.stop().catch(() => {});
+    desktopLibraryService.stop().catch(() => { });
     desktopLibraryService = null;
   }
   if (v2LanService) {
-    v2LanService.stop().catch(() => {});
+    v2LanService.stop().catch(() => { });
     v2LanService = null;
   }
   if (discovery) {
@@ -155,7 +155,7 @@ ipcMain.handle('choose-file', async () => {
         validFiles.push({ path: fp, name: path.basename(fp), size: stat.size });
         totalSize += stat.size;
       }
-    } catch (_) {}
+    } catch (_) { }
   }
   if (validFiles.length === 0) {
     return { ok: false, error: '未找到有效文件' };
@@ -203,7 +203,7 @@ ipcMain.handle('select-dropped-files', async (_event, filePaths) => {
         validFiles.push({ path: fp, name: path.basename(fp), size: stat.size });
         totalSize += stat.size;
       }
-    } catch (_) {}
+    } catch (_) { }
   }
   if (validFiles.length === 0) {
     return { ok: false, error: currentLanguage === 'zh' ? '所选路径中未包含有效文件' : 'No valid files found in selected paths' };
@@ -247,7 +247,7 @@ ipcMain.handle('send-selected-file-to-peer', async (_event, deviceId) => {
   let failCount = 0;
   let lastError = null;
   const total = selectedFilePaths.length;
-  
+
   for (let i = 0; i < total; i++) {
     const fp = selectedFilePaths[i];
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -265,7 +265,7 @@ ipcMain.handle('send-selected-file-to-peer', async (_event, deviceId) => {
       lastError = result.error;
     }
   }
-  
+
   if (failCount === 0) {
     return { ok: true };
   } else if (successCount === 0) {
@@ -316,6 +316,52 @@ ipcMain.handle('open-transfer-folder', async (_event, filePath) => {
     return { ok: true };
   }
   return { ok: false, error: '文件路径无效' };
+});
+
+let currentTransferProtocol = 'v2-stream';
+
+function loadProtocolConfig(userDataDir) {
+  try {
+    const file = path.join(userDataDir, 'protocol_config.json');
+    if (fs.existsSync(file)) {
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (data && data.protocol) {
+        currentTransferProtocol = data.protocol;
+      }
+    }
+  } catch (_) {}
+}
+
+function saveProtocolConfig(userDataDir, protocol) {
+  try {
+    const file = path.join(userDataDir, 'protocol_config.json');
+    fs.writeFileSync(file, JSON.stringify({ protocol, updatedAt: Date.now() }, null, 2), 'utf8');
+  } catch (_) {}
+}
+
+ipcMain.handle('get-protocol', async () => {
+  return { protocol: currentTransferProtocol };
+});
+
+ipcMain.handle('set-protocol', async (_event, protocol) => {
+  const allowed = [
+    'v2-stream',
+    'turbo-parallel',
+    'quic-udp',
+    'smb-share',
+    'webdav-sync',
+    'v1-classic',
+    'ftps-secure'
+  ];
+  if (!allowed.includes(protocol)) {
+    return { ok: false, error: 'Invalid protocol' };
+  }
+  currentTransferProtocol = protocol;
+  try {
+    const userDataDir = app.getPath('userData');
+    saveProtocolConfig(userDataDir, protocol);
+  } catch (_) {}
+  return { ok: true, protocol: currentTransferProtocol };
 });
 
 ipcMain.handle('choose-and-send', async (_event, deviceId) => {
@@ -460,6 +506,7 @@ async function startCore() {
   trustedPeerStore = new TrustedPeerStore(userDataDir);
   pairingSessionStore = new PairingSessionStore(userDataDir);
   transferJobStore = new TransferJobStore(userDataDir, trustedPeerStore);
+  loadProtocolConfig(userDataDir);
 
   const defaultShareDir = path.join(userDataDir, 'SharedLibrary');
   if (!fs.existsSync(defaultShareDir)) {
@@ -480,7 +527,7 @@ async function startCore() {
         activeShareDir = parsed.activeSharePath;
       }
     }
-  } catch (_e) {}
+  } catch (_e) { }
 
   desktopLibraryService = new DesktopLibraryService({
     trustedPeerStore,
@@ -541,7 +588,7 @@ async function startCore() {
       transferServerPort: port,
       v2LanPort: v2Port
     }, null, 2), 'utf8');
-  } catch (_e) {}
+  } catch (_e) { }
 
   emitState();
 }

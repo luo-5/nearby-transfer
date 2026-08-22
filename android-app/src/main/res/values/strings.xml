@@ -181,4 +181,23 @@
     <string name="saf_root_title">Nearby Transfer (PC Shared Library)</string>
     <string name="saf_root_summary">PC Controlled WebDAV / NAS Shared Folder</string>
     <string name="saf_doc_title">PC Shared Library</string>
+
+    <!-- Protocol Settings -->
+    <string name="action_select_protocol">Transfer Protocol</string>
+    <string name="dialog_select_protocol_title">Select Transfer Protocol</string>
+    <string name="protocol_v2_title">1. V2 Robust Stream (Recommended)</string>
+    <string name="protocol_v2_desc">✓ Resumable checkpoints, chunk ACKs, bidirectional pause/resume\n✕ Minor framing overhead\n★ Best for: Cross-device transfers, large files, fluctuating Wi-Fi</string>
+    <string name="protocol_turbo_title">2. Turbo Parallel Stream</string>
+    <string name="protocol_turbo_desc" formatted="false">✓ 4~8 parallel streams, saturates Wi-Fi 6 &amp; Gigabit LAN (200%+ speed)\n✕ Higher socket &amp; router load\n★ Best for: 5GHz Wi-Fi, Gigabit LAN, 5GB+ movies &amp; archives</string>
+    <string name="protocol_quic_title">3. QUIC / UDP Fast Loss-Tolerant</string>
+    <string name="protocol_quic_desc" formatted="false">✓ Zero head-of-line blocking, maintains high speed with 20%~30% loss\n✕ UDP may be throttled on strict networks\n★ Best for: Weak Wi-Fi edges, public hotspots, mobile tethering</string>
+    <string name="protocol_smb_title">4. SMB 3.0 LAN Network Share</string>
+    <string name="protocol_smb_desc">✓ Native direct mount on Windows Explorer &amp; Mac Finder without apps\n✕ Heavier handshake, port 445 often blocked across subnets\n★ Best for: Office/Home LAN direct copy without installing apps</string>
+    <string name="protocol_webdav_title">5. WebDAV Direct Cloud Sync</string>
+    <string name="protocol_webdav_desc">✓ RFC 4918 standard, mount as mobile drive, on-demand streaming\n✕ XML metadata request overhead on massive small files\n★ Best for: Mobile file manager mounting, automated photo backups</string>
+    <string name="protocol_v1_title">6. V1 Classic HTTP Stream</string>
+    <string name="protocol_v1_desc">✓ Lightweight RESTful stream, high firewall compatibility, low CPU\n✕ No chunk-level resume\n★ Best for: Low-end devices, legacy routers, small photos</string>
+    <string name="protocol_ftps_title">7. FTPS Secure High-Speed Transfer</string>
+    <string name="protocol_ftps_desc">✓ Industrial standard, high speed, compatible with FileZilla/ES Explorer\n✕ Active/passive NAT port mapping requirements\n★ Best for: Developers, terminal scripts, devboards &amp; NAS pull</string>
+    <string name="protocol_switched_format">Switched to: %1$s</string>
 </resources>
