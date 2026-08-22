@@ -96,11 +96,6 @@ class DesktopLibraryService {
 
     if (authHeaderVal && authHeaderVal.startsWith('Bearer ')) {
       token = authHeaderVal.slice(7).trim();
-    } else {
-      const url = new URL(req.url, 'http://127.0.0.1');
-      if (url.searchParams.has('token')) {
-        token = url.searchParams.get('token');
-      }
     }
 
     if (!token) return null;
@@ -111,6 +106,18 @@ class DesktopLibraryService {
     if (Date.now() > session.expiresAt) {
       this.sessionTokens.delete(token);
       return null;
+    }
+
+    // Verify the peer is still trusted
+    if (this.trustedPeerStore) {
+      const peer = typeof this.trustedPeerStore.getTrustedPeer === 'function'
+        ? this.trustedPeerStore.getTrustedPeer(session.deviceId)
+        : (typeof this.trustedPeerStore.getPeer === 'function' ? this.trustedPeerStore.getPeer(session.deviceId) : null);
+      const isTrusted = peer && (typeof peer.isTrusted === 'function' ? peer.isTrusted() : peer.revokedAt === null);
+      if (!isTrusted) {
+        this.sessionTokens.delete(token);
+        return null;
+      }
     }
 
     return session;
@@ -377,6 +384,12 @@ class DesktopLibraryService {
         res.end(JSON.stringify({ ok: false, error: 'Path traversal forbidden' }));
         return;
       }
+      // Verify the resolved path is within the share root (prevent symlink traversal)
+      if (!this._isPathWithinShare(targetPath, share.localPath)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'Path traversal forbidden: symlink escape detected' }));
+        return;
+      }
       if (!fs.existsSync(targetPath)) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'Directory not found' }));
@@ -446,6 +459,13 @@ class DesktopLibraryService {
       return;
     }
 
+    // Verify the resolved path is within the share root (prevent symlink traversal)
+    if (!this._isPathWithinShare(targetPath, share.localPath)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Path traversal forbidden: symlink escape detected' }));
+      return;
+    }
+
     switch (method) {
       case 'PROPFIND':
         return this._handlePropfind(targetPath, shareId, subPath, res);
@@ -498,6 +518,13 @@ class DesktopLibraryService {
   }
 
   _handlePropfind(targetPath, shareId, subPath, res) {
+    const share = this.shares.get(shareId);
+    if (!share) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Share not found' }));
+      return;
+    }
+
     if (!fs.existsSync(targetPath)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Resource not found' }));
@@ -514,6 +541,10 @@ class DesktopLibraryService {
       childrenXml = entries.map((entry) => {
         const entryPath = path.join(targetPath, entry.name);
         try {
+          // Verify entry is not a symlink escaping the share root
+          if (!this._isPathWithinShare(entryPath, share.localPath)) {
+            return '';
+          }
           const entryStat = fs.statSync(entryPath);
           const childHref = `/${encodeURIComponent(shareId)}/${subPath ? subPath + '/' : ''}${encodeURIComponent(entry.name)}${entryStat.isDirectory() ? '/' : ''}`;
           return `
@@ -554,6 +585,24 @@ class DesktopLibraryService {
 
     res.writeHead(207, { 'Content-Type': 'application/xml; charset=utf-8' });
     res.end(xml);
+  }
+
+  _isPathWithinShare(targetPath, shareLocalPath) {
+    try {
+      const realShare = fs.realpathSync(shareLocalPath);
+      // For paths that don't exist yet (e.g., PUT/MKCOL), check the nearest existing ancestor
+      let checkPath = targetPath;
+      while (!fs.existsSync(checkPath)) {
+        const parent = path.dirname(checkPath);
+        if (parent === checkPath) break; // reached root
+        checkPath = parent;
+      }
+      const realTarget = fs.realpathSync(checkPath);
+      const relative = path.relative(realShare, realTarget);
+      return !relative.startsWith('..') && !path.isAbsolute(relative);
+    } catch (_e) {
+      return false;
+    }
   }
 
   _handleGet(targetPath, isHeadOnly, res) {
@@ -598,6 +647,15 @@ class DesktopLibraryService {
       return;
     }
 
+    // Enforce maximum upload size (50 GiB)
+    const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024;
+    const contentLength = parseInt(req.headers['content-length'], 10);
+    if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Payload Too Large: Upload exceeds maximum size limit' }));
+      return;
+    }
+
     const baseName = path.basename(targetPath);
     if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i.test(baseName) || /[<>:"|?*\x00-\x1F]/.test(baseName)) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -623,7 +681,18 @@ class DesktopLibraryService {
       }
     }
 
+    let totalBytes = 0;
     const writeStream = fs.createWriteStream(targetPath, { flags: 'wx' });
+
+    req.on('data', (chunk) => {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_UPLOAD_BYTES) {
+        req.destroy();
+        writeStream.destroy();
+        try { fs.unlinkSync(targetPath); } catch (_) {}
+      }
+    });
+
     req.pipe(writeStream);
 
     writeStream.on('finish', () => {

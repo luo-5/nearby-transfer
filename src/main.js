@@ -30,6 +30,7 @@ let saveDirectory = null;
 let selectedFilePath = null;
 let selectedFilePaths = [];
 const activeTransferControllers = new Map();
+let pendingDialogs = new Set();
 process.on('uncaughtException', (err) => {
   try {
     fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNCAUGHT: ' + (err.stack || err.message) + '\n', { flag: 'a' });
@@ -69,6 +70,12 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  // Close any pending confirmation dialogs
+  for (const dialogWindow of pendingDialogs) {
+    try { dialogWindow.close(); } catch (_) {}
+  }
+  pendingDialogs.clear();
+
   if (desktopLibraryService) {
     desktopLibraryService.stop().catch(() => { });
     desktopLibraryService = null;
@@ -583,7 +590,7 @@ async function startCore() {
   const v2Port = await v2LanService.start();
 
   try {
-    fs.writeFileSync('running_ports.json', JSON.stringify({
+    fs.writeFileSync(path.join(app.getPath('userData'), 'running_ports.json'), JSON.stringify({
       libraryPort,
       transferServerPort: port,
       v2LanPort: v2Port
@@ -657,7 +664,10 @@ async function confirmIncomingTransfer(incoming) {
     `Save to: ${incoming.savePath}`
   ].join('\n');
 
-  const result = await dialog.showMessageBox(mainWindow || undefined, {
+  // Use a timeout wrapper to auto-reject after 60 seconds
+  const TIMEOUT_MS = 60000;
+
+  const dialogPromise = dialog.showMessageBox(mainWindow || undefined, {
     type: 'question',
     buttons: isZh ? ['接收', '拒绝'] : ['Accept', 'Reject'],
     defaultId: 0,
@@ -666,6 +676,12 @@ async function confirmIncomingTransfer(incoming) {
     message: isZh ? '接收这个文件吗？' : 'Accept this file?',
     detail
   });
+
+  const timeoutPromise = new Promise((resolve) =>
+    setTimeout(() => resolve({ response: 1 }), TIMEOUT_MS)
+  );
+
+  const result = await Promise.race([dialogPromise, timeoutPromise]);
 
   return { accepted: result.response === 0 };
 }
