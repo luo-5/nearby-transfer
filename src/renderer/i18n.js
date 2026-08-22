@@ -249,6 +249,8 @@ const translations = {
   }
 };
 
+const STORAGE_KEY = 'nearby_transfer_lang';
+
 let currentLang = 'zh';
 
 function getInitialLanguage() {
