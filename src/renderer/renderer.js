@@ -165,9 +165,27 @@ function initializeProtocolSelector() {
     });
   });
 
+  const isZhInit = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   const cards = document.querySelectorAll('.protocol-card');
   cards.forEach(card => {
     const proto = card.getAttribute('data-protocol');
+
+    const header = card.querySelector('.protocol-card-header');
+    if (header && !header.querySelector('.protocol-expand-toggle')) {
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'protocol-expand-toggle';
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.textContent = isZhInit ? '详情' : 'Details';
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const expanded = card.classList.toggle('expanded');
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        toggle.textContent = expanded ? (isZhInit ? '收起' : 'Collapse') : (isZhInit ? '详情' : 'Details');
+      });
+      header.appendChild(toggle);
+    }
+
     const onSelect = async () => {
       selectedProtocol = proto;
       renderProtocolCards();

@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('lanTransfer', {
   pauseTransfer: (transferId) => ipcRenderer.invoke('pause-transfer', transferId),
   resumeTransfer: (transferId) => ipcRenderer.invoke('resume-transfer', transferId),
   openTransferFolder: (filePath) => ipcRenderer.invoke('open-transfer-folder', filePath),
+  getProtocol: () => ipcRenderer.invoke('get-protocol'),
+  setProtocol: (protocol) => ipcRenderer.invoke('set-protocol', protocol),
   pairing: Object.freeze({
     listDiscoveredPeers: () => ipcRenderer.invoke('v2:list-discovered-peers'),
     listTrustedPeers: () => ipcRenderer.invoke('v2:list-trusted-peers'),

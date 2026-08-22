@@ -632,21 +632,21 @@ dd {
 }
 
 .protocol-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .protocol-card {
   background: var(--panel-strong);
   border: 1.5px solid var(--border);
-  border-radius: 16px;
-  padding: 16px 18px;
+  border-radius: 12px;
+  padding: 10px 14px;
   cursor: pointer;
-  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
   position: relative;
   user-select: none;
 }
@@ -657,20 +657,19 @@ dd {
 
 .protocol-card:hover {
   border-color: rgba(104, 225, 199, 0.6);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
 .protocol-card.active {
   border-color: var(--accent);
   background: linear-gradient(135deg, rgba(104, 225, 199, 0.12) 0%, rgba(18, 28, 38, 0.7) 100%);
-  box-shadow: 0 0 0 1px var(--accent), 0 8px 28px rgba(104, 225, 199, 0.18);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .protocol-card-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  width: 100%;
 }
 
 .protocol-radio-indicator {
@@ -702,25 +701,25 @@ dd {
 .protocol-card-title-group {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   width: 100%;
   flex-wrap: wrap;
-  gap: 6px;
 }
 
 .protocol-name {
   margin: 0;
-  font-size: 0.98rem;
+  font-size: 0.92rem;
   font-weight: 700;
   color: var(--text);
 }
 
 .protocol-tag {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  padding: 3px 9px;
+  padding: 2px 8px;
   border-radius: 999px;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .tag-recommended {
@@ -766,11 +765,40 @@ dd {
 }
 
 .protocol-details {
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 7px;
   font-size: 0.83rem;
   line-height: 1.45;
+  padding-top: 10px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.protocol-card.expanded .protocol-details {
+  display: flex;
+}
+
+.protocol-expand-toggle {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.protocol-expand-toggle:hover {
+  color: var(--text);
+  background: var(--panel-strong);
+}
+
+.protocol-card.expanded .protocol-expand-toggle {
+  color: var(--accent);
 }
 
 .protocol-pro-item,
@@ -824,6 +852,6 @@ dd {
 
 @media (max-width: 768px) {
   .protocol-grid {
-    grid-template-columns: 1fr;
+    gap: 6px;
   }
 }
