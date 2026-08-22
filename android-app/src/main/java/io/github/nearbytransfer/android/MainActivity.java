@@ -165,6 +165,7 @@ public class MainActivity extends Activity {
     private boolean transferActive;
 
     private static final String PREF_TRANSFER_PROTOCOL = "transfer_protocol";
+    static final String PREF_DEVICE_ID = "device_id";
     private static final String PROTOCOL_V2 = "v2-stream";
     private static final String PROTOCOL_TURBO = "turbo-parallel";
     private static final String PROTOCOL_QUIC = "quic-udp";
@@ -1061,6 +1062,12 @@ public class MainActivity extends Activity {
             synchronized (coreLifecycleLock) {
                 if (!activityDestroyed && !Thread.currentThread().isInterrupted()) {
                     device = localDevice;
+                    if (localDevice != null && localDevice.deviceId != null) {
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                            .edit()
+                            .putString(PREF_DEVICE_ID, localDevice.deviceId)
+                            .apply();
+                    }
                     saveTarget = localSaveTarget;
                     transferServer = localServer;
                     discoveryService = localDiscovery;
@@ -1345,6 +1352,15 @@ public class MainActivity extends Activity {
         return "192.168.9.151";
     }
 
+    /**
+     * Returns this device's id, or null when the device identity is not ready yet.
+     * Callers must handle null instead of falling back to a hardcoded id: the desktop
+     * library only accepts paired device ids, so a fabricated id always 403s.
+     */
+    private String getDeviceIdOrNull() {
+        return device != null ? device.deviceId : null;
+    }
+
     private static class FileTypeBadge {
         final String icon;
         final String label;
@@ -1535,7 +1551,14 @@ public class MainActivity extends Activity {
         }
         String serverIp = getTargetServerIp();
         libraryServerIp = serverIp;
-        String myDeviceId = device != null ? device.deviceId : "415847b501f88dbb";
+        String myDeviceId = getDeviceIdOrNull();
+        if (myDeviceId == null) {
+            libraryLoading = false;
+            if (librariesStatusText != null) {
+                librariesStatusText.setText("设备未初始化，请稍后重试。");
+            }
+            return;
+        }
 
         executor.execute(() -> {
             try {
@@ -1794,12 +1817,17 @@ public class MainActivity extends Activity {
     }
 
     private void uploadFileToLibrary(SelectedFile file) {
+        String myDeviceId = getDeviceIdOrNull();
+        if (myDeviceId == null) {
+            Toast.makeText(this, "设备未初始化，请稍后重试。", Toast.LENGTH_LONG).show();
+            appendLog("上传失败：设备未初始化，请稍后重试。");
+            return;
+        }
         if (libraryServerIp == null || libraryToken == null) {
             Toast.makeText(this, "正在连接电脑文件库...", Toast.LENGTH_SHORT).show();
             refreshLibrariesList(false);
         }
         String serverIp = getTargetServerIp();
-        String myDeviceId = device != null ? device.deviceId : "415847b501f88dbb";
 
         String pathInfo = libraryCurrentSubPath.isEmpty() ? "根目录" : libraryCurrentSubPath;
         Toast.makeText(this, "开始上传至电脑 (" + pathInfo + ")：" + file.name, Toast.LENGTH_SHORT).show();
@@ -1893,7 +1921,11 @@ public class MainActivity extends Activity {
                 String token = libraryToken;
                 if (token == null) {
                     try {
-                        String myDeviceId = device != null ? device.deviceId : "415847b501f88dbb";
+                        String myDeviceId = getDeviceIdOrNull();
+                        if (myDeviceId == null) {
+                            Thread.sleep(2000);
+                            continue;
+                        }
                         WebDavClient.SessionResult auth = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
                         if (auth.ok) {
                             token = auth.token;

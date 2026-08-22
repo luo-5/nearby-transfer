@@ -61,12 +61,17 @@ public class NearbyDocumentsProvider extends DocumentsProvider {
     }
 
     private String getDeviceId() {
-        return "415847b501f88dbb";
+        Context ctx = getContext();
+        if (ctx == null) return null;
+        return ctx.getSharedPreferences("nearby-transfer", Context.MODE_PRIVATE)
+            .getString("device_id", null);
     }
 
     private String getSessionToken() {
+        String deviceId = getDeviceId();
+        if (deviceId == null) return null;
         try {
-            WebDavClient.SessionResult res = WebDavClient.authenticate(getTargetServerIp(), getTargetServerPort(), getDeviceId());
+            WebDavClient.SessionResult res = WebDavClient.authenticate(getTargetServerIp(), getTargetServerPort(), deviceId);
             if (res.ok) {
                 return res.token;
             }
