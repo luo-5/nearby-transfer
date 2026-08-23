@@ -283,7 +283,8 @@ async function releaseTaskReservations(receiveRoot, taskId, fsPromises) {
   }
 
   let released = 0;
-  const names = await fsPromises.readdir(reservationRoot);
+  const names = await readdirIfExists(reservationRoot, fsPromises);
+  if (!names) return 0;
   for (const name of names) {
     if (!/^[a-f0-9]{64}$/.test(name)) continue;
     const reservationDirectory = path.join(reservationRoot, name);
@@ -321,7 +322,10 @@ async function readdirIfExists(directory, fsPromises) {
   try {
     return await fsPromises.readdir(directory);
   } catch (error) {
-    if (error && error.code === 'ENOENT') return null;
+    // ENOENT: directory gone. EPERM/EACCES: on Windows a concurrent
+    // reservation cleanup or antivirus scan can transiently block readdir;
+    // treat as unreadable and let the caller skip it rather than crash.
+    if (error && ['ENOENT', 'EPERM', 'EACCES'].includes(error.code)) return null;
     throw error;
   }
 }
