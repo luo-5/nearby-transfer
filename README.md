@@ -1,5 +1,13 @@
 # Nearby Transfer
 
+[![Stars](https://img.shields.io/github/stars/luo-5/nearby-transfer?style=social)](https://github.com/luo-5/nearby-transfer)
+[![Forks](https://img.shields.io/github/forks/luo-5/nearby-transfer?style=social)](https://github.com/luo-5/nearby-transfer)
+[![License](https://img.shields.io/github/license/luo-5/nearby-transfer)](./LICENSE)
+[![Last Commit](https://img.shields.io/github/last-commit/luo-5/nearby-transfer)](https://github.com/luo-5/nearby-transfer/commits)
+[![Downloads](https://img.shields.io/github/downloads/luo-5/nearby-transfer/total)](https://github.com/luo-5/nearby-transfer/releases)
+[![Node](https://img.shields.io/badge/node-24-green)](https://nodejs.org)
+[![Android API](https://img.shields.io/badge/android-26%2B-green)](https://developer.android.com)
+
 Nearby Transfer is an encrypted local-network file transfer app for nearby devices. The current targets are Linux and Windows through Electron, plus an Android client as a separate app that reuses the same protocol.
 
 ## Current Status
