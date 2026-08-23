@@ -23,7 +23,7 @@ export const DISCOVERY_PORT = 47777;
 export const ANNOUNCE_INTERVAL_MS = 2000;
 export const PEER_TTL_MS = 10000;
 export const MAX_ANNOUNCEMENT_BYTES = 16 * 1024;
-export const MAX_CLOCK_SKEW_MS = 30 * 1000;
+export const DISCOVERY_MAX_CLOCK_SKEW_MS = 30 * 1000;
 const CAPABILITY_PATTERN = /^[a-z][a-z0-9-]*$/;
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -305,7 +305,7 @@ export function assertValidDiscoveryAnnouncement(announcement: unknown): asserts
 
 export function assertFreshDiscoveryAnnouncement(announcement: DiscoveryAnnouncement, now: number = Date.now()): void {
   assertValidDiscoveryAnnouncement(announcement);
-  if (!Number.isSafeInteger(now) || now <= 0 || Math.abs(now - announcement.issuedAt) > MAX_CLOCK_SKEW_MS) {
+  if (!Number.isSafeInteger(now) || now <= 0 || Math.abs(now - announcement.issuedAt) > DISCOVERY_MAX_CLOCK_SKEW_MS) {
     throw new Error('Discovery announcement is stale or has an invalid clock');
   }
 }

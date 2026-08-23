@@ -9,6 +9,7 @@
 
 import type { CanonicalValue } from './canonical-json.js';
 import type { MessageType } from './constants.js';
+import type { TransferManifest } from './transfer/manifest.js';
 
 // ---------------------------------------------------------------------------
 // Identity & crypto
@@ -56,20 +57,8 @@ export interface FileSpec {
   size: number;
 }
 
-/** A single entry in a transfer manifest. */
-export interface ManifestEntry {
-  path: string;
-  size: number;
-  sha256?: string;
-}
-
-/** A signed transfer manifest. */
-export interface TransferManifest {
-  transferId: string;
-  entries: ManifestEntry[];
-  senderDeviceId: DeviceId;
-  signature: Uint8Array;
-}
+// ManifestEntry and TransferManifest are defined in transfer/manifest.ts to
+// avoid duplicate exports. They are re-exported from the package index.
 
 /** Progress of an in-flight transfer. */
 export interface TransferProgress {

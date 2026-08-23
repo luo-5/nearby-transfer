@@ -8,7 +8,6 @@ import { Buffer } from 'node:buffer';
 
 export const TASK_ID_BYTES = 16;
 export const TASK_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
-export const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 export const MAX_RELATIVE_PATH_BYTES = 4_096;
 export const MAX_PATH_COMPONENT_BYTES = 255;
 const WINDOWS_INVALID_COMPONENT_PATTERN = /[<>:"\\/|?*\u0000-\u001f\u007f]/;
