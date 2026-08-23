@@ -1,0 +1,45 @@
+{
+  "name": "@nearby-transfer/core",
+  "version": "0.1.0",
+  "description": "Protocol core for Nearby Transfer — crypto, discovery, pairing, transfer, and protocol registry as a pure TypeScript library.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Nearby Transfer Contributors",
+  "homepage": "https://github.com/luo-5/nearby-transfer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luo-5/nearby-transfer.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/luo-5/nearby-transfer/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
