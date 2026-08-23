@@ -33,3 +33,5 @@ export * from './transfer/source-manifest.js';
 export * from './transfer/encrypted-reader.js';
 export * from './transfer/control.js';
 export * from './transport/lan-service.js';
+export * from './protocol/types.js';
+export * from './protocol/registry.js';

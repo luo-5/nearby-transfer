@@ -10,6 +10,7 @@
 import type { CanonicalValue } from './canonical-json.js';
 import type { MessageType } from './constants.js';
 import type { TransferManifest } from './transfer/manifest.js';
+import type { ProtocolId, ProtocolCategory } from './protocol/types.js';
 
 // ---------------------------------------------------------------------------
 // Identity & crypto
@@ -160,17 +161,8 @@ export interface JobStore {
 // ---------------------------------------------------------------------------
 // Protocol registry
 // ---------------------------------------------------------------------------
-
-export type ProtocolId =
-  | 'v2-stream'
-  | 'turbo-parallel'
-  | 'quic-udp'
-  | 'smb-share'
-  | 'webdav-sync'
-  | 'v1-classic'
-  | 'ftps-secure';
-
-export type ProtocolCategory = 'fast' | 'system' | 'standard';
+// ProtocolId and ProtocolCategory are defined in protocol/types.ts to avoid
+// duplicate exports. They are re-exported from the package index.
 
 export type ProtocolState = 'idle' | 'ready' | 'active' | 'stopped' | 'error';
 
