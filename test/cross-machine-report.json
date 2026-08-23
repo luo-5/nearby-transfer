@@ -1,0 +1,56 @@
+[
+  {
+    "label": "Ubuntu->CentOS",
+    "sender": "ubuntu",
+    "receiver": "centos",
+    "sender_result": "ok",
+    "receiver_result": "ok",
+    "sha256_verified": true,
+    "overall": "PASS"
+  },
+  {
+    "label": "CentOS->Ubuntu",
+    "sender": "centos",
+    "receiver": "ubuntu",
+    "sender_result": "ok",
+    "receiver_result": "ok",
+    "sha256_verified": true,
+    "overall": "PASS"
+  },
+  {
+    "label": "Ubuntu->Windows",
+    "sender": "ubuntu",
+    "receiver": "windows",
+    "sender_result": "ok",
+    "receiver_result": "ok",
+    "sha256_verified": true,
+    "overall": "PASS"
+  },
+  {
+    "label": "Windows->Ubuntu",
+    "sender": "windows",
+    "receiver": "ubuntu",
+    "sender_result": "ok",
+    "receiver_result": "ok",
+    "sha256_verified": true,
+    "overall": "PASS"
+  },
+  {
+    "label": "CentOS->Windows",
+    "sender": "centos",
+    "receiver": "windows",
+    "sender_result": "ok",
+    "receiver_result": "ok",
+    "sha256_verified": true,
+    "overall": "PASS"
+  },
+  {
+    "label": "Windows->CentOS",
+    "sender": "windows",
+    "receiver": "centos",
+    "sender_result": "ok",
+    "receiver_result": "ok",
+    "sha256_verified": true,
+    "overall": "PASS"
+  }
+]
