@@ -171,14 +171,19 @@ async function runReceiver(args) {
 }
 
 async function handleIncomingTransfer(socket, receiverDevice, receiveDir, senderIdentityFile) {
-  // Load the sender's identity (for signature verification) if a file was provided
-  let senderIdentity = null;
+  // Load sender identity(ies) for signature verification. Supports comma-separated
+  // file paths (for concurrent multi-sender tests) — each file is one SENDER_IDENTITY.
+  let senderIdentities = [];
   if (senderIdentityFile) {
-    const raw = fs.readFileSync(senderIdentityFile, 'utf8');
-    const lines = raw.split('\n');
-    const idLine = lines.find((l) => l.includes('"SENDER_IDENTITY"')) || lines[0];
-    const parsed = JSON.parse(idLine);
-    senderIdentity = parsed;
+    const files = senderIdentityFile.split(',').map(f => f.trim()).filter(Boolean);
+    for (const f of files) {
+      try {
+        const raw = fs.readFileSync(f, 'utf8');
+        const lines = raw.split('\n');
+        const idLine = lines.find((l) => l.includes('"SENDER_IDENTITY"')) || lines[0];
+        senderIdentities.push(JSON.parse(idLine));
+      } catch (_e) {}
+    }
   }
   const decoder = new WireFrameDecoder();
   const bootstrapDone = deferred();
@@ -205,7 +210,10 @@ async function handleIncomingTransfer(socket, receiverDevice, receiveDir, sender
       }
       const now = Date.now();
       envelope = decodeTransferMessage(TYPE_TRANSFER_MANIFEST, frame.payload, { now });
-      const senderSigningKey = senderIdentity ? senderIdentity.signingPublicKey : envelope.senderSigningPublicKey;
+      // Find the matching sender identity by deviceId
+      const matchedSender = senderIdentities.find(id => id.deviceId === envelope.senderDeviceId);
+      const senderSigningKey = matchedSender ? matchedSender.signingPublicKey : null;
+      if (!senderSigningKey) throw new Error('no matching sender identity for deviceId ' + envelope.senderDeviceId);
       const verified = verifyTransferMessage(TYPE_TRANSFER_MANIFEST, envelope, senderSigningKey, { now });
       if (!verified) throw new Error('manifest signature verification failed');
 
@@ -265,7 +273,9 @@ async function handleIncomingTransfer(socket, receiverDevice, receiveDir, sender
       socket.on('data', (data) => bridge.push(data));
       socket.on('end', () => bridge.push(null));
       socket.on('error', (err) => bridge.destroy(err));
-      startReceiverSession(bridge, receiverDevice, envelope, signedResume, receiveDir, sessionDone, transferCheckpoint, senderIdentity);
+      // Find matching sender identity for the session
+      const sessionSender = senderIdentities.find(id => id.deviceId === envelope.senderDeviceId);
+      startReceiverSession(bridge, receiverDevice, envelope, signedResume, receiveDir, sessionDone, transferCheckpoint, sessionSender);
     } catch (error) {
       bootstrapDone.reject(error);
       sessionDone.reject(error);

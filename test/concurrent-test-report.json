@@ -1,0 +1,16 @@
+[
+  {
+    "label": "Concurrent Transfer (Ubuntu+CentOS->Windows)",
+    "overall": "PASS",
+    "ubuntu_sender": "ok",
+    "centos_sender": "ok",
+    "ubuntu_sha256": true,
+    "centos_sha256": true
+  },
+  {
+    "label": "Concurrent Library (Ubuntu+CentOS->Windows)",
+    "overall": "PASS",
+    "ubuntu_client": "ok",
+    "centos_client": "ok"
+  }
+]

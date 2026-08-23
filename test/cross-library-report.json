@@ -1,0 +1,290 @@
+[
+  {
+    "label": "Windows-lib \u2190 Ubuntu-client",
+    "server": "windows",
+    "client": "ubuntu",
+    "result": {
+      "type": "RESULT",
+      "role": "library-client",
+      "result": "ok",
+      "steps": [
+        {
+          "step": "auth",
+          "result": "pass",
+          "shares": 1
+        },
+        {
+          "step": "list-shares",
+          "result": "pass"
+        },
+        {
+          "step": "list-files",
+          "result": "pass",
+          "count": 0
+        },
+        {
+          "step": "propfind",
+          "result": "pass"
+        },
+        {
+          "step": "upload",
+          "result": "pass",
+          "name": "lib-test-8738e8c9-1787479680419.bin",
+          "sha256": "3aea805bb8f9361310379a1f775fc68079cd7d31e69ad6eec360a49b9110a57d"
+        },
+        {
+          "step": "download-verify",
+          "result": "pass",
+          "sha256_match": true
+        },
+        {
+          "step": "delete",
+          "result": "pass"
+        }
+      ],
+      "overall": "pass",
+      "durationMs": 45
+    },
+    "overall": "PASS"
+  },
+  {
+    "label": "Ubuntu-lib \u2190 Windows-client",
+    "server": "ubuntu",
+    "client": "windows",
+    "result": {
+      "type": "RESULT",
+      "role": "library-client",
+      "result": "ok",
+      "steps": [
+        {
+          "step": "auth",
+          "result": "pass",
+          "shares": 1
+        },
+        {
+          "step": "list-shares",
+          "result": "pass"
+        },
+        {
+          "step": "list-files",
+          "result": "pass",
+          "count": 0
+        },
+        {
+          "step": "propfind",
+          "result": "pass"
+        },
+        {
+          "step": "upload",
+          "result": "pass",
+          "name": "lib-test-81d1e006-1787479686052.bin",
+          "sha256": "1e0443986e2f8f2def4c36b4c9f03624e8512848dd85a8a7e4cab5ce9039e8e4"
+        },
+        {
+          "step": "download-verify",
+          "result": "pass",
+          "sha256_match": true
+        },
+        {
+          "step": "delete",
+          "result": "pass"
+        }
+      ],
+      "overall": "pass",
+      "durationMs": 41
+    },
+    "overall": "PASS"
+  },
+  {
+    "label": "Windows-lib \u2190 CentOS-client",
+    "server": "windows",
+    "client": "centos",
+    "result": {
+      "type": "RESULT",
+      "role": "library-client",
+      "result": "ok",
+      "steps": [
+        {
+          "step": "auth",
+          "result": "pass",
+          "shares": 1
+        },
+        {
+          "step": "list-shares",
+          "result": "pass"
+        },
+        {
+          "step": "list-files",
+          "result": "pass",
+          "count": 0
+        },
+        {
+          "step": "propfind",
+          "result": "pass"
+        },
+        {
+          "step": "upload",
+          "result": "pass",
+          "name": "lib-test-fd2bd4cf-1787479691822.bin",
+          "sha256": "f0f643bc8da8f97e1063d07ee68b00ef4363a7463e6c95d29692ea86621b27db"
+        },
+        {
+          "step": "download-verify",
+          "result": "pass",
+          "sha256_match": true
+        },
+        {
+          "step": "delete",
+          "result": "pass"
+        }
+      ],
+      "overall": "pass",
+      "durationMs": 132
+    },
+    "overall": "PASS"
+  },
+  {
+    "label": "CentOS-lib \u2190 Windows-client",
+    "server": "centos",
+    "client": "windows",
+    "result": {
+      "type": "RESULT",
+      "role": "library-client",
+      "result": "ok",
+      "steps": [
+        {
+          "step": "auth",
+          "result": "pass",
+          "shares": 1
+        },
+        {
+          "step": "list-shares",
+          "result": "pass"
+        },
+        {
+          "step": "list-files",
+          "result": "pass",
+          "count": 0
+        },
+        {
+          "step": "propfind",
+          "result": "pass"
+        },
+        {
+          "step": "upload",
+          "result": "pass",
+          "name": "lib-test-81d1e006-1787479697450.bin",
+          "sha256": "5c1e8c534651a60af2114bf73c646f50498d1e265a44036c47647941950dec89"
+        },
+        {
+          "step": "download-verify",
+          "result": "pass",
+          "sha256_match": true
+        },
+        {
+          "step": "delete",
+          "result": "pass"
+        }
+      ],
+      "overall": "pass",
+      "durationMs": 63
+    },
+    "overall": "PASS"
+  },
+  {
+    "label": "Ubuntu-lib \u2190 CentOS-client",
+    "server": "ubuntu",
+    "client": "centos",
+    "result": {
+      "type": "RESULT",
+      "role": "library-client",
+      "result": "ok",
+      "steps": [
+        {
+          "step": "auth",
+          "result": "pass",
+          "shares": 1
+        },
+        {
+          "step": "list-shares",
+          "result": "pass"
+        },
+        {
+          "step": "list-files",
+          "result": "pass",
+          "count": 0
+        },
+        {
+          "step": "propfind",
+          "result": "pass"
+        },
+        {
+          "step": "upload",
+          "result": "pass",
+          "name": "lib-test-fd2bd4cf-1787479703395.bin",
+          "sha256": "56ed588e51994c28511c62f0fe364c733ebeb7b9bb8ec2f5d7553c469c9f06bc"
+        },
+        {
+          "step": "download-verify",
+          "result": "pass",
+          "sha256_match": true
+        },
+        {
+          "step": "delete",
+          "result": "pass"
+        }
+      ],
+      "overall": "pass",
+      "durationMs": 41
+    },
+    "overall": "PASS"
+  },
+  {
+    "label": "CentOS-lib \u2190 Ubuntu-client",
+    "server": "centos",
+    "client": "ubuntu",
+    "result": {
+      "type": "RESULT",
+      "role": "library-client",
+      "result": "ok",
+      "steps": [
+        {
+          "step": "auth",
+          "result": "pass",
+          "shares": 1
+        },
+        {
+          "step": "list-shares",
+          "result": "pass"
+        },
+        {
+          "step": "list-files",
+          "result": "pass",
+          "count": 0
+        },
+        {
+          "step": "propfind",
+          "result": "pass"
+        },
+        {
+          "step": "upload",
+          "result": "pass",
+          "name": "lib-test-8738e8c9-1787479709427.bin",
+          "sha256": "c14f71c4931016b6936b8d174de2c9d8668454145e07f06341474bf992c248bc"
+        },
+        {
+          "step": "download-verify",
+          "result": "pass",
+          "sha256_match": true
+        },
+        {
+          "step": "delete",
+          "result": "pass"
+        }
+      ],
+      "overall": "pass",
+      "durationMs": 46
+    },
+    "overall": "PASS"
+  }
+]
