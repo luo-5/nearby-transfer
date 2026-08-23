@@ -1,12 +1,13 @@
 # Nearby Transfer
 
-[![Stars](https://img.shields.io/github/stars/luo-5/nearby-transfer?style=social)](https://github.com/luo-5/nearby-transfer)
-[![Forks](https://img.shields.io/github/forks/luo-5/nearby-transfer?style=social)](https://github.com/luo-5/nearby-transfer)
-[![License](https://img.shields.io/github/license/luo-5/nearby-transfer)](./LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/luo-5/nearby-transfer)](https://github.com/luo-5/nearby-transfer/commits)
-[![Downloads](https://img.shields.io/github/downloads/luo-5/nearby-transfer/total)](https://github.com/luo-5/nearby-transfer/releases)
-[![Node](https://img.shields.io/badge/node-24-green)](https://nodejs.org)
-[![Android API](https://img.shields.io/badge/android-26%2B-green)](https://developer.android.com)
+[![Stars](https://img.shields.io/github/stars/luo-5/nearby-transfer?style=for-the-badge&color=ffd700&labelColor=1a1a2e)](https://github.com/luo-5/nearby-transfer)
+[![Forks](https://img.shields.io/github/forks/luo-5/nearby-transfer?style=for-the-badge&color=7b68ee&labelColor=1a1a2e)](https://github.com/luo-5/nearby-transfer)
+[![License](https://img.shields.io/github/license/luo-5/nearby-transfer?style=for-the-badge&color=00d9a3&labelColor=1a1a2e)](./LICENSE)
+[![Last Commit](https://img.shields.io/github/last-commit/luo-5/nearby-transfer?style=for-the-badge&color=ff6b6b&labelColor=1a1a2e)](https://github.com/luo-5/nearby-transfer/commits)
+[![Downloads](https://img.shields.io/github/downloads/luo-5/nearby-transfer/total?style=for-the-badge&color=4ecdc4&labelColor=1a1a2e)](https://github.com/luo-5/nearby-transfer/releases)
+[![Node](https://img.shields.io/badge/Node.js-24-339933?style=for-the-badge&logo=nodedotjs&logoColor=white&labelColor=1a1a2e)](https://nodejs.org)
+[![Android](https://img.shields.io/badge/Android-8%2B-3DDC84?style=for-the-badge&logo=android&logoColor=black&labelColor=1a1a2e)](https://developer.android.com)
+[![Electron](https://img.shields.io/badge/Electron-43-47848F?style=for-the-badge&logo=electron&logoColor=white&labelColor=1a1a2e)](https://www.electronjs.org)
 
 Nearby Transfer is an encrypted local-network file transfer app for nearby devices. The current targets are Linux and Windows through Electron, plus an Android client as a separate app that reuses the same protocol.
 
