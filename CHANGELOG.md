@@ -2,9 +2,23 @@
 
 All notable changes to Nearby Transfer will be documented in this file.
 
-## Unreleased
+## 1.3.0
 
-### Security and stability (on `next/1.0`, not yet released)
+### UX improvements
+
+- **Pairing simplified to 2 steps**: both devices confirm the 6-digit SAS code, then trust is saved automatically — the separate "Save Trust" button is gone. The Ed25519 + SAS security model and the underlying state machine are unchanged.
+- **Paired devices hidden from the pairing list**: trusted devices no longer appear in the "nearby devices" list with a pair button (desktop + Android). Discovery protocol untouched.
+- **Device-first selection flow**: the device panel now renders above the file panel on both desktop and Android; the selected device is persisted to `localStorage` and auto-restored on next launch. When the selected peer goes offline, the selection is retained with an "offline" hint instead of being cleared.
+- **Compact protocol selector**: the 7 large multi-line protocol cards are now a compact single-column list with collapsible details (accordion). Selecting a protocol and expanding its details are separate actions.
+- **Protocol selector now persists**: fixed a missing `getProtocol`/`setProtocol` bridge in `preload.js` — the protocol choice previously only updated the UI but was never saved.
+
+### Android hardening
+
+- Removed all hardcoded fallback device IDs (`415847b501f88dbb`) in `MainActivity` and `NearbyDocumentsProvider`. When the device identity is not ready, the app shows "设备未初始化，请稍后重试" instead of authenticating with a fabricated ID that would 403.
+- `MainActivity` now persists its real device ID to SharedPreferences, which the separate-process SAF provider reads.
+- Discovery log spam fixed: `DiscoveryService.handleMessage` logs "发现设备" only on first discovery, not every 2s broadcast. `BoundedLogBuffer` collapses consecutive duplicate messages.
+
+### Security and stability (from `next/1.0`, now merged to `main`)
 
 - Hardened the incoming-transfer confirmation dialog so a 60-second timeout auto-rejects and a stale late user click is ignored; removed dead `pendingDialogs` plumbing that could not dismiss a native MessageBox.
 - Made the desktop library PUT endpoint return `413 Payload Too Large` when a chunked upload crosses the 50 GiB cap, instead of resetting the connection or emitting a misleading 500.
@@ -12,6 +26,13 @@ All notable changes to Nearby Transfer will be documented in this file.
 - Android P0 fixes: converted `NearbyTransferDatabase` to an application-scoped singleton, fixed a coroutine scope leak in `V2StartupRecoveryRunner`, and replaced silent `catch (ignored)` blocks with `Log.w` in `TransferForegroundService` and `V2IncomingTransferCoordinator`.
 - Restored `ACTION_STOP_TRANSFER` handling in `TransferForegroundService.onStartCommand` (regression from the Android P0 patch) and added a `resetInstance()` test seam for the Room singleton.
 - Build: enabled `android.overridePathCheck` for the non-ASCII repo path and made `run_tests.ps1` honor an existing `ANDROID_SDK_ROOT`.
+
+### Cross-platform testing
+
+- Verified v2 encrypted file transfer across Ubuntu 26.04, CentOS Stream 9, and Windows — 6/6 pairs passed with SHA256 verification.
+- Verified WebDAV shared library access (auth + PROPFIND + upload + download + delete) across all 3 OS pairs — 6/6 passed.
+- Verified concurrent multi-device transfer and concurrent library access — 2/2 passed.
+- Linux packaging (`npm run dist:linux`) verified on both Ubuntu and CentOS; electron launches under xvfb with no fatal errors.
 
 ## 1.2.1
 
