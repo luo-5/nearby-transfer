@@ -9,14 +9,48 @@
 [![Android](https://img.shields.io/badge/Android-8%2B-3DDC84?style=for-the-badge&logo=android&logoColor=black&labelColor=1a1a2e)](https://developer.android.com)
 [![Electron](https://img.shields.io/badge/Electron-43-47848F?style=for-the-badge&logo=electron&logoColor=white&labelColor=1a1a2e)](https://www.electronjs.org)
 
-Nearby Transfer is an encrypted local-network file transfer app for nearby devices. The current targets are Linux and Windows through Electron, plus an Android client as a separate app that reuses the same protocol.
+**English** · Nearby Transfer is an encrypted local-network file transfer and NAS WebDAV library-sync app for nearby devices. It runs as an Electron desktop app on Linux and Windows, with a separate Android client that reuses the same v2 protocol. Files move directly between devices over the LAN — no relay server, no cloud — encrypted end-to-end with Ed25519 identities, X25519 key agreement, and AES-256-GCM chunk encryption.
 
-## Current Status
+**中文** · Nearby Transfer 是一款面向局域网近场设备的加密文件传输与 NAS WebDAV 共享库同步应用。桌面端基于 Electron，支持 Linux 与 Windows；Android 端为独立应用，复用同一套 v2 协议。文件在设备间经局域网直传，无需中继服务器、不经过云端，全程采用 Ed25519 身份签名、X25519 密钥协商与 AES-256-GCM 分块加密。
 
-The v0.2 desktop and Android transfer flow remains usable while protocol v2 and the v1.0
-architecture are developed on the `next/1.0` branch. Protocol-v2 persistence, pairing,
-encrypted chunking, recovery, and migration foundations are present, but v1.0 is not yet a
-release candidate.
+## Features · 功能
+
+- **Encrypted direct transfer · 加密直传** — device-to-device over TCP/UDP on the LAN, no relay or cloud. Ed25519-signed identities, X25519 ECDH session keys, AES-256-GCM per-chunk encryption.
+- **6-digit SAS pairing · 6 位配对码** — mutual verification with a short authentication string before trust is saved; replay-protected signed confirmations.
+- **Resumable chunked transfer · 断点续传** — 4 MiB chunks with committed-offset checkpoints; transfers resume after interruption.
+- **7-protocol engine · 七协议引擎** — hot-switchable drivers (`v2-stream`, `turbo-parallel`, `quic-udp`, `smb-share`, `webdav-sync`, `v1-classic`, `ftps-secure`) with category-based selection.
+- **Shared library (WebDAV) · 共享库** — turn a device into an HTTPS WebDAV NAS; browse, upload, download, and delete with Bearer-token auth over self-signed TLS.
+- **Concurrent multi-device · 多设备并发** — send to and receive from several peers simultaneously.
+- **Cross-platform · 跨平台** — desktop (Electron, Linux/Windows) and Android share one protocol; interoperable across all three.
+
+## Quick Start · 快速开始
+
+**Desktop · 桌面端**
+
+```bash
+# install dependencies (Node.js >= 24)
+npm install
+
+# run the app
+npm start
+
+# run the smoke test suite
+npm test
+
+# build installers
+npm run dist:windows   # Windows NSIS installer
+npm run dist:linux     # Linux tar.gz + zip
+```
+
+Pre-built installers for the latest release are on the [Releases page](https://github.com/luo-5/nearby-transfer/releases).
+
+**Android · 安卓端**
+
+Open `android-app/` in Android Studio (or run `./gradlew.bat :android-app:assembleDebug`) and install the resulting APK. Requires Android 8.0 (API 26) or later.
+
+## Current Status · 当前状态
+
+Released at **v1.3.0**. The v2 protocol — Ed25519 identities, SAS pairing, AES-256-GCM chunk encryption, resumable transfers, WebDAV shared library, and the 7-protocol engine — is stable and cross-platform tested across Windows, Ubuntu, and CentOS. Work is underway to extract the protocol core into a reusable TypeScript package (`@nearby-transfer/core`) and to grow the ecosystem (CLI, Docker, LocalSend interop) per the roadmap.
 
 ### v0.2 Transfer Flow
 
