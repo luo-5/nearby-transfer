@@ -17,4 +17,7 @@ export * from './crypto/session.js';
 export * from './crypto/chunk.js';
 export * from './discovery/multicast-interfaces.js';
 export * from './discovery/index.js';
-export { publicIdentity, assertValidPublicIdentity, normalizeCapabilities, type PublicIdentity } from './pairing/identity-shape.js';
+export * from './pairing/identity-shape.js';
+export * from './pairing/sas.js';
+export * from './pairing/trust-store.js';
+export * from './pairing/session-store.js';
