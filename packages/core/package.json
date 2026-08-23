@@ -36,10 +36,11 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "node --test"
+    "test": "tsx --test test/*.test.ts"
   },
   "devDependencies": {
     "tsup": "^8.3.5",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.2"
   }
 }
