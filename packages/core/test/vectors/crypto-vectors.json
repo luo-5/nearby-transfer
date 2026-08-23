@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-23T15:40:18.297Z",
+  "identity": {
+    "description": "Ed25519 device identity derived from a fixed 32-byte seed",
+    "ed25519SeedHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "signingPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\n-----END PUBLIC KEY-----\n",
+    "deviceId": "2de85d680df6c75a",
+    "fingerprint": "2DE8-5D68-0DF6-C75A-D1DE-8429"
+  },
+  "sessionKey": {
+    "description": "X25519 ECDH + HKDF-SHA256 session key, Alice→Bob",
+    "aliceSeedHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "bobSeedHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "alicePrivateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VuBCIEIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g\n-----END PRIVATE KEY-----\n",
+    "alicePublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\n-----END PUBLIC KEY-----\n",
+    "bobPrivateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VuBCIEICAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/\n-----END PRIVATE KEY-----\n",
+    "bobPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEANYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ=\n-----END PUBLIC KEY-----\n",
+    "senderDeviceId": "a1b2c3d4e5f60718",
+    "receiverDeviceId": "0123456789abcdef",
+    "taskId": "de3U6QplW7_X2w7pwGDibA",
+    "manifestSha256": "3a504df5170a7d89dab128f3cfac09a71a263954a24d5056cc222e00a0841804",
+    "sessionKeyHex": "519bb6fe0ff3d750e58a2922d95ae67b462fa9e8bb132d3098360ee2286d6a56"
+  },
+  "chunkEncryption": {
+    "description": "AES-256-GCM chunk encryption with position-bound AAD",
+    "sessionKeyHex": "519bb6fe0ff3d750e58a2922d95ae67b462fa9e8bb132d3098360ee2286d6a56",
+    "taskId": "de3U6QplW7_X2w7pwGDibA",
+    "path": "docs/readme.md",
+    "offset": 0,
+    "sequence": 0,
+    "plaintextHex": "4e6561726279205472616e736665722076322074657374206368756e6b207061796c6f6164",
+    "plaintextUtf8": "Nearby Transfer v2 test chunk payload",
+    "nonceHex": "0da74c42e775b447dc062554",
+    "ciphertextHex": "e4c88ba57781779f51c1360b4c2f966f4af48465c219e2185e133151543f44018aa2e2320f",
+    "authTagHex": "524cdfb877a00854a40951f46d1baa0c"
+  }
+}

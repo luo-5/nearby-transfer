@@ -12,3 +12,6 @@
 export * from './constants.js';
 export * from './canonical-json.js';
 export * from './types.js';
+export * from './crypto/identity.js';
+export * from './crypto/session.js';
+export * from './crypto/chunk.js';
