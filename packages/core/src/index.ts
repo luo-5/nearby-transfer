@@ -31,4 +31,5 @@ export * from './transfer/message-codec.js';
 export * from './transfer/message-auth.js';
 export * from './transfer/source-manifest.js';
 export * from './transfer/encrypted-reader.js';
+export * from './transfer/control.js';
 export * from './transport/lan-service.js';
