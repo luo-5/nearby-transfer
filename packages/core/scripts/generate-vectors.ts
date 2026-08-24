@@ -1,5 +1,5 @@
 /**
- * Generates deterministic crypto test vectors for @nearby-transfer/core.
+ * Generates deterministic crypto test vectors for @luo-5/core.
  *
  * Since node:crypto's generateKeyPairSync is not seedable, we derive X25519
  * keypairs from fixed 32-byte seeds using the raw key import path, then compute

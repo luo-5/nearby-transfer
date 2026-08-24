@@ -30,12 +30,12 @@
     "dist:linux": "electron-builder --config packaging/linux/electron-builder.yml --linux tar.gz zip --x64 --publish never",
     "dist:windows": "electron-builder --config packaging/electron-builder.yml --win nsis --x64 --publish never",
     "dist:desktop": "npm run dist:linux && npm run dist:windows",
-    "build:core": "npm run build --workspace @nearby-transfer/core",
-    "typecheck:core": "npm run typecheck --workspace @nearby-transfer/core",
-    "test:core": "npm run test --workspace @nearby-transfer/core"
+    "build:core": "npm run build --workspace @luo-5/core",
+    "typecheck:core": "npm run typecheck --workspace @luo-5/core",
+    "test:core": "npm run test --workspace @luo-5/core"
   },
   "devDependencies": {
-    "@nearby-transfer/core": "^0.1.0",
+    "@luo-5/core": "^0.1.0",
     "electron": "^43.4.0",
     "electron-builder": "^26.15.3"
   }

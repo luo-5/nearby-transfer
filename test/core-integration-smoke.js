@@ -1,13 +1,13 @@
 'use strict';
 
 /**
- * Integration test: verifies that @nearby-transfer/core exports the same
+ * Integration test: verifies that @luo-5/core exports the same
  * protocol surface as the legacy src/v2/ and src/core/ modules, so the
  * desktop can switch imports gradually (strangler fig pattern).
  */
 
 const assert = require('assert');
-const core = require('@nearby-transfer/core');
+const core = require('@luo-5/core');
 
 async function main() {
   // Constants match

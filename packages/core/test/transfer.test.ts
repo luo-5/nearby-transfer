@@ -1,5 +1,5 @@
 /**
- * Transfer layer tests for @nearby-transfer/core.
+ * Transfer layer tests for @luo-5/core.
  * Validates manifest, wire-frame, chunk-frame, and message-codec modules.
  */
 import { test } from 'node:test';

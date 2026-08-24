@@ -1,5 +1,5 @@
 /**
- * Crypto layer tests for @nearby-transfer/core.
+ * Crypto layer tests for @luo-5/core.
  *
  * Validates that the migrated identity, session-key, and chunk-encryption code
  * produces output matching the deterministic vectors in

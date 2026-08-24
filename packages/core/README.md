@@ -1,4 +1,4 @@
-# @nearby-transfer/core
+# @luo-5/core
 
 Protocol core for [Nearby Transfer](https://github.com/luo-5/nearby-transfer) — a pure TypeScript implementation of the v2 protocol with no Electron or DOM dependencies.
 

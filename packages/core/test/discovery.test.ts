@@ -1,5 +1,5 @@
 /**
- * Discovery layer tests for @nearby-transfer/core.
+ * Discovery layer tests for @luo-5/core.
  *
  * Tests announcement creation, signing, verification, datagram parsing, and
  * multicast-interface enumeration. The full V2Discovery socket lifecycle is

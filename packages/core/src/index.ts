@@ -1,5 +1,5 @@
 /**
- * @nearby-transfer/core — protocol core for Nearby Transfer.
+ * @luo-5/core — protocol core for Nearby Transfer.
  *
  * Pure TypeScript implementation of the v2 protocol: device identities (Ed25519),
  * session key agreement (X25519 ECDH), AES-256-GCM chunk encryption, UDP multicast

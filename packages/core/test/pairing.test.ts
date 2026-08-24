@@ -1,5 +1,5 @@
 /**
- * Pairing layer tests for @nearby-transfer/core.
+ * Pairing layer tests for @luo-5/core.
  *
  * Validates SAS pairing code derivation against the existing deterministic
  * fixture (test/fixtures/protocol-v2-pairing.json), offer/confirmation/cancel

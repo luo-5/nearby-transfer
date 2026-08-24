@@ -1,5 +1,5 @@
 /**
- * Public TypeScript interfaces for @nearby-transfer/core.
+ * Public TypeScript interfaces for @luo-5/core.
  *
  * These define the stable API surface that the desktop app, future CLI, and
  * other consumers program against. Implementation modules (crypto, discovery,

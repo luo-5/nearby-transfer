@@ -1,5 +1,5 @@
 /**
- * Protocol registry tests for @nearby-transfer/core.
+ * Protocol registry tests for @luo-5/core.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

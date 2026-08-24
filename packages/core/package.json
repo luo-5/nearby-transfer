@@ -1,5 +1,5 @@
 {
-  "name": "@nearby-transfer/core",
+  "name": "@luo-5/core",
   "version": "0.1.0",
   "description": "Protocol core for Nearby Transfer — crypto, discovery, pairing, transfer, and protocol registry as a pure TypeScript library.",
   "type": "module",
