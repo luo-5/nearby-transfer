@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 const { app } = require('electron');
 
 function derLen(len) {
@@ -20,6 +21,7 @@ function derTag(tag, content) {
 
 function derSeq(...items) { return derTag(0x30, Buffer.concat(items)); }
 function derSet(...items) { return derTag(0x31, Buffer.concat(items)); }
+function derBool(v) { return derTag(0x01, Buffer.from([v ? 0xff : 0x00])); }
 
 function derOid(oidStr) {
   const parts = oidStr.split('.').map(Number);
@@ -44,13 +46,71 @@ function derUTCTime(d) {
   return derTag(0x17, Buffer.from(s, 'ascii'));
 }
 
+// Build the [3] EXPLICIT extensions wrapper for a v3 certificate.
+function buildExtensions() {
+  // basicConstraints: CA:FALSE (critical)
+  const basicConstraints = derSeq(
+    derOid('2.5.29.19'),
+    derBool(true), // critical
+    derTag(0x04, derSeq()) // extnValue: SEQUENCE{} = CA:FALSE
+  );
+
+  // keyUsage: digitalSignature + keyEncipherment (critical)
+  // Bit 0 = digitalSignature (0x80), bit 2 = keyEncipherment (0x20) → 0xa0
+  // 5 unused bits in the trailing byte
+  const keyUsage = derSeq(
+    derOid('2.5.29.15'),
+    derBool(true), // critical
+    derTag(0x04, derTag(0x03, Buffer.from([0x05, 0xa0])))
+  );
+
+  // extendedKeyUsage: TLS WWW server auth (1.3.6.1.5.5.7.3.1)
+  const extKeyUsage = derSeq(
+    derOid('2.5.29.37'),
+    derTag(0x04, derSeq(derOid('1.3.6.1.5.5.7.3.1')))
+  );
+
+  // subjectAltName: DNS + IP entries for hostname-verifying clients
+  const sanEntries = [];
+  sanEntries.push(derTag(0x82, Buffer.from('localhost', 'ascii'))); // DNS:localhost
+  sanEntries.push(derTag(0x87, Buffer.from([127, 0, 0, 1])));      // IP:127.0.0.1
+  try {
+    const hostname = os.hostname();
+    if (hostname && hostname !== 'localhost') {
+      sanEntries.push(derTag(0x82, Buffer.from(hostname, 'ascii')));
+    }
+  } catch (_) { /* hostname unavailable */ }
+  // Enumerate non-internal IPv4 addresses for LAN access
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const iface of ifaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          const octets = iface.address.split('.').map(Number);
+          if (octets.length === 4 && octets.every((o) => o >= 0 && o <= 255)) {
+            sanEntries.push(derTag(0x87, Buffer.from(octets)));
+          }
+        }
+      }
+    }
+  } catch (_) { /* networkInterfaces unavailable */ }
+
+  const subjectAltName = derSeq(
+    derOid('2.5.29.17'),
+    derTag(0x04, derSeq(...sanEntries))
+  );
+
+  // [3] EXPLICIT wrapper around the SEQUENCE OF Extension
+  return derTag(0xa3, derSeq(basicConstraints, keyUsage, extKeyUsage, subjectAltName));
+}
+
 class CertManager {
   constructor() {
     let userDataPath = '';
     try {
-      userDataPath = app && app.getPath ? app.getPath('userData') : require('os').tmpdir();
+      userDataPath = app && app.getPath ? app.getPath('userData') : os.tmpdir();
     } catch (e) {
-      userDataPath = require('os').tmpdir();
+      userDataPath = os.tmpdir();
     }
     this.certPath = path.join(userDataPath, 'webdav-cert.pem');
     this.keyPath = path.join(userDataPath, 'webdav-key.pem');
@@ -92,7 +152,8 @@ class CertManager {
       name, // issuer
       validity,
       name, // subject
-      publicKey // spki
+      publicKey, // spki
+      buildExtensions() // [3] EXPLICIT extensions
     );
 
     const sig = crypto.sign('sha256', tbs, privateKey);

@@ -127,7 +127,7 @@ class DesktopLibraryService {
     if (this.server) return this.port;
 
     const { cert, key } = certManager.getOrCreateCert();
-    const server = https.createServer({ cert, key }, (req, res) => this._handleRequest(req, res));
+    const server = https.createServer({ cert, key, minVersion: 'TLSv1.2' }, (req, res) => this._handleRequest(req, res));
     this.server = server;
 
     await new Promise((resolve, reject) => {
