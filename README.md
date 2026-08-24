@@ -22,6 +22,8 @@
 - **Shared library (WebDAV) · 共享库** — turn a device into an HTTPS WebDAV NAS; browse, upload, download, and delete with Bearer-token auth over self-signed TLS.
 - **Concurrent multi-device · 多设备并发** — send to and receive from several peers simultaneously.
 - **Cross-platform · 跨平台** — desktop (Electron, Linux/Windows) and Android share one protocol; interoperable across all three.
+- **Directory sync · 目录同步** — CLI `sync` command recursively transfers directories with incremental detection (quick 1 MiB hash + full SHA-256), conflict resolution (rename-new/overwrite/skip), and resume support.
+- **Security hardened · 安全加固** — timing-safe comparisons prevent side-channel attacks; DoS protection via frame size limits (16 MB wire / 1 MB chunk / 4 MB message); 96-bit random nonces per chunk (no IV reuse); path traversal prevention in receive planner.
 
 ## Quick Start · 快速开始
 

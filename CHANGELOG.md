@@ -2,6 +2,34 @@
 
 All notable changes to Nearby Transfer will be documented in this file.
 
+## [@luo-5/core & @luo-5/cli 0.2.0] - 2026-08-25
+
+### Added
+- CLI `sync` command: recursive directory sync with incremental detection, conflict resolution, and resume
+- `createTransferReceiver`: receive-side transfer executor (mirror of sender executor)
+- `sync-state.ts`: quick hash (first 1 MiB) + full hash for incremental change detection
+- `resume-store.ts`: JSON-based resume state persistence by taskId
+- `conflict-resolver.ts`: overwrite / rename-new / skip conflict strategies
+- End-to-end integration tests: single-file (256 KB) and multi-file (64+128 KB) SHA-256 verification
+- `timing-safe-compare.ts`: constant-time string/buffer comparison utilities
+- Security test suite (12 tests): timing-safe comparison, path traversal prevention, DoS frame limits, nonce uniqueness
+- Strangler fig adapters: 6 v2 JS modules migrated to re-export from `@luo-5/core`
+
+### Fixed
+- Bootstrap-to-stream-session handoff on same TCP connection via `leftoverData` buffer (critical blocker resolved)
+- Stream session: accept progress messages in `awaiting-ack` state
+- Executor: skip checkpoint advancement when no initial resume checkpoint exists
+- Ed25519 key OID prefix (`2b6570` instead of X25519's `2b656e`)
+- Ephemeral key export format (raw 32-byte base64url instead of PEM)
+
+### Changed
+- npm package version `0.1.0` → `0.2.0` (core + CLI)
+- 6 desktop v2 JS modules replaced with `@luo-5/core` re-export adapters (1269 lines removed)
+
+### Security
+- Timing-safe comparison utility for preventing side-channel attacks
+- Verified: `crypto.verify` for signatures (constant-time), `crypto.randomBytes(12)` for nonces (96-bit), DoS limits (16 MB / 1 MB / 4 MB), path traversal prevention in receive-planner
+
 ## 1.3.0
 
 ### UX improvements
