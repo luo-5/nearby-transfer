@@ -1,14 +1,21 @@
 /**
- * `nearby-transfer send <file...> --to <device-id|ip>` — send files to a device.
+ * `nearby-transfer send <file...> --to <device-id|ip>` — send files to a
+ * trusted device using the full v2 encrypted transfer protocol.
+ *
+ * Discovers the target peer via UDP multicast, builds a source manifest,
+ * and runs the core's createDesktopTransferExecutor to bootstrap the
+ * transfer, derive the session key, and stream AES-256-GCM encrypted chunks.
  */
 
 import { parseArgs } from 'node:util';
-import { existsSync, statSync, readFileSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
-import { createHash } from 'node:crypto';
 import {
   V2Discovery,
-  JsonTrustStore,
+  buildTransferSourceManifest,
+  createDesktopTransferExecutor,
+  JOB_DIRECTION,
+  JOB_STATUS,
   type DiscoveredPeerEntry,
 } from '@luo-5/core';
 import { loadOrCreateDevice, parseCommonOptions } from '../device.js';
@@ -37,15 +44,25 @@ export async function sendCommand(args: string[]): Promise<void> {
   const device = loadOrCreateDevice(opts.dataDir);
 
   // Validate files
-  const files = positionals.map((p) => {
+  const filePaths = positionals.map((p) => {
     const abs = resolve(p);
     if (!existsSync(abs)) throw new Error(`File not found: ${p}`);
     const stat = statSync(abs);
     if (stat.isDirectory()) throw new Error(`Directories not supported yet: ${p} (use individual files)`);
-    return { path: basename(abs), sourcePath: abs, size: stat.size, sha256: hashFile(abs) };
+    return abs;
   });
 
-  process.stdout.write(`Sending ${files.length} file(s) to ${values.to}...\n`);
+  process.stdout.write(`Sending ${filePaths.length} file(s) to ${values.to}...\n`);
+
+  // Build the source manifest (scans files, computes SHA-256)
+  process.stdout.write('Building manifest...\n');
+  const sourceManifest = await buildTransferSourceManifest(filePaths);
+  const manifest = sourceManifest.manifest;
+
+  for (const file of sourceManifest.files) {
+    process.stdout.write(`  ${file.path} (${formatBytes(file.size)})\n`);
+  }
+  process.stdout.write(`  Total: ${manifest.totalFiles} file(s), ${formatBytes(manifest.totalBytes)}\n\n`);
 
   // Discover the target device
   const discovery = new V2Discovery({
@@ -62,7 +79,7 @@ export async function sendCommand(args: string[]): Promise<void> {
   });
 
   discovery.start();
-  const timeout = opts.timeout ?? 10000;
+  const timeout = opts.timeout ?? 15000;
   const deadline = Date.now() + timeout;
   while (!targetPeer && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -76,32 +93,52 @@ export async function sendCommand(args: string[]): Promise<void> {
 
   const peer = targetPeer as DiscoveredPeerEntry;
   process.stdout.write(`Connected to: ${peer.deviceName} (${peer.deviceId})\n`);
+  process.stdout.write(`  Address: ${peer.host}:${peer.port}\n\n`);
 
-  // Display file list
-  for (const file of files) {
-    process.stdout.write(`  ${file.path} (${formatBytes(file.size)})\n`);
+  // Construct the transfer job
+  const now = Date.now();
+  const job = {
+    taskId: manifest.taskId,
+    peerDeviceId: peer.deviceId,
+    direction: JOB_DIRECTION.OUTGOING,
+    status: JOB_STATUS.TRANSFERRING,
+    manifest,
+    sources: sourceManifest.files.map((f) => ({ path: f.path, sourcePath: f.sourcePath, size: f.size, sha256: f.sha256 })),
+    createdAt: now,
+    updatedAt: now,
+    // Extra fields the executor accesses via type casting:
+    localDeviceId: device.deviceId,
+    signingPrivateKey: device.signingPrivateKey,
+    remoteSigningPublicKey: peer.signingPublicKey,
+    remoteEncryptionPublicKey: peer.encryptionPublicKey,
+    peer: { host: peer.host, port: peer.port },
+  };
+
+  const controller = new AbortController();
+  const commitRemoteCheckpoint = () => job; // no-op checkpoint commit for CLI
+
+  process.stdout.write('Starting encrypted transfer...\n');
+  try {
+    const executor = await createDesktopTransferExecutor({
+      job: job as never,
+      checkpoint: null,
+      signal: controller.signal,
+      commitRemoteCheckpoint: commitRemoteCheckpoint as never,
+    });
+
+    executor.done.then(() => {
+      process.stdout.write('\nTransfer completed successfully!\n');
+    }).catch((error: Error) => {
+      process.stderr.write(`\nTransfer failed: ${error.message}\n`);
+      process.exit(1);
+    });
+
+    await executor.done;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`Transfer setup failed: ${msg}\n`);
+    process.exit(1);
   }
-
-  // Note: Full transfer execution requires the TCP transport layer (LanService +
-  // executor) which needs a running receiver. The CLI establishes discovery
-  // and validates the target. Actual file transfer uses the core package's
-  // createDesktopTransferExecutor, which requires a paired peer with an active
-  // TCP listener. For CLI-to-CLI transfers, run `nearby-transfer receive` on
-  // the target first.
-  process.stdout.write('\nTo complete the transfer, ensure the target device is running:\n');
-  process.stdout.write(`  nearby-transfer receive --dir <directory>\n`);
-  process.stdout.write('\nFull TCP transfer orchestration will be activated once the\n');
-  process.stdout.write('receiver handshake is implemented in the CLI.\n');
-
-  // TODO: implement full TCP transfer using LanService + createDesktopTransferExecutor
-  // This requires:
-  // 1. Starting a LanService on the receiver side
-  // 2. The sender connecting via TCP and running the bootstrap → executor flow
-  // 3. Progress reporting via the executor's done promise
-}
-
-function hashFile(filePath: string): string {
-  return createHash('sha256').update(readFileSync(filePath)).digest('hex');
 }
 
 function formatBytes(bytes: number): string {
