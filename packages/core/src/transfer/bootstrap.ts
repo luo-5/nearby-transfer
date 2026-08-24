@@ -56,6 +56,7 @@ export interface BootstrapResult {
   decision: string;
   resume: unknown;
   checkpoint: ControlCheckpoint | null;
+  leftoverData?: Buffer;
 }
 
 export function bootstrapOutgoingTransfer(input: BootstrapInput): Promise<BootstrapResult> {
@@ -125,31 +126,23 @@ function exchangeBootstrapFrames(config: BootstrapConfig, requestFrame: Buffer):
 
     const timer = setTimeout(() => fail(new Error(`Transfer bootstrap timed out after ${config.timeoutMs} milliseconds`)), config.timeoutMs);
 
-    function unshiftRemaining(): void {
-      // Push any buffered data (e.g. MUX frames) back to the socket so the
-      // stream session can receive it after the bootstrap hands off.
-      const stream = config.stream as unknown as { unshift?: (data: Buffer) => void };
-      if (buffer.length > 0 && typeof stream.unshift === 'function') {
-        stream.unshift(buffer);
-        buffer = Buffer.alloc(0);
-      }
-    }
-
     function cleanup(): void {
       clearTimeout(timer);
       config.stream.removeListener('data', onData);
       config.stream.removeListener('error', onError);
       config.stream.removeListener('close', onClose);
-      // Do NOT pause — let Node.js auto-pause when the 'data' listener is
-      // removed. The stream session will resume() when it takes ownership.
     }
 
     function succeed(): void {
       if (settled) return;
       settled = true;
       cleanup();
-      unshiftRemaining();
-      resolve({ decision: decision!, resume, checkpoint: controlCheckpoint });
+      resolve({
+        decision: decision!,
+        resume,
+        checkpoint: controlCheckpoint,
+        ...(buffer.length > 0 ? { leftoverData: Buffer.from(buffer) } : {}),
+      });
     }
 
     function fail(error: Error): void {

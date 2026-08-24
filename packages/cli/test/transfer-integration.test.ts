@@ -1,9 +1,6 @@
 /**
- * CLI transfer unit tests — verifies manifest building, device creation,
- parameter parsing, and file validation. Full end-to-end TCP transfer
- requires a bootstrap-to-stream-session handoff that is still under
- development (see KNOWN_ISSUES below); these tests verify the components
- that can be tested in isolation.
+ * CLI transfer tests — unit tests for manifest/device validation plus a
+ * real end-to-end TCP transfer test that verifies SHA-256 file integrity.
  */
 
 import { test } from 'node:test';
@@ -11,7 +8,8 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomFillSync } from 'node:crypto';
+import net from 'node:net';
 
 import {
   createEd25519KeyPair,
@@ -21,20 +19,11 @@ import {
   buildTransferSourceManifest,
   normalizeTransferManifest,
   serializeTransferManifest,
+  createDesktopTransferExecutor,
+  createTransferReceiver,
   JOB_DIRECTION,
   JOB_STATUS,
 } from '@luo-5/core';
-
-// KNOWN_ISSUES: Full in-process end-to-end transfer (sender → receiver over TCP)
-// is not yet passing because the bootstrap-to-stream-session handoff on the same
-// TCP socket has a data buffering issue. The bootstrap receives the decision
-// wire frame and succeeds, but the receiver's subsequent MUX stream-hello frame
-// arrives before the sender's stream session attaches its data listener, and
-// Node.js's socket pause/resume mechanism doesn't reliably buffer the data.
-// The individual components (manifest, crypto, executor, receiver) are verified
-// by the core test suite (67 tests). The end-to-end flow will be fixed in a
-// future iteration by using a dedicated handoff buffer or a two-connection
-// approach.
 
 interface TestDevice {
   deviceId: string;
@@ -61,6 +50,8 @@ function createTestDevice(name: string): TestDevice {
   };
 }
 
+// ─── Unit tests ───────────────────────────────────────────
+
 test('unit: buildTransferSourceManifest builds a valid manifest from files', async () => {
   const tempDir = join(tmpdir(), `nt-unit-manifest-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
@@ -80,10 +71,8 @@ test('unit: buildTransferSourceManifest builds a valid manifest from files', asy
     assert.equal(sm.files[0]!.sha256, expectedSha, 'SHA-256 must match');
     assert.equal(sm.manifest.totalFiles, 1);
     assert.equal(sm.manifest.totalBytes, content.length);
-    // Manifest must be normalizable (passes strict validation)
     const normalized = normalizeTransferManifest(sm.manifest);
     assert.equal(normalized.taskId, sm.manifest.taskId);
-    // Serialization must produce canonical JSON
     const serialized = serializeTransferManifest(sm.manifest);
     assert.ok(serialized.includes('"taskId"'), 'Serialized manifest must contain taskId');
   } finally {
@@ -104,7 +93,6 @@ test('unit: device identities are consistent and distinct', () => {
   assert.ok(sender.encryptionPublicKey.includes('BEGIN PUBLIC KEY'), 'encryption key is PEM');
   assert.ok(sender.signingPrivateKey.includes('BEGIN PRIVATE KEY'), 'signing private key is PEM');
   assert.ok(sender.encryptionPrivateKey.includes('BEGIN PRIVATE KEY'), 'encryption private key is PEM');
-  // Re-deriving deviceId from the public key must match
   const reDerived = deriveDeviceId(sender.signingPublicKey);
   assert.equal(reDerived, sender.deviceId, 'deviceId must be consistent with signing public key');
 });
@@ -130,10 +118,8 @@ test('unit: multiple files produce correct manifest with total counts', async ()
     assert.equal(sm.files.length, 2, 'Must have two files');
     assert.equal(sm.manifest.totalFiles, 2);
     assert.equal(sm.manifest.totalBytes, 'content a'.length + 'content bb'.length);
-    // Entries must be sorted by path
     assert.equal(sm.manifest.entries[0]!.path, 'a.txt');
     assert.equal(sm.manifest.entries[1]!.path, 'b.txt');
-    // Each file's SHA-256 must match
     const hash1 = createHash('sha256').update('content a').digest('hex');
     const hash2 = createHash('sha256').update('content bb').digest('hex');
     assert.equal(sm.files[0]!.sha256, hash1);
@@ -144,12 +130,10 @@ test('unit: multiple files produce correct manifest with total counts', async ()
 });
 
 test('unit: createTransferReceiver input validation rejects bad parameters', async () => {
-  const { createTransferReceiver } = await import('@luo-5/core');
   const tempDir = join(tmpdir(), `nt-unit-recv-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
   const device = createTestDevice('test');
 
-  // Missing socket
   await assert.rejects(() => createTransferReceiver({
     socket: null as never,
     receiveDir: tempDir,
@@ -159,7 +143,6 @@ test('unit: createTransferReceiver input validation rejects bad parameters', asy
     lookupPeer: () => null,
   }), /socket/i);
 
-  // Missing receiveDir (valid socket mock to reach the receiveDir check)
   await assert.rejects(() => createTransferReceiver({
     socket: { write: () => {} } as never,
     receiveDir: '',
@@ -169,7 +152,6 @@ test('unit: createTransferReceiver input validation rejects bad parameters', asy
     lookupPeer: () => null,
   }), /receive directory/i);
 
-  // Invalid deviceId
   await assert.rejects(() => createTransferReceiver({
     socket: { write: () => {} } as never,
     receiveDir: tempDir,
@@ -179,7 +161,6 @@ test('unit: createTransferReceiver input validation rejects bad parameters', asy
     lookupPeer: () => null,
   }), /device ID/i);
 
-  // Missing lookupPeer
   await assert.rejects(() => createTransferReceiver({
     socket: { write: () => {} } as never,
     receiveDir: tempDir,
@@ -190,4 +171,163 @@ test('unit: createTransferReceiver input validation rejects bad parameters', asy
   }), /lookupPeer/i);
 
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+// ─── End-to-end transfer test ─────────────────────────────
+
+test('e2e: sender → receiver transfers a 256 KB file with correct SHA-256', async () => {
+  const sender = createTestDevice('sender');
+  const receiver = createTestDevice('receiver');
+
+  const tmpBase = join(tmpdir(), `nt-e2e-${Date.now()}`);
+  const sendDir = join(tmpBase, 'send');
+  const recvDir = join(tmpBase, 'recv');
+  mkdirSync(sendDir, { recursive: true });
+  mkdirSync(recvDir, { recursive: true });
+
+  const filePath = join(sendDir, 'test.bin');
+  const content = Buffer.alloc(256 * 1024);
+  randomFillSync(content);
+  writeFileSync(filePath, content);
+  const expectedHash = createHash('sha256').update(content).digest('hex');
+
+  try {
+    const sm = await buildTransferSourceManifest([filePath]);
+
+    const trustedPeers = new Map<string, { signingPublicKey: string; deviceName?: string }>([
+      [sender.deviceId, { signingPublicKey: sender.signingPublicKey, deviceName: sender.deviceName }],
+    ]);
+
+    const server = net.createServer((socket) => {
+      socket.setNoDelay(true);
+      createTransferReceiver({
+        socket,
+        receiveDir: recvDir,
+        localDeviceId: receiver.deviceId,
+        localSigningPrivateKey: receiver.signingPrivateKey,
+        localEncryptionPrivateKey: receiver.encryptionPrivateKey,
+        lookupPeer: (deviceId: string) => trustedPeers.get(deviceId) ?? null,
+      }).then((recv) => recv.done).then(() => socket.destroy()).catch(() => socket.destroy());
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as net.AddressInfo).port;
+
+    const controller = new AbortController();
+    const executor = await createDesktopTransferExecutor({
+      job: {
+        taskId: sm.manifest.taskId,
+        peerDeviceId: receiver.deviceId,
+        direction: JOB_DIRECTION.OUTGOING,
+        status: JOB_STATUS.TRANSFERRING,
+        manifest: sm.manifest,
+        sources: sm.files as never,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        errorMessage: null,
+        diagnosticCode: null,
+        files: [],
+        outgoingCheckpoint: null,
+        localDeviceId: sender.deviceId,
+        signingPrivateKey: sender.signingPrivateKey,
+        remoteSigningPublicKey: receiver.signingPublicKey,
+        remoteEncryptionPublicKey: receiver.encryptionPublicKey,
+        peer: { host: '127.0.0.1', port },
+      } as never,
+      checkpoint: null,
+      signal: controller.signal,
+      commitRemoteCheckpoint: () => ({}) as never,
+    });
+
+    await executor.done;
+    server.close();
+
+    const receivedPath = join(recvDir, 'test.bin');
+    const receivedContent = readFileSync(receivedPath);
+    const receivedHash = createHash('sha256').update(receivedContent).digest('hex');
+    assert.equal(receivedHash, expectedHash, 'Received file SHA-256 must match the original');
+  } finally {
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});
+
+test('e2e: multiple files transfer with correct sizes and hashes', async () => {
+  const sender = createTestDevice('sender');
+  const receiver = createTestDevice('receiver');
+
+  const tmpBase = join(tmpdir(), `nt-e2e-multi-${Date.now()}`);
+  const sendDir = join(tmpBase, 'send');
+  const recvDir = join(tmpBase, 'recv');
+  mkdirSync(sendDir, { recursive: true });
+  mkdirSync(recvDir, { recursive: true });
+
+  const fileA = join(sendDir, 'a.bin');
+  const fileB = join(sendDir, 'b.bin');
+  const contentA = Buffer.alloc(64 * 1024);
+  const contentB = Buffer.alloc(128 * 1024);
+  randomFillSync(contentA);
+  randomFillSync(contentB);
+  writeFileSync(fileA, contentA);
+  writeFileSync(fileB, contentB);
+  const hashA = createHash('sha256').update(contentA).digest('hex');
+  const hashB = createHash('sha256').update(contentB).digest('hex');
+
+  try {
+    const sm = await buildTransferSourceManifest([fileA, fileB]);
+
+    const trustedPeers = new Map<string, { signingPublicKey: string; deviceName?: string }>([
+      [sender.deviceId, { signingPublicKey: sender.signingPublicKey, deviceName: sender.deviceName }],
+    ]);
+
+    const server = net.createServer((socket) => {
+      socket.setNoDelay(true);
+      createTransferReceiver({
+        socket,
+        receiveDir: recvDir,
+        localDeviceId: receiver.deviceId,
+        localSigningPrivateKey: receiver.signingPrivateKey,
+        localEncryptionPrivateKey: receiver.encryptionPrivateKey,
+        lookupPeer: (deviceId: string) => trustedPeers.get(deviceId) ?? null,
+      }).then((recv) => recv.done).then(() => socket.destroy()).catch(() => socket.destroy());
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as net.AddressInfo).port;
+
+    const controller = new AbortController();
+    const executor = await createDesktopTransferExecutor({
+      job: {
+        taskId: sm.manifest.taskId,
+        peerDeviceId: receiver.deviceId,
+        direction: JOB_DIRECTION.OUTGOING,
+        status: JOB_STATUS.TRANSFERRING,
+        manifest: sm.manifest,
+        sources: sm.files as never,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        errorMessage: null,
+        diagnosticCode: null,
+        files: [],
+        outgoingCheckpoint: null,
+        localDeviceId: sender.deviceId,
+        signingPrivateKey: sender.signingPrivateKey,
+        remoteSigningPublicKey: receiver.signingPublicKey,
+        remoteEncryptionPublicKey: receiver.encryptionPublicKey,
+        peer: { host: '127.0.0.1', port },
+      } as never,
+      checkpoint: null,
+      signal: controller.signal,
+      commitRemoteCheckpoint: () => ({}) as never,
+    });
+
+    await executor.done;
+    server.close();
+
+    const recvA = readFileSync(join(recvDir, 'a.bin'));
+    const recvB = readFileSync(join(recvDir, 'b.bin'));
+    assert.equal(createHash('sha256').update(recvA).digest('hex'), hashA, 'File a SHA-256 mismatch');
+    assert.equal(createHash('sha256').update(recvB).digest('hex'), hashB, 'File b SHA-256 mismatch');
+  } finally {
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
 });

@@ -58,8 +58,8 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
   const config = normalizeReceiverInput(input);
 
   // Phase 1: receive the manifest envelope wire frame
-  const manifestFrame = await receiveWireFrame(config.socket, DEFAULT_BOOTSTRAP_TIMEOUT_MS);
-  const envelope = decodeTransferMessage(TYPE_TRANSFER_MANIFEST, manifestFrame.payload, { now: Date.now() }) as Record<string, unknown>;
+  const manifestResult = await receiveWireFrame(config.socket, DEFAULT_BOOTSTRAP_TIMEOUT_MS);
+  const envelope = decodeTransferMessage(TYPE_TRANSFER_MANIFEST, manifestResult.frame.payload, { now: Date.now() }) as Record<string, unknown>;
 
   // Look up the sender's trusted peer to get the signing public key
   const senderDeviceId = envelope.senderDeviceId as string;
@@ -135,6 +135,7 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
     taskId: manifest.taskId,
     localPeerId: config.localDeviceId,
     remotePeerId: senderDeviceId,
+    ...(manifestResult.leftover ? { initialBuffer: manifestResult.leftover } : {}),
     encodeControl: (message, _ctx) => codec.encodeControl(message),
     decodeControl: (bytes, _ctx) => codec.decodeControl(bytes),
     verifyControl: (decoded, _ctx) => codec.verifyControl(decoded),
@@ -200,7 +201,7 @@ function rawX25519ToPem(rawBase64Url: string): string {
   return `-----BEGIN PUBLIC KEY-----\n${b64.match(/.{1,64}/g)!.join('\n')}\n-----END PUBLIC KEY-----\n`;
 }
 
-async function receiveWireFrame(socket: import('node:net').Socket, timeoutMs: number): Promise<WireFrame> {
+async function receiveWireFrame(socket: import('node:net').Socket, timeoutMs: number): Promise<{ frame: WireFrame; leftover: Buffer | undefined }> {
   return new Promise((resolve, reject) => {
     const decoder = new WireFrameDecoder();
     const timer = setTimeout(() => {
@@ -218,7 +219,10 @@ async function receiveWireFrame(socket: import('node:net').Socket, timeoutMs: nu
           socket.removeListener('data', onData);
           socket.removeListener('error', onError);
           socket.removeListener('close', onClose);
-          resolve(frames[0]!);
+          resolve({
+            frame: frames[0]!,
+            leftover: decoder.buffer.length > 0 ? Buffer.from(decoder.buffer) : undefined,
+          });
         }
       } catch (error) {
         clearTimeout(timer);

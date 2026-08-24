@@ -107,6 +107,7 @@ export async function createDesktopTransferExecutor(input: ExecutorInput): Promi
     taskId: config.job.manifest.taskId,
     localPeerId: config.localDeviceId,
     remotePeerId: config.job.peerDeviceId,
+    ...(bootstrapResult.leftoverData ? { initialBuffer: bootstrapResult.leftoverData } : {}),
     encodeControl: (message, _ctx) => codec.encodeControl(message),
     decodeControl: (bytes, _ctx) => codec.decodeControl(bytes),
     verifyControl: (decoded, _ctx) => codec.verifyControl(decoded),
@@ -115,10 +116,11 @@ export async function createDesktopTransferExecutor(input: ExecutorInput): Promi
       const decOpts: { now: number; checkpoint?: ControlCheckpoint } = { now: Date.now() };
       if (controlCheckpoint) decOpts.checkpoint = controlCheckpoint;
       const decoded = decodeTransferMessage(TYPE_TRANSFER_PROGRESS, bytes, decOpts);
-      const advOpts: { now: number; checkpoint?: ControlCheckpoint } = { now: Date.now() };
-      if (controlCheckpoint) advOpts.checkpoint = controlCheckpoint;
-      controlCheckpoint = advanceTransferControlCheckpoint(TYPE_TRANSFER_PROGRESS, decoded as Record<string, unknown>, advOpts);
-      config.commitRemoteCheckpoint(buildOutgoingCheckpoint(controlCheckpoint!));
+      if (controlCheckpoint) {
+        const advOpts: { now: number; checkpoint: ControlCheckpoint } = { now: Date.now(), checkpoint: controlCheckpoint };
+        controlCheckpoint = advanceTransferControlCheckpoint(TYPE_TRANSFER_PROGRESS, decoded as Record<string, unknown>, advOpts);
+        config.commitRemoteCheckpoint(buildOutgoingCheckpoint(controlCheckpoint));
+      }
       return decoded;
     },
     commitProgress: async (_decoded, _chunk) => {},

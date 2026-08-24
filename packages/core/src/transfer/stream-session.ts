@@ -75,6 +75,7 @@ export interface TransferStreamSessionInput {
   commitProgress: (decoded: unknown, chunk: unknown) => void | Promise<void>;
   chunkReader?: ChunkReaderLike;
   chunkWriter?: ChunkWriterLike;
+  initialBuffer?: Buffer;
   signal?: AbortSignal | null;
   handshakeTimeoutMs?: number;
   idleTimeoutMs?: number;
@@ -244,7 +245,7 @@ export function createTransferStreamSession(input: TransferStreamSessionInput): 
 
   async function handleProgress(payload: Buffer): Promise<void> {
     if (config.role !== 'sender') throw new Error('Receiver received progress');
-    if (state !== 'sending') throw new Error(`Progress out of order for state ${state}`);
+    if (state !== 'sending' && state !== 'awaiting-ack') throw new Error(`Progress out of order for state ${state}`);
     const decoded = await config.decodeProgress(Buffer.from(payload), { operation: 'decode' });
     await config.commitProgress(decoded, null);
   }
@@ -303,6 +304,9 @@ export function createTransferStreamSession(input: TransferStreamSessionInput): 
     config.stream.once('close', onClose);
     config.stream.once('end', onEnd);
     armTimeout('handshake', config.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS);
+    if (config.initialBuffer && config.initialBuffer.length > 0) {
+      void onData(Buffer.from(config.initialBuffer));
+    }
     config.stream.resume();
     void sendControl(CONTROL_TYPES.HELLO).catch((error) => fail(error as Error, 'transfer-error'));
     return done;
