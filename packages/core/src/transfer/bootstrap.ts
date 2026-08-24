@@ -12,7 +12,7 @@ import { Buffer } from 'node:buffer';
 import { APP_ID, MESSAGE_TYPES, PROTOCOL_VERSION } from '../constants.js';
 import { normalizeTransferManifest, serializeTransferManifest, type TransferManifest } from './manifest.js';
 import {
-  MAX_MESSAGE_TTL_MS, MAX_TRANSFER_MESSAGE_BYTES, assertValidSessionId,
+  MAX_MESSAGE_TTL_MS, MAX_TRANSFER_MESSAGE_BYTES, assertValidSessionId, assertValidEphemeralKey,
   TYPE_TRANSFER_DECISION, TYPE_TRANSFER_MANIFEST, TYPE_TRANSFER_RESUME,
   advanceTransferControlCheckpoint, decodeTransferMessage, encodeTransferMessage,
   type ControlCheckpoint,
@@ -87,7 +87,7 @@ function normalizeInput(input: BootstrapInput): BootstrapConfig {
   if (input.localDeviceId === input.remoteDeviceId) throw new TypeError('Device IDs must differ');
   if (typeof input.signingPrivateKey !== 'string') throw new TypeError('Signing private key is required');
   if (typeof input.remoteSigningPublicKey !== 'string') throw new TypeError('Remote signing public key is required');
-  assertValidSessionId(input.senderEphemeralPublicKey);
+  assertValidEphemeralKey(input.senderEphemeralPublicKey);
   assertValidSessionId(input.sessionId);
   const ttlMs = input.ttlMs ?? DEFAULT_TTL_MS;
   if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_MESSAGE_TTL_MS) throw new RangeError('TTL is out of range');
@@ -121,22 +121,34 @@ function exchangeBootstrapFrames(config: BootstrapConfig, requestFrame: Buffer):
     let resume: unknown = null;
     let checkpoint: ControlCheckpoint | null = null;
     let controlCheckpoint: ControlCheckpoint | null = null;
-    const chunks: Buffer[] = [];
+    let buffer = Buffer.alloc(0);
 
     const timer = setTimeout(() => fail(new Error(`Transfer bootstrap timed out after ${config.timeoutMs} milliseconds`)), config.timeoutMs);
+
+    function unshiftRemaining(): void {
+      // Push any buffered data (e.g. MUX frames) back to the socket so the
+      // stream session can receive it after the bootstrap hands off.
+      const stream = config.stream as unknown as { unshift?: (data: Buffer) => void };
+      if (buffer.length > 0 && typeof stream.unshift === 'function') {
+        stream.unshift(buffer);
+        buffer = Buffer.alloc(0);
+      }
+    }
 
     function cleanup(): void {
       clearTimeout(timer);
       config.stream.removeListener('data', onData);
       config.stream.removeListener('error', onError);
       config.stream.removeListener('close', onClose);
-      if (!config.stream.destroyed) config.stream.pause();
+      // Do NOT pause — let Node.js auto-pause when the 'data' listener is
+      // removed. The stream session will resume() when it takes ownership.
     }
 
     function succeed(): void {
       if (settled) return;
       settled = true;
       cleanup();
+      unshiftRemaining();
       resolve({ decision: decision!, resume, checkpoint: controlCheckpoint });
     }
 
@@ -149,15 +161,35 @@ function exchangeBootstrapFrames(config: BootstrapConfig, requestFrame: Buffer):
     }
 
     function onData(chunk: Buffer): void {
-      chunks.push(chunk);
-      const combined = Buffer.concat(chunks);
-      chunks.length = 0;
-      if (combined.length > MAX_BOOTSTRAP_FRAME_BODY_BYTES * 2) { fail(new Error('Bootstrap input exceeds the accepted limit')); return; }
-      try {
-        const frame = decodeWireFrame(combined);
-        processFrame(frame.header.type, frame.payload);
-      } catch (error) {
-        if (!settled) fail(error as Error);
+      if (settled) return;
+      buffer = buffer.length === 0 ? Buffer.from(chunk) : Buffer.concat([buffer, chunk]);
+      if (buffer.length > MAX_BOOTSTRAP_FRAME_BODY_BYTES * 2) { fail(new Error('Bootstrap input exceeds the accepted limit')); return; }
+
+      // Try to decode wire frames from the accumulated buffer
+      while (buffer.length >= FRAME_LENGTH_BYTES) {
+        const frameLength = buffer.readUInt32BE(0);
+
+        // If the frame length is invalid, this is likely trailing MUX data
+        if (!Number.isSafeInteger(frameLength) || frameLength < HEADER_LENGTH_BYTES || frameLength > MAX_FRAME_SIZE) {
+          if (decision !== null) { succeed(); return; }
+          if (!settled) fail(new RangeError(`Wire frame length must be between ${HEADER_LENGTH_BYTES} and ${MAX_FRAME_SIZE} bytes`));
+          return;
+        }
+
+        const totalLength = FRAME_LENGTH_BYTES + frameLength;
+        if (buffer.length < totalLength) break; // wait for more data
+
+        try {
+          const frame = decodeWireFrame(buffer.subarray(0, totalLength));
+          buffer = Buffer.from(buffer.subarray(totalLength));
+          processFrame(frame.header.type, frame.payload);
+        } catch (error) {
+          if (!settled) fail(error as Error);
+          return;
+        }
+
+        // After processing a frame, if we've settled (succeeded), push remaining data back
+        if (settled) { succeed(); return; }
       }
     }
 

@@ -52,7 +52,8 @@ export interface DesktopTransferExecutor {
 export async function createDesktopTransferExecutor(input: ExecutorInput): Promise<DesktopTransferExecutor> {
   const config = normalizeInput(input);
   const socket = await connectToPeer(config);
-  const ephemeralKey = crypto.generateKeyPairSync('x25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+  const ephemeralKeyPair = crypto.generateKeyPairSync('x25519', { publicKeyEncoding: { type: 'spki', format: 'der' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+  const senderEphemeralPublicKey = ephemeralKeyPair.publicKey.subarray(12).toString('base64url');
 
   const bootstrapResult = await bootstrapOutgoingTransfer({
     stream: socket as unknown as Parameters<typeof bootstrapOutgoingTransfer>[0]['stream'],
@@ -61,7 +62,7 @@ export async function createDesktopTransferExecutor(input: ExecutorInput): Promi
     remoteDeviceId: config.job.peerDeviceId,
     signingPrivateKey: config.signingPrivateKey,
     remoteSigningPublicKey: config.remoteSigningPublicKey,
-    senderEphemeralPublicKey: ephemeralKey.publicKey,
+    senderEphemeralPublicKey,
     sessionId: config.sessionId,
     ttlMs: config.timeouts.controlTtlMs,
     timeoutMs: config.timeouts.bootstrapMs,
@@ -74,7 +75,7 @@ export async function createDesktopTransferExecutor(input: ExecutorInput): Promi
 
   const manifestHash = crypto.createHash('sha256').update(serializeTransferManifest(config.job.manifest)).digest('hex');
   const sessionKey = deriveSessionKey({
-    localPrivateKeyPem: ephemeralKey.privateKey,
+    localPrivateKeyPem: ephemeralKeyPair.privateKey,
     remotePublicKeyPem: config.remoteEncryptionPublicKey,
     senderDeviceId: config.localDeviceId,
     receiverDeviceId: config.job.peerDeviceId,

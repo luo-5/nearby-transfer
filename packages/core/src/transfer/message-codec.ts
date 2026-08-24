@@ -123,6 +123,10 @@ export function assertValidSessionId(value: unknown): void {
   assertCanonicalBase64Url(value, SESSION_ID_BYTES, 'Transfer session ID');
 }
 
+export function assertValidEphemeralKey(value: unknown): void {
+  assertCanonicalBase64Url(value, 32, 'Sender ephemeral public key');
+}
+
 export function advanceTransferControlCheckpoint(type: string, message: Record<string, unknown>, options: TransferMessageOptions = {}): ControlCheckpoint {
   if (type !== TYPE_TRANSFER_RESUME && type !== TYPE_TRANSFER_PROGRESS) {
     throw new TypeError('Only transfer resume and progress messages can advance a control checkpoint');
