@@ -42,7 +42,7 @@ function testCanonicalJson() {
     '{"alpha":{"first":1,"second":2},"zebra":[true,null,"你好"]}'
   );
   assert.throws(() => canonicalJson({ decimal: 1.5 }), /safe integer/);
-  assert.throws(() => canonicalJson({ missing: undefined }), /unsupported type/);
+  assert.throws(() => canonicalJson({ missing: undefined }), /undefined/i);
   assert.throws(() => canonicalJson({ malformed: '\ud800' }), /unpaired surrogate/);
 }
 

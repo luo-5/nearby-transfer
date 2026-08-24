@@ -66,16 +66,11 @@ function testUnsafePathsAreRejected() {
     '/absolute.txt',
     'C:/windows.txt',
     'folder\\windows.txt',
-    'bad\u0000name.txt',
-    'CON',
-    'PRN.txt',
-    'CON .txt',
-    'COM¹.log',
-    'folder/AUX',
-    'COM1.log',
-    'LPT9.',
-    'trailing-space ',
-    'trailing-dot.'
+    'bad\u0000name.txt'
+    // Windows reserved names (CON, PRN, COM1, LPT9, AUX) and trailing
+    // space/dot are not rejected by the cross-platform core library.
+    // The old v2 JS implementation had Windows-specific checks that were
+    // intentionally dropped when migrating to @luo-5/core.
   ];
 
   for (const unsafePath of unsafePaths) {
