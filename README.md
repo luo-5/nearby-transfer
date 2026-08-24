@@ -98,6 +98,21 @@ working directory to another computer, see
 For a one-page path index covering the handoff, UI, Android, desktop, protocol,
 and test entry points, see [`HANDOFF.md`](HANDOFF.md).
 
+## Protocol Specification · 协议规范
+
+The complete v2 protocol specification — covering device identity (Ed25519),
+UDP multicast discovery, 6-digit SAS pairing, resumable encrypted transfer
+(X25519 ECDH + AES-256-GCM), signed stream control, and stream multiplexing —
+is in [`docs/protocol/v2-spec.md`](docs/protocol/v2-spec.md). The source of truth
+lives in [`packages/protocol-spec/v2-spec.md`](packages/protocol-spec/v2-spec.md).
+
+Deterministic test vectors (identity, session key, chunk encryption, SAS pairing
+code, canonical JSON, wire frame, chunk frame, discovery/pairing signatures,
+manifest serialization) are in
+[`packages/core/test/vectors/`](packages/core/test/vectors/) and verified by
+`npm run test:core`. Regenerate them with
+`npx tsx packages/core/scripts/generate-all-vectors.ts`.
+
 ## Build Linux Packages
 
 ```bash
