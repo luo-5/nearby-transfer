@@ -1,0 +1,49 @@
+{
+  "name": "@luo-5/localsend-adapter",
+  "version": "0.1.0",
+  "description": "LocalSend protocol interop adapter for Nearby Transfer.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Nearby Transfer Contributors",
+  "homepage": "https://github.com/luo-5/nearby-transfer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luo-5/nearby-transfer.git",
+    "directory": "packages/localsend-adapter"
+  },
+  "bugs": {
+    "url": "https://github.com/luo-5/nearby-transfer/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@luo-5/core": "^0.1.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.2"
+  }
+}
