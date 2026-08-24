@@ -18,11 +18,13 @@ import { receiveCommand } from './commands/receive.js';
 import { devicesCommand } from './commands/devices.js';
 import { pairCommand } from './commands/pair.js';
 import { trustCommand } from './commands/trust.js';
+import { syncCommand } from './commands/sync.js';
 
 const HELP = `Nearby Transfer CLI — encrypted LAN file transfer
 
 Usage:
   nearby-transfer send <file...> --to <device-id|ip>   Send files to a device
+  nearby-transfer sync --dir <directory> --to <device-id|ip>  Sync a directory
   nearby-transfer receive --dir <directory>             Start receiving files
   nearby-transfer devices                               List discovered devices
   nearby-transfer pair --to <device-id|ip>              Pair with a device
@@ -57,6 +59,9 @@ export async function main(argv: string[]): Promise<void> {
     switch (command) {
       case 'send':
         await sendCommand(rest);
+        break;
+      case 'sync':
+        await syncCommand(rest);
         break;
       case 'receive':
         await receiveCommand(rest);
