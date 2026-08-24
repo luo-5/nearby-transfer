@@ -1,0 +1,9 @@
+{
+  "name": "@luo-5/protocol-spec",
+  "version": "0.1.0",
+  "description": "Nearby Transfer v2 protocol specification and deterministic test vectors. Pure documentation package — not published to npm.",
+  "private": true,
+  "license": "MIT",
+  "author": "Nearby Transfer Contributors",
+  "homepage": "https://github.com/luo-5/nearby-transfer#readme"
+}
