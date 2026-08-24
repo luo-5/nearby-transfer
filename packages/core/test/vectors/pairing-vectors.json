@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-24T10:42:23.690Z",
+  "pairingCode": {
+    "description": "SAS 6-digit pairing code derived from a transcript binding pairingId + both identities",
+    "pairingId": "obLD1OX2BxgBAjRWeJq80A",
+    "initiator": {
+      "deviceId": "45c50cb5ae48c0f6",
+      "deviceName": "Alice-Phone",
+      "fingerprint": "45C5-0CB5-AE48-C0F6-CA53-6FCB",
+      "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\n-----END PUBLIC KEY-----\n",
+      "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\n-----END PUBLIC KEY-----\n"
+    },
+    "responder": {
+      "deviceId": "a2bf86faa1298f7a",
+      "deviceName": "Bob-Laptop",
+      "fingerprint": "A2BF-86FA-A129-8F7A-B5DC-95AC",
+      "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAKay64UG8yvCyLhqU000LxzYeUm0L/hLIl5S8kyKWbdc=\n-----END PUBLIC KEY-----\n",
+      "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEANYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ=\n-----END PUBLIC KEY-----\n"
+    },
+    "pairingCode": "543440",
+    "transcript": "{\"app\":\"nearby-transfer\",\"initiator\":{\"deviceId\":\"45c50cb5ae48c0f6\",\"deviceName\":\"Alice-Phone\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"45C5-0CB5-AE48-C0F6-CA53-6FCB\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\\n-----END PUBLIC KEY-----\\n\"},\"pairingId\":\"obLD1OX2BxgBAjRWeJq80A\",\"protocolVersion\":2,\"responder\":{\"deviceId\":\"a2bf86faa1298f7a\",\"deviceName\":\"Bob-Laptop\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEANYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"A2BF-86FA-A129-8F7A-B5DC-95AC\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAKay64UG8yvCyLhqU000LxzYeUm0L/hLIl5S8kyKWbdc=\\n-----END PUBLIC KEY-----\\n\"},\"type\":\"pairing-code\"}"
+  },
+  "pairingOfferSignature": {
+    "description": "Ed25519 signature over a canonical-JSON pairing offer",
+    "offer": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "type": "pairing-offer",
+      "pairingId": "obLD1OX2BxgBAjRWeJq80A",
+      "issuedAt": 1700000000000,
+      "identity": {
+        "deviceId": "45c50cb5ae48c0f6",
+        "deviceName": "Alice-Phone",
+        "fingerprint": "45C5-0CB5-AE48-C0F6-CA53-6FCB",
+        "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\n-----END PUBLIC KEY-----\n",
+        "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\n-----END PUBLIC KEY-----\n"
+      },
+      "capabilities": [
+        "library-server"
+      ]
+    },
+    "signature": "M4wrVi5J3fi+tVXskSWDar5Hy6uFAGZ0rAirB2RqJSP3JdovSV/zr6wo+i7lpIZPiqe6SaspKGz3OH1+wpGNBw==",
+    "signingPayload": "{\"app\":\"nearby-transfer\",\"capabilities\":[\"library-server\"],\"identity\":{\"deviceId\":\"45c50cb5ae48c0f6\",\"deviceName\":\"Alice-Phone\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"45C5-0CB5-AE48-C0F6-CA53-6FCB\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\\n-----END PUBLIC KEY-----\\n\"},\"issuedAt\":1700000000000,\"pairingId\":\"obLD1OX2BxgBAjRWeJq80A\",\"protocolVersion\":2,\"type\":\"pairing-offer\"}"
+  }
+}

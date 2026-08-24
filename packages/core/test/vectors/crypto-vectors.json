@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "generatedAt": "2026-08-23T15:40:18.297Z",
+  "generatedAt": "2026-08-24T10:42:23.689Z",
   "identity": {
     "description": "Ed25519 device identity derived from a fixed 32-byte seed",
     "ed25519SeedHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
-    "signingPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\n-----END PUBLIC KEY-----\n",
-    "deviceId": "2de85d680df6c75a",
-    "fingerprint": "2DE8-5D68-0DF6-C75A-D1DE-8429"
+    "signingPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\n-----END PUBLIC KEY-----\n",
+    "signingPrivateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g\n-----END PRIVATE KEY-----\n",
+    "deviceId": "45c50cb5ae48c0f6",
+    "fingerprint": "45C5-0CB5-AE48-C0F6-CA53-6FCB"
   },
   "sessionKey": {
     "description": "X25519 ECDH + HKDF-SHA256 session key, Alice→Bob",
@@ -23,7 +24,7 @@
     "sessionKeyHex": "519bb6fe0ff3d750e58a2922d95ae67b462fa9e8bb132d3098360ee2286d6a56"
   },
   "chunkEncryption": {
-    "description": "AES-256-GCM chunk encryption with position-bound AAD",
+    "description": "AES-256-GCM chunk encryption with position-bound AAD (fixed nonce for reproducibility)",
     "sessionKeyHex": "519bb6fe0ff3d750e58a2922d95ae67b462fa9e8bb132d3098360ee2286d6a56",
     "taskId": "de3U6QplW7_X2w7pwGDibA",
     "path": "docs/readme.md",
@@ -31,6 +32,7 @@
     "sequence": 0,
     "plaintextHex": "4e6561726279205472616e736665722076322074657374206368756e6b207061796c6f6164",
     "plaintextUtf8": "Nearby Transfer v2 test chunk payload",
+    "aadHex": "0000001f6e65617262792d7472616e736665722f76322f66696c652d636f6e74656e74000000096368756e6b2d61616400000016646533553651706c57375f58327737707747446962410000000e646f63732f726561646d652e6d640000000000000000000000000000000000000025",
     "nonceHex": "0da74c42e775b447dc062554",
     "ciphertextHex": "e4c88ba57781779f51c1360b4c2f966f4af48465c219e2185e133151543f44018aa2e2320f",
     "authTagHex": "524cdfb877a00854a40951f46d1baa0c"
