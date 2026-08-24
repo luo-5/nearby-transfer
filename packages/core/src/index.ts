@@ -15,6 +15,7 @@ export * from './types.js';
 export * from './crypto/identity.js';
 export * from './crypto/session.js';
 export * from './crypto/chunk.js';
+export * from './crypto/timing-safe-compare.js';
 export * from './discovery/multicast-interfaces.js';
 export * from './discovery/index.js';
 export * from './pairing/identity-shape.js';
