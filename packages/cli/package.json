@@ -1,0 +1,40 @@
+{
+  "name": "@luo-5/cli",
+  "version": "0.1.0",
+  "description": "Command-line encrypted file transfer for nearby devices on the LAN.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Nearby Transfer Contributors",
+  "homepage": "https://github.com/luo-5/nearby-transfer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luo-5/nearby-transfer.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/luo-5/nearby-transfer/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "nearby-transfer": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@luo-5/core": "^0.1.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.2"
+  }
+}
