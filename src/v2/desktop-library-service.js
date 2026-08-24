@@ -349,9 +349,10 @@ class DesktopLibraryService {
 
     if (method === 'OPTIONS') {
       res.writeHead(200, {
-        'DAV': '1, 2',
-        'Allow': 'OPTIONS, GET, HEAD, PROPFIND, PUT',
-        'MS-Author-Via': 'DAV'
+        'DAV': '1',
+        'Allow': 'OPTIONS, GET, HEAD, PROPFIND, PUT, DELETE, MKCOL, COPY, MOVE',
+        'MS-Author-Via': 'DAV',
+        'DAV-compliance': '1'
       });
       res.end();
       return;
@@ -405,7 +406,7 @@ class DesktopLibraryService {
             isDirectory: entry.isDirectory(),
             size: s.size,
             mtime: s.mtimeMs,
-            downloadUrl: `/webdav/${encodeURIComponent(shareId)}/${subPath ? encodeURIComponent(subPath) + '/' : ''}${encodeURIComponent(entry.name)}`
+            downloadUrl: `/webdav/${encodeURIComponent(shareId)}/${subPath ? subPath.split('/').map(encodeURIComponent).join('/') + '/' : ''}${encodeURIComponent(entry.name)}`
           };
         } catch (_e) {
           return null;
@@ -426,7 +427,7 @@ class DesktopLibraryService {
     // Root list of shares
     if (pathname === '/' || pathname === '') {
       if (method === 'PROPFIND') {
-        return this._handleRootPropfind(res);
+        return this._handleRootPropfind(req, res);
       } else if (method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ shares: this.listShares() }));
@@ -468,7 +469,7 @@ class DesktopLibraryService {
 
     switch (method) {
       case 'PROPFIND':
-        return this._handlePropfind(targetPath, shareId, subPath, res);
+        return this._handlePropfind(req, targetPath, shareId, subPath, res);
       case 'GET':
       case 'HEAD':
         return this._handleGet(targetPath, method === 'HEAD', res);
@@ -478,26 +479,41 @@ class DesktopLibraryService {
         return this._handleMkcol(targetPath, share, session, res);
       case 'DELETE':
         return this._handleDelete(targetPath, share, session, res);
+      case 'COPY':
+        return this._handleCopy(targetPath, share, session, req, res);
+      case 'MOVE':
+        return this._handleMove(targetPath, share, session, req, res);
       default:
-        res.writeHead(405, { 'Allow': 'PROPFIND, GET, HEAD, PUT, MKCOL, DELETE, OPTIONS' });
+        res.writeHead(405, { 'Allow': 'OPTIONS, GET, HEAD, PROPFIND, PUT, DELETE, MKCOL, COPY, MOVE' });
         res.end(JSON.stringify({ error: `Method ${method} not permitted` }));
         return;
     }
   }
 
-  _handleRootPropfind(res) {
-    const xmlItems = this.listShares().map((s) => `
+  _handleRootPropfind(req, res) {
+    const depth = (req.headers['depth'] || '1').toString();
+    const xmlItems = depth === '0' ? '' : this.listShares().map((s) => {
+      const sStat = { size: 0, mtime: new Date(0) };
+      try {
+        const real = fs.realpathSync(this.shares.get(s.id).localPath);
+        Object.assign(sStat, fs.statSync(real));
+      } catch (_) {}
+      return `
       <D:response>
         <D:href>/${encodeURIComponent(s.id)}/</D:href>
         <D:propstat>
           <D:prop>
             <D:displayname>${escapeXml(s.name)}</D:displayname>
+            <D:getcontentlength>${sStat.size}</D:getcontentlength>
+            <D:getlastmodified>${sStat.mtime.toUTCString()}</D:getlastmodified>
+            <D:getetag>"${sStat.mtimeMs}-${sStat.size}"</D:getetag>
             <D:resourcetype><D:collection/></D:resourcetype>
           </D:prop>
           <D:status>HTTP/1.1 200 OK</D:status>
         </D:propstat>
       </D:response>
-    `).join('');
+    `;
+    }).join('');
 
     const xml = `<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:">
@@ -505,6 +521,9 @@ class DesktopLibraryService {
     <D:href>/</D:href>
     <D:propstat>
       <D:prop>
+        <D:displayname>root</D:displayname>
+        <D:getcontentlength>0</D:getcontentlength>
+        <D:getlastmodified>${new Date().toUTCString()}</D:getlastmodified>
         <D:resourcetype><D:collection/></D:resourcetype>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -517,7 +536,7 @@ class DesktopLibraryService {
     res.end(xml);
   }
 
-  _handlePropfind(targetPath, shareId, subPath, res) {
+  _handlePropfind(req, targetPath, shareId, subPath, res) {
     const share = this.shares.get(shareId);
     if (!share) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -531,12 +550,15 @@ class DesktopLibraryService {
       return;
     }
 
+    const depth = (req.headers['depth'] || '1').toString();
     const stat = fs.statSync(targetPath);
     const isDir = stat.isDirectory();
-    const hrefPrefix = `/${encodeURIComponent(shareId)}/${subPath ? encodeURIComponent(subPath) : ''}`;
+    // Encode each subPath segment individually so nested/Unicode paths round-trip
+    const encodedSubPath = subPath ? subPath.split('/').map(encodeURIComponent).join('/') : '';
+    const hrefPrefix = `/${encodeURIComponent(shareId)}/${encodedSubPath}`;
 
     let childrenXml = '';
-    if (isDir) {
+    if (isDir && depth !== '0') {
       const entries = fs.readdirSync(targetPath, { withFileTypes: true });
       childrenXml = entries.map((entry) => {
         const entryPath = path.join(targetPath, entry.name);
@@ -546,7 +568,7 @@ class DesktopLibraryService {
             return '';
           }
           const entryStat = fs.statSync(entryPath);
-          const childHref = `/${encodeURIComponent(shareId)}/${subPath ? subPath + '/' : ''}${encodeURIComponent(entry.name)}${entryStat.isDirectory() ? '/' : ''}`;
+          const childHref = `/${encodeURIComponent(shareId)}/${encodedSubPath ? encodedSubPath + '/' : ''}${encodeURIComponent(entry.name)}${entryStat.isDirectory() ? '/' : ''}`;
           return `
             <D:response>
               <D:href>${childHref}</D:href>
@@ -555,6 +577,7 @@ class DesktopLibraryService {
                   <D:displayname>${escapeXml(entry.name)}</D:displayname>
                   <D:getcontentlength>${entryStat.size}</D:getcontentlength>
                   <D:getlastmodified>${entryStat.mtime.toUTCString()}</D:getlastmodified>
+                  <D:getetag>"${entryStat.mtimeMs}-${entryStat.size}"</D:getetag>
                   <D:resourcetype>${entryStat.isDirectory() ? '<D:collection/>' : ''}</D:resourcetype>
                 </D:prop>
                 <D:status>HTTP/1.1 200 OK</D:status>
@@ -573,8 +596,10 @@ class DesktopLibraryService {
     <D:href>${hrefPrefix}${isDir && !hrefPrefix.endsWith('/') ? '/' : ''}</D:href>
     <D:propstat>
       <D:prop>
+        <D:displayname>${escapeXml(path.basename(targetPath) || shareId)}</D:displayname>
         <D:getcontentlength>${stat.size}</D:getcontentlength>
         <D:getlastmodified>${stat.mtime.toUTCString()}</D:getlastmodified>
+        <D:getetag>"${stat.mtimeMs}-${stat.size}"</D:getetag>
         <D:resourcetype>${isDir ? '<D:collection/>' : ''}</D:resourcetype>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -622,6 +647,8 @@ class DesktopLibraryService {
     res.writeHead(200, {
       'Content-Length': stat.size,
       'Last-Modified': stat.mtime.toUTCString(),
+      'Accept-Ranges': 'bytes',
+      'ETag': `"${stat.mtimeMs}-${stat.size}"`,
       'Content-Type': 'application/octet-stream'
     });
 
@@ -778,6 +805,121 @@ class DesktopLibraryService {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: `Failed to delete resource: ${err.message}` }));
+    }
+  }
+
+  _resolveDestination(req, share) {
+    const destination = req.headers['destination'];
+    if (!destination) return null;
+    let destUrl;
+    try { destUrl = new URL(destination, 'http://127.0.0.1'); } catch { return null; }
+    let destPathname = decodeURIComponent(destUrl.pathname || '/');
+    if (destPathname.startsWith('/webdav/')) destPathname = destPathname.slice(7);
+    else if (destPathname === '/webdav') destPathname = '/';
+    const parts = destPathname.slice(1).split('/');
+    const destShareId = parts[0];
+    const destSubPath = parts.slice(1).join('/');
+    const destShare = this.shares.get(destShareId);
+    if (!destShare) return { error: 'Destination share not found', status: 404 };
+    if (destShare !== share) return { error: 'Cross-share copy/move is not supported', status: 403 };
+    const destPath = path.resolve(destShare.localPath, destSubPath);
+    const relative = path.relative(destShare.localPath, destPath);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return { error: 'Path traversal forbidden', status: 403 };
+    if (!this._isPathWithinShare(destPath, destShare.localPath)) return { error: 'Path traversal forbidden: symlink escape detected', status: 403 };
+    return { destPath, destShare };
+  }
+
+  _handleCopy(targetPath, share, session, req, res) {
+    if (share.readOnly) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: Share is read-only' }));
+      return;
+    }
+    if (!session.permissions || !session.permissions.libraryUpload) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: Peer lacks libraryUpload permission' }));
+      return;
+    }
+    if (!fs.existsSync(targetPath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Source resource not found' }));
+      return;
+    }
+    const dest = this._resolveDestination(req, share);
+    if (!dest) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Destination header is required for COPY' }));
+      return;
+    }
+    if (dest.error) {
+      res.writeHead(dest.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: dest.error }));
+      return;
+    }
+    const { destPath } = dest;
+    const overwrite = (req.headers['overwrite'] || 'T').toUpperCase();
+    if (overwrite === 'F' && fs.existsSync(destPath)) {
+      res.writeHead(412, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Precondition Failed: Destination exists and Overwrite is F' }));
+      return;
+    }
+    try {
+      fs.cpSync(targetPath, destPath, { recursive: true, force: true });
+      res.writeHead(fs.existsSync(destPath) && overwrite === 'T' ? 204 : 201, { 'Content-Type': 'application/json' });
+      res.end();
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to copy resource: ${err.message}` }));
+    }
+  }
+
+  _handleMove(targetPath, share, session, req, res) {
+    if (share.readOnly) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: Share is read-only' }));
+      return;
+    }
+    if (!session.permissions || !session.permissions.libraryUpload) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: Peer lacks libraryUpload permission' }));
+      return;
+    }
+    if (!fs.existsSync(targetPath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Source resource not found' }));
+      return;
+    }
+    const dest = this._resolveDestination(req, share);
+    if (!dest) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Destination header is required for MOVE' }));
+      return;
+    }
+    if (dest.error) {
+      res.writeHead(dest.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: dest.error }));
+      return;
+    }
+    const { destPath } = dest;
+    if (path.resolve(targetPath) === path.resolve(destPath)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Source and destination are identical' }));
+      return;
+    }
+    const overwrite = (req.headers['overwrite'] || 'T').toUpperCase();
+    const destExisted = fs.existsSync(destPath);
+    if (overwrite === 'F' && destExisted) {
+      res.writeHead(412, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Precondition Failed: Destination exists and Overwrite is F' }));
+      return;
+    }
+    try {
+      fs.renameSync(targetPath, destPath);
+      res.writeHead(destExisted ? 204 : 201);
+      res.end();
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to move resource: ${err.message}` }));
     }
   }
 }
