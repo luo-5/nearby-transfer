@@ -37,6 +37,7 @@ export * from './transfer/encrypted-writer.js';
 export * from './transfer/bootstrap.js';
 export * from './transfer/stream-session.js';
 export * from './transfer/executor.js';
+export * from './transfer/receiver.js';
 export * from './transfer/job-store.js';
 export * from './transfer/scheduler.js';
 export * from './transport/lan-service.js';
