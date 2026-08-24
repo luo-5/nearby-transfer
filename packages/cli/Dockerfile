@@ -11,13 +11,16 @@ RUN npm run build --workspace @luo-5/cli
 
 FROM node:24-alpine
 WORKDIR /app
+RUN apk add --no-cache samba-server
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/packages/core/dist/ packages/core/dist/
 COPY --from=builder /app/packages/core/package.json packages/core/
 COPY --from=builder /app/packages/cli/dist/ packages/cli/dist/
 COPY --from=builder /app/packages/cli/package.json packages/cli/
 COPY packages/cli/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY packages/cli/smb-sidecar.sh /usr/local/bin/smb-sidecar.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/smb-sidecar.sh
 RUN npm install --omit=dev --workspace @luo-5/cli
+VOLUME ["/data"]
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["--help"]
