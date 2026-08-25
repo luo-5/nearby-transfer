@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-24T10:42:23.690Z",
+  "canonicalJson": {
+    "description": "Deterministic canonical JSON: sorted keys, no whitespace, safe integers only",
+    "input": {
+      "zeta": 1,
+      "alpha": "hello",
+      "beta": [
+        3,
+        2,
+        1
+      ],
+      "gamma": {
+        "whkey": "last",
+        "akey": "first"
+      },
+      "delta": null,
+      "epsilon": true
+    },
+    "output": "{\"alpha\":\"hello\",\"beta\":[3,2,1],\"delta\":null,\"epsilon\":true,\"gamma\":{\"akey\":\"first\",\"whkey\":\"last\"},\"zeta\":1}"
+  },
+  "wireFrame": {
+    "description": "Length-prefixed wire frame: u32 frameLength + u16 headerLength + canonical-JSON header + payload",
+    "header": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "type": "transfer-decision"
+    },
+    "payloadHex": "776972652d6672616d652d7061796c6f6164",
+    "payloadUtf8": "wire-frame-payload",
+    "frameHex": "0000005c00487b22617070223a226e65617262792d7472616e73666572222c2270726f746f636f6c56657273696f6e223a322c2274797065223a227472616e736665722d6465636973696f6e227d776972652d6672616d652d7061796c6f6164"
+  },
+  "chunkFrame": {
+    "description": "Binary chunk frame: 48-byte header (NTV2CHNK magic) + taskId + path + nonce + authTag + ciphertext",
+    "taskId": "de3U6QplW7_X2w7pwGDibA",
+    "relativePath": "docs/readme.md",
+    "offset": 0,
+    "sequence": 0,
+    "plainLength": 37,
+    "nonceHex": "0da74c42e775b447dc062554",
+    "authTagHex": "524cdfb877a00854a40951f46d1baa0c",
+    "ciphertextHex": "e4c88ba57781779f51c1360b4c2f966f4af48465c219e2185e133151543f44018aa2e2320f",
+    "frameHex": "4e54563243484e4b01000030000000950016000e0000000000000000000000000000000000000025000000250c100000646533553651706c57375f5832773770774744696241646f63732f726561646d652e6d640da74c42e775b447dc062554524cdfb877a00854a40951f46d1baa0ce4c88ba57781779f51c1360b4c2f966f4af48465c219e2185e133151543f44018aa2e2320f"
+  },
+  "discoverySignature": {
+    "description": "Ed25519 signature over a canonical-JSON discovery announcement (minus signature field)",
+    "announcement": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "type": "discovery-announce",
+      "issuedAt": 1700000000000,
+      "identity": {
+        "deviceId": "45c50cb5ae48c0f6",
+        "deviceName": "Alice-Phone",
+        "fingerprint": "45C5-0CB5-AE48-C0F6-CA53-6FCB",
+        "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\n-----END PUBLIC KEY-----\n",
+        "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\n-----END PUBLIC KEY-----\n"
+      },
+      "port": 47777,
+      "capabilities": [
+        "library-server"
+      ],
+      "signature": "C9YOE25SOfVnixbIx2cKZReSd3FIZQrbbIO+XYgApBeQW5VtP09HIvaxKvYKil2EPplAOOTj+beK5wvise96Dg=="
+    },
+    "signingPayload": "{\"app\":\"nearby-transfer\",\"capabilities\":[\"library-server\"],\"identity\":{\"deviceId\":\"45c50cb5ae48c0f6\",\"deviceName\":\"Alice-Phone\",\"encryptionPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VuAyEAB6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\\n-----END PUBLIC KEY-----\\n\",\"fingerprint\":\"45C5-0CB5-AE48-C0F6-CA53-6FCB\",\"signingPublicKey\":\"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\\n-----END PUBLIC KEY-----\\n\"},\"issuedAt\":1700000000000,\"port\":47777,\"protocolVersion\":2,\"type\":\"discovery-announce\"}",
+    "signature": "C9YOE25SOfVnixbIx2cKZReSd3FIZQrbbIO+XYgApBeQW5VtP09HIvaxKvYKil2EPplAOOTj+beK5wvise96Dg=="
+  },
+  "manifestSerialization": {
+    "description": "Canonical-JSON serialization of a TransferManifest with directories and files",
+    "manifest": {
+      "app": "nearby-transfer",
+      "protocolVersion": 2,
+      "type": "transfer-manifest",
+      "taskId": "de3U6QplW7_X2w7pwGDibA",
+      "conflictStrategy": "auto-rename",
+      "entries": [
+        {
+          "kind": "directory",
+          "path": "docs"
+        },
+        {
+          "kind": "file",
+          "path": "docs/changelog.md",
+          "size": 256,
+          "sha256": "6665bc2f57c4a7045d347313a1566d91561ff2a3c9d17874a462ae73b7eb8593"
+        },
+        {
+          "kind": "file",
+          "path": "docs/readme.md",
+          "size": 1024,
+          "sha256": "3a504df5170a7d89dab128f3cfac09a71a263954a24d5056cc222e00a0841804"
+        }
+      ],
+      "totalFiles": 2,
+      "totalBytes": 1280
+    },
+    "serialized": "{\"app\":\"nearby-transfer\",\"conflictStrategy\":\"auto-rename\",\"entries\":[{\"kind\":\"directory\",\"path\":\"docs\"},{\"kind\":\"file\",\"path\":\"docs/changelog.md\",\"sha256\":\"6665bc2f57c4a7045d347313a1566d91561ff2a3c9d17874a462ae73b7eb8593\",\"size\":256},{\"kind\":\"file\",\"path\":\"docs/readme.md\",\"sha256\":\"3a504df5170a7d89dab128f3cfac09a71a263954a24d5056cc222e00a0841804\",\"size\":1024}],\"protocolVersion\":2,\"taskId\":\"de3U6QplW7_X2w7pwGDibA\",\"totalBytes\":1280,\"totalFiles\":2,\"type\":\"transfer-manifest\"}",
+    "manifestHash": "3a504df5170a7d89dab128f3cfac09a71a263954a24d5056cc222e00a0841804"
+  }
+}

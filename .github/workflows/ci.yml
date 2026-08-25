@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Build & Test (Node ${{ matrix.node-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        node-version: [ 18.x, 20.x, 22.x ]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Syntax & Lint Verification
+        run: npm run lint --if-present
+
+      - name: Run Core Test Suite
+        run: npm run test:core
+
+      - name: Run CLI Test Suite
+        run: npm run test:cli --if-present
+
+      - name: Run Interoperability & Integration Tests
+        run: npm test
+
+  python-vectors:
+    name: Verify Python Reference Vectors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Cryptography
+        run: pip install cryptography
+
+      - name: Verify All 10 Test Vector Groups
+        run: python python-ref/verify_vectors.py

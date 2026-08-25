@@ -1,23 +1,47 @@
-# Contributing
+# Contributing to Nearby Transfer
 
-Thank you for helping improve Nearby Transfer.
+Thank you for your interest in contributing to Nearby Transfer!
 
-## Development
+---
+
+## 1. Core Principles & Constraints
+
+All contributions must strictly adhere to our core architectural constraints:
+1. **Zero Runtime npm Dependencies**: `@luo-5/core` and `@luo-5/cli` MUST ONLY use `node:` built-in modules. No external npm packages are permitted at runtime.
+2. **TypeScript Strict Mode**: Code must compile cleanly with `strict: true` under `tsconfig.json`.
+3. **Cryptographic Integrity**: The pairing security model (Ed25519 + SAS + X25519 + AES-256-GCM) cannot be weakened.
+4. **Deterministic Protocol**: All JSON exchanged over the wire must be canonical JSON.
+
+---
+
+## 2. Development Workflow
 
 ```bash
+# Clone the repository
+git clone https://github.com/luo-5/nearby-transfer.git
+cd nearby-transfer
+
+# Install dev dependencies
 npm install
-npm run check
+
+# Run all test suites
 npm test
-npm start
+
+# Run core package tests
+npm run test:core
+
+# Run TypeScript type check
+npm run typecheck
 ```
 
-## Pull Requests
+---
 
-- Keep changes focused and minimal.
-- Run `npm run check` and `npm test` before opening a pull request.
-- Update documentation when behavior, packaging, or compatibility changes.
-- Do not include secrets, local certificates, private keys, or generated release artifacts in commits.
+## 3. Commit Convention
 
-## Platform Support
-
-Desktop builds target Linux and Windows on x64 and arm64. Android is a separate client that remains protocol-compatible with the desktop app.
+We use standard **Conventional Commits**:
+* `feat: ...` for new features
+* `fix: ...` for bug fixes
+* `docs: ...` for documentation changes
+* `test: ...` for test suite additions
+* `refactor: ...` for code refactoring
+* `perf: ...` for performance optimizations
