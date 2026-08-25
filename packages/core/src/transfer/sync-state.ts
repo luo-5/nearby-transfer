@@ -11,6 +11,7 @@ export interface ScanResult {
   relativePath: string;
   absolutePath: string;
   size: number;
+  mtimeMs: number;
 }
 
 export interface FileSyncState {
@@ -82,7 +83,7 @@ export async function buildSyncState(
     fileStates.set(file.relativePath, {
       path: file.relativePath,
       size: file.size,
-      mtimeMs: 0,
+      mtimeMs: file.mtimeMs,
       quickHash,
       fullHash,
     });

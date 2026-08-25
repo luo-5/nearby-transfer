@@ -101,7 +101,9 @@ export async function createDesktopTransferExecutor(input: ExecutorInput): Promi
 
   let controlCheckpoint: ControlCheckpoint | null = bootstrapResult.checkpoint;
 
-  const session = createTransferStreamSession({
+  let session: ReturnType<typeof createTransferStreamSession>;
+  try {
+    session = createTransferStreamSession({
     stream: socket as unknown as Parameters<typeof createTransferStreamSession>[0]['stream'],
     role: 'sender',
     taskId: config.job.manifest.taskId,
@@ -133,8 +135,12 @@ export async function createDesktopTransferExecutor(input: ExecutorInput): Promi
     pauseTimeoutMs: config.timeouts.pauseMs,
     closingTimeoutMs: config.timeouts.closingMs,
   });
+  } catch (error) {
+    sessionKey.fill(0);
+    throw error;
+  }
 
-  const done = session.start().then(() => { sessionKey.fill(0); }).catch((error) => { sessionKey.fill(0); throw error; });
+  const done = session.start().then(() => { sessionKey.fill(0); }).catch((error: unknown) => { sessionKey.fill(0); throw error; });
 
   return {
     done,

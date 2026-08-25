@@ -7,10 +7,9 @@
  */
 
 import { parseArgs } from 'node:util';
-import { readdirSync, statSync, existsSync } from 'node:fs';
+import { readdirSync, statSync, existsSync, createReadStream } from 'node:fs';
 import { resolve, relative, sep, join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import {
   V2Discovery,
   createTransferManifest,
@@ -25,6 +24,7 @@ export interface ScanResult {
   relativePath: string;
   absolutePath: string;
   size: number;
+  mtimeMs: number;
 }
 
 export function scanDirectory(root: string): ScanResult[] {
@@ -40,6 +40,7 @@ export function scanDirectory(root: string): ScanResult[] {
           relativePath: relative(root, fullPath).split(sep).join('/'),
           absolutePath: fullPath,
           size: stat.size,
+          mtimeMs: stat.mtimeMs,
         });
       }
     }
@@ -49,8 +50,10 @@ export function scanDirectory(root: string): ScanResult[] {
 }
 
 async function computeFileHash(filePath: string): Promise<string> {
-  const data = await readFile(filePath);
-  return createHash('sha256').update(data).digest('hex');
+  const hash = createHash('sha256');
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) hash.update(chunk as Buffer);
+  return hash.digest('hex');
 }
 
 export async function syncCommand(args: string[]): Promise<void> {

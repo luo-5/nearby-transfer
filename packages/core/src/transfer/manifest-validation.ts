@@ -11,6 +11,7 @@ export const TASK_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 export const MAX_RELATIVE_PATH_BYTES = 4_096;
 export const MAX_PATH_COMPONENT_BYTES = 255;
 const WINDOWS_INVALID_COMPONENT_PATTERN = /[<>:"\\/|?*\u0000-\u001f\u007f]/;
+const WINDOWS_RESERVED_NAME_PATTERN = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 
 export function assertValidTaskId(taskId: string): void {
   if (typeof taskId !== 'string' || !TASK_ID_PATTERN.test(taskId)) {
@@ -50,6 +51,10 @@ export function assertValidRelativePath(relativePath: string): void {
     }
     if (WINDOWS_INVALID_COMPONENT_PATTERN.test(component)) {
       throw new TypeError('Transfer path component contains a Windows-invalid character');
+    }
+    const baseName = component.split('.')[0]!.replace(/[. ]+$/u, '');
+    if (WINDOWS_RESERVED_NAME_PATTERN.test(baseName)) {
+      throw new TypeError('Transfer path component contains a Windows reserved name');
     }
   }
 }

@@ -4,7 +4,7 @@
  * the last committed position instead of restarting from scratch.
  */
 
-import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface ResumeFileEntry {
@@ -24,7 +24,9 @@ export interface ResumeState {
 export function saveResumeState(stateDir: string, state: ResumeState): void {
   mkdirSync(stateDir, { recursive: true });
   const filePath = join(stateDir, `resume-${state.taskId}.json`);
-  writeFileSync(filePath, JSON.stringify(state, null, 2) + '\n');
+  const tempPath = `${filePath}.tmp.${Date.now()}`;
+  writeFileSync(tempPath, JSON.stringify(state, null, 2) + '\n');
+  renameSync(tempPath, filePath);
 }
 
 export function loadResumeState(stateDir: string, taskId: string): ResumeState | null {

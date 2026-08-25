@@ -17,6 +17,8 @@ export function timingSafeEqualBuffers(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 export function timingSafeEqualStrings(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  const hashA = crypto.createHash('sha256').update(a, 'utf8').digest();
+  const hashB = crypto.createHash('sha256').update(b, 'utf8').digest();
+  const match = crypto.timingSafeEqual(hashA, hashB);
+  return match && a.length === b.length;
 }

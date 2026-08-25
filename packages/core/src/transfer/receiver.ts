@@ -129,7 +129,9 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
     if (entry.kind === 'file') fileSizes.set(entry.path, entry.size);
   }
 
-  const session = createTransferStreamSession({
+  let session: ReturnType<typeof createTransferStreamSession>;
+  try {
+    session = createTransferStreamSession({
     stream: config.socket as never,
     role: 'receiver',
     taskId: manifest.taskId,
@@ -164,6 +166,10 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
     chunkWriter: chunkWriter as unknown as ChunkWriterLike,
     signal: config.signal,
   });
+  } catch (error) {
+    sessionKey.fill(0);
+    throw error;
+  }
 
   const done = session.start().then(() => { sessionKey.fill(0); }).catch((error) => { sessionKey.fill(0); throw error; });
 
