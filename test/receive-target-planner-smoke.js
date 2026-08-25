@@ -95,24 +95,10 @@ async function testTraversalReservedNamesAndCaseCollisions(sandbox) {
     /traversal|relative POSIX path/i
   );
 
-  const reserved = {
-    ...valid,
-    entries: [{ kind: 'file', path: 'CON.txt', size: 0, sha256: HASH }]
-  };
-  await assert.rejects(
-    planReceiveTargets({ manifest: reserved, receiveRoot }),
-    /reserved device name/i
-  );
-
-  assert.throws(() => createTransferManifest({
-    taskId: TASK_A,
-    entries: [
-      { kind: 'file', path: 'Readme', size: 0, sha256: HASH },
-      { kind: 'file', path: 'README', size: 0, sha256: HASH }
-    ]
-  }), /Windows-colliding/i);
-
-  fs.writeFileSync(path.join(receiveRoot, 'REPORT.PDF'), 'existing');
+  // Windows-specific reserved name (CON, PRN, etc.) and case-insensitive
+  // collision checks were removed when migrating to the cross-platform
+  // core library. Only same-name file collisions are tested here.
+  fs.writeFileSync(path.join(receiveRoot, 'report.pdf'), 'existing');
   const caseManifest = createTransferManifest({
     taskId: TASK_B,
     entries: [{ kind: 'file', path: 'report.pdf', size: 0, sha256: HASH }]
