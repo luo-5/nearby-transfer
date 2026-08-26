@@ -1,27 +1,33 @@
-# Skipped Tasks
+# Skipped / Pending Tasks
 
-## P2: npm publish — npm auth 401
-- Date: 2026-08-25
-- Reason: `npm whoami` returns 401 Unauthorized. The token in `~/.npmrc` is either expired or IP-restricted. Cannot publish from this machine.
-- Version bumps applied (0.1.0 → 0.2.0) and committed, but actual `npm publish` deferred to when a valid token is available.
-- To fix: run `npm login` or set a valid `npm config set //registry.npmjs.org/:_authToken <token>` from an authorized IP, then:
+## npm 0.2.0 publish — pending (needs valid npm token)
+- Date: 2026-08-26
+- Status: Version bumped to 0.2.0, code built, tests all green, `publish.sh` ready.
+- Blocker: `npm whoami` returns 401. Token expired or IP-restricted.
+- To fix: `npm login` or `npm config set //registry.npmjs.org/:_authToken <valid-token>`, then:
   ```
   npm publish --workspace @luo-5/core
   npm publish --workspace @luo-5/cli
   npm view @luo-5/core@0.2.0
   ```
 
-## P2: Docker build — daemon not running
-- Date: 2026-08-25
-- Reason: Docker Desktop is installed (v29.7.2) but the daemon is not running.
-- Dockerfile verified correct in previous session.
-- To fix: start Docker Desktop, then:
-  ```
-  docker build -t nearby-transfer-cli -f packages/cli/Dockerfile .
-  docker run --rm nearby-transfer-cli --help
-  ```
+## Docker build — RESOLVED ✅
+- Date: 2026-08-26
+- Status: Docker image built successfully on CentOS (192.168.80.130).
+- Docker CE 29.7.2 installed on CentOS via yum.
+- Image: `nearby-transfer-cli:latest`
+- Build fix: Added `RUN cd packages/core && npm install --save-dev @types/node@24` to Dockerfile (DTS build needed @types/node).
+- `.dockerignore` created to exclude node_modules, dist, .git, android-app, release_artifacts.
+- Verification: `docker run --rm nearby-transfer-cli --help` outputs CLI usage correctly.
 
-## P1: git push — GitHub unreachable
-- Date: 2026-08-25
-- Reason: `git push origin main` failed with "Failed to connect to github.com:443" (3 retries, 15s intervals).
-- Commits are local. To fix: retry `git push origin main` when GitHub is reachable.
+## Cross-machine transfer tests — RESOLVED ✅
+- Date: 2026-08-26
+- Status: 3/3 pairs passed with SHA-256 verification.
+- Ubuntu → CentOS: PASS ✅
+- Windows → Ubuntu: PASS ✅ (Windows as sender due to NAT inbound restriction)
+- Windows → CentOS: PASS ✅
+- Note: Windows VM uses VMware NAT, inbound TCP ports unreachable from other VMs. Windows acts as sender (outbound) for all pairs involving it.
+
+## Strangler Fig batch 3 — deferred
+- 25 v2 JS modules still have original logic (not re-export adapters).
+- Batch 3a (7 pure logic), 3b (10 fs/net), 3c (8 Electron) — see plan in PROJECT_PLAN.md.

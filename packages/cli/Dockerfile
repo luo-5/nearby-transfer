@@ -6,6 +6,7 @@ COPY packages/cli/package.json packages/cli/
 RUN npm ci --workspace @luo-5/core --workspace @luo-5/cli
 COPY packages/core/ packages/core/
 COPY packages/cli/ packages/cli/
+RUN cd packages/core && npm install --save-dev @types/node@24
 RUN npm run build --workspace @luo-5/core
 RUN npm run build --workspace @luo-5/cli
 
