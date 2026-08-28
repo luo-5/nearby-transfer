@@ -1,15 +1,10 @@
 # Skipped / Pending Tasks
 
-## npm 0.2.0 publish — pending (needs valid npm token)
-- Date: 2026-08-26
-- Status: Version bumped to 0.2.0, code built, tests all green, `publish.sh` ready.
-- Blocker: `npm whoami` returns 401. Token expired or IP-restricted.
-- To fix: `npm login` or `npm config set //registry.npmjs.org/:_authToken <valid-token>`, then:
-  ```
-  npm publish --workspace @luo-5/core
-  npm publish --workspace @luo-5/cli
-  npm view @luo-5/core@0.2.0
-  ```
+## npm 0.2.0 publish — RESOLVED ✅
+- Date: 2026-08-28
+- Status: `@luo-5/core@0.2.0` and `@luo-5/cli@0.2.0` published successfully to npm registry.
+- Verification: `npm view @luo-5/core@0.2.0 version` -> `0.2.0`, `npm view @luo-5/cli@0.2.0 version` -> `0.2.0`.
+- Git release tag: `v0.2.0` created and pushed to `origin`.
 
 ## Docker build — RESOLVED ✅
 - Date: 2026-08-26

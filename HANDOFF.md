@@ -12,8 +12,8 @@
 
 Nearby Transfer 是一个局域网加密文件传输 + NAS WebDAV 应用，包含：
 - **桌面端**：Electron app（Linux/Windows），所有 `src/v2/*.js` 模块已通过 Strangler Fig 模式全部迁移至 TS 核心库及薄适配层
-- **核心库** `@luo-5/core`：纯 TypeScript，零运行时 npm 依赖，46 个源文件，124 个单元/模糊/属性测试 100% 通过
-- **CLI 工具** `@luo-5/cli`：6 个命令（send/receive/sync/devices/pair/trust），21 个测试（含 2 个 e2e 及 5 个 sync 增量测试）100% 通过
+- **核心库** `@luo-5/core`：纯 TypeScript，零运行时 npm 依赖，46 个源文件，124 个单元/模糊/属性测试 100% 通过（npm 0.2.0 已正式发布）
+- **CLI 工具** `@luo-5/cli`：6 个命令（send/receive/sync/devices/pair/trust），21 个测试 100% 通过（npm 0.2.0 已正式发布）
 - **LocalSend 适配器** `@luo-5/localsend-adapter`：LocalSend 协议桥接
 - **协议规范** `packages/protocol-spec/v2-spec.md`：11 章 + 10 组测试向量
 - **Python 参考实现** `packages/python-ref/`：10 个 .py，全部 10 组向量验证 100% 通过
@@ -34,8 +34,8 @@ Nearby Transfer 是一个局域网加密文件传输 + NAS WebDAV 应用，包�
 
 | 模块 | 详情 | 状态 |
 |------|------|------|
-| 核心库 @luo-5/core 0.2.0 | 46 TS 文件，124 测试全绿，零运行时依赖 | ✅ 100% |
-| CLI @luo-5/cli 0.2.0 | send/receive/sync/devices/pair/trust，21 测试全绿 | ✅ 100% |
+| 核心库 @luo-5/core 0.2.0 | 46 TS 文件，124 测试全绿，零运行时依赖，已发布至 npm | ✅ 100% |
+| CLI @luo-5/cli 0.2.0 | send/receive/sync/devices/pair/trust，21 测试全绿，已发布至 npm | ✅ 100% |
 | 端到端传输 | bootstrap→stream session leftoverData 交接与 pause 生命周期修复，e2e 测试全绿 | ✅ 100% |
 | 文件夹增量同步 | sync-state（增量检测）、resume-store（断点续传）、conflict-resolver（冲突处理） | ✅ 100% |
 | 安全加固 | timing-safe 比较、Windows 保留名校验、路径遍历防护、nonce 唯一性、DoS 限制、密钥擦除 | ✅ 100% |
@@ -46,7 +46,7 @@ Nearby Transfer 是一个局域网加密文件传输 + NAS WebDAV 应用，包�
 | Gemini 性能基准 | Crypto (~700 MB/s), TCP loopback (~250 MB/s), 序列化基准验证 | ✅ 100% |
 | Docker 构建 | CentOS 上 Docker CE 29.7.2，镜像构建成功，`docker run --help` 正常 | ✅ 100% |
 | 跨机测试 | 3/3 通过：Ubuntu→CentOS ✅、Windows→Ubuntu ✅、Windows→CentOS ✅ | ✅ 100% |
-| CI/CD | 5 个 GitHub Actions workflow（ci/docker/release/codeql/stale） | ✅ 100% |
+| CI/CD 与 Git Tag | 5 个 GitHub Actions workflow，`v0.2.0` release tag 已推送 | ✅ 100% |
 
 ### 测试统计
 - 核心：124 个测试（含 12 安全 + 35 边界 + 5 模糊 + 6 属性 + 10 安全模块）
@@ -54,18 +54,11 @@ Nearby Transfer 是一个局域网加密文件传输 + NAS WebDAV 应用，包�
 - 桌面 smoke：41 套 smoke / stress / interop 全部通过
 - Python 向量：10/10 通过
 - TypeScript strict 编译 (`exactOptionalPropertyTypes: true`)：零错误
+- npm 官方源：`@luo-5/core@0.2.0` 和 `@luo-5/cli@0.2.0` 均已实时在线
 
 ---
 
-## 三、待处理项
-
-| 项目 | 状态 | 阻塞 |
-|------|------|------|
-| npm 0.2.0 发布 | 版本已 bump，代码已构建，publish.sh 就绪 | 需要有效 npm token |
-
----
-
-## 四、验证命令
+## 三、验证命令
 
 ```bash
 # 1. 核心与 CLI 构建
@@ -91,4 +84,8 @@ python packages/python-ref/verify_vectors.py
 npx tsx benchmarks/benchmark-serialization.ts
 npx tsx benchmarks/benchmark-crypto.ts
 npx tsx benchmarks/benchmark-transfer.ts
+
+# 8. 查看 npm 上的最新发布包
+npm view @luo-5/core@0.2.0
+npm view @luo-5/cli@0.2.0
 ```
