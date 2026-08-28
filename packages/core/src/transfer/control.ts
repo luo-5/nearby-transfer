@@ -165,6 +165,8 @@ export function createSignedStreamControlCodec(options: StreamControlCodecOption
 function inspectCoreMessage(value: CoreControlMessage): CoreControlMessage {
   assertPlainDataObject(value, 'Transfer stream control');
   const command = value.type;
+  const expectedFields = command === 'stream-cancel' ? [...CORE_FIELDS, 'code'] : CORE_FIELDS;
+  assertExactFields(value as unknown as Record<string, unknown>, expectedFields, 'Transfer stream control');
   if (!CONTROL_COMMANDS.has(command)) throw new TypeError('Transfer stream control command is unsupported');
   if (value.protocol !== CONTROL_PROTOCOL) throw new TypeError('Transfer stream control protocol is unsupported');
   assertValidTaskId(value.taskId);
@@ -178,6 +180,10 @@ function inspectCoreMessage(value: CoreControlMessage): CoreControlMessage {
 function inspectSignedMessage(value: Record<string, unknown>): void {
   assertPlainDataObject(value, 'Signed stream control');
   const command = value.command as string;
+  const expectedFields = command === 'stream-cancel'
+    ? [...SIGNED_FIELDS, 'code', 'signature']
+    : [...SIGNED_FIELDS, 'signature'];
+  assertExactFields(value, expectedFields, 'Signed stream control');
   if (value.app !== APP_ID || value.protocolVersion !== PROTOCOL_VERSION || value.type !== MESSAGE_TYPES.TRANSFER_STREAM_CONTROL || value.controlProtocol !== CONTROL_PROTOCOL) {
     throw new TypeError('Signed stream control has an unsupported protocol envelope');
   }
@@ -193,6 +199,16 @@ function inspectSignedMessage(value: Record<string, unknown>): void {
   assertPositiveSafeInteger(value.expiresAt as number, 'Stream control expiration time');
   if (command === 'stream-cancel' && (!value.code || !CANCEL_CODES.has(value.code as string))) throw new TypeError('Stream control cancellation code is invalid');
   assertCanonicalSignature(value.signature as string);
+}
+
+function assertExactFields(value: Record<string, unknown>, expectedFields: string[], subject: string): void {
+  const expected = new Set(expectedFields);
+  for (const field of expectedFields) {
+    if (!Object.hasOwn(value, field)) throw new TypeError(`${subject} is missing ${field}`);
+  }
+  for (const field of Object.keys(value)) {
+    if (!expected.has(field)) throw new TypeError(`${subject} contains unknown field ${field}`);
+  }
 }
 
 function copyUnsignedMessage(value: Record<string, unknown>): Record<string, unknown> {

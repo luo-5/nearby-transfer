@@ -125,6 +125,7 @@ export async function createEncryptedChunkWriter(input: ChunkWriterInput): Promi
   }
 
   async function writeChunk(chunk: WriteChunkInput): Promise<WriterProgress> {
+    assertPlainDataObject(chunk, 'Transfer chunk');
     return runExclusive(async () => {
       if (chunk.taskId !== config.manifest.taskId) throw new Error('Chunk taskId does not match receive task');
       const record = currentFile(config);
@@ -190,6 +191,7 @@ export async function createEncryptedChunkWriter(input: ChunkWriterInput): Promi
 }
 
 function normalizeInput(input: ChunkWriterInput): WriterConfig {
+  assertPlainDataObject(input, 'Chunk writer input');
   const manifest = normalizeTransferManifest(input.manifest);
   if (!util.isDeepStrictEqual(input.manifest, manifest)) throw new TypeError('Transfer manifest must already be normalized');
   const fsPromises = input.fsPromises ?? fs.promises;
@@ -207,22 +209,89 @@ function normalizeInput(input: ChunkWriterInput): WriterConfig {
 }
 
 function normalizePlan(value: ReceivePlan, manifest: TransferManifest): WriterConfig['plan'] {
+  assertPlainDataObject(value, 'Receive target plan');
   if (value.taskId !== manifest.taskId) throw new TypeError('Receive target plan taskId does not match manifest');
+  if (typeof value.receiveRoot !== 'string' || !path.isAbsolute(value.receiveRoot)) {
+    throw new TypeError('Receive target plan root must be absolute');
+  }
+  const receiveRoot = path.resolve(value.receiveRoot);
+  const expectedStaging = path.join(receiveRoot, `${STAGING_PREFIX}${manifest.taskId}${STAGING_SUFFIX}`);
+  if (value.stagingDirectory !== expectedStaging) {
+    throw new TypeError('Receive target plan staging directory is not planner-owned');
+  }
+  if (!Array.isArray(value.targets) || value.targets.length !== manifest.entries.length) {
+    throw new TypeError('Receive target plan targets must match manifest entries');
+  }
+
   const targetByPath = new Map<string, FileRecord['target']>();
-  for (const target of value.targets) targetByPath.set(target.path, target);
+  for (const target of value.targets) {
+    assertPlainDataObject(target, 'Receive target');
+    if (targetByPath.has(target.path)) throw new TypeError('Receive target paths must be unique');
+    const entry = manifest.entries.find((candidate) => candidate.path === target.path);
+    if (!entry || entry.kind !== target.kind) throw new TypeError('Receive target does not match manifest');
+    targetByPath.set(target.path, target);
+  }
+
   const roots = manifest.entries.length > 0
     ? Array.from(new Set(manifest.entries.map((e) => e.path.split('/')[0]!))).map((sourceRoot) => ({
-        sourceRoot, stagingPath: path.join(value.stagingDirectory, sourceRoot),
+        sourceRoot,
+        stagingPath: path.join(value.stagingDirectory, sourceRoot),
         finalPath: path.join(value.receiveRoot, sourceRoot),
         kind: manifest.entries.find((e) => e.path === sourceRoot)?.kind ?? 'directory',
       }))
     : [];
+
   return { ...value, targetByPath, roots };
 }
 
 function normalizeResumeProgress(value: WriterProgress | undefined, files: FileRecord[]): WriterProgress {
   if (value === undefined) return { nextSequence: 0, files: files.map((f) => ({ path: f.entry.path, committedOffset: 0, completed: false })) };
-  return { nextSequence: value.nextSequence, files: value.files.map((f) => ({ path: f.path, committedOffset: f.committedOffset, completed: f.completed })) };
+  assertPlainDataObject(value, 'Receive resume progress');
+  if (!Number.isSafeInteger(value.nextSequence) || value.nextSequence < 0) throw new TypeError('Resume nextSequence must be a safe integer >= 0');
+  if (!Array.isArray(value.files) || value.files.length !== files.length) throw new TypeError('Resume progress files count must match manifest');
+
+  let sawIncomplete = false;
+  const normalizedFiles = value.files.map((progress, index) => {
+    assertPlainDataObject(progress, 'Receive file progress');
+    const entry = files[index]!.entry;
+    if (progress.path !== entry.path) throw new TypeError('Receive file progress order must match manifest');
+    if (!Number.isSafeInteger(progress.committedOffset) || progress.committedOffset < 0 || progress.committedOffset > entry.size) {
+      throw new TypeError(`Committed offset for ${entry.path} is invalid`);
+    }
+    if (typeof progress.completed !== 'boolean') throw new TypeError('Receive file completed flag must be boolean');
+    if (progress.completed && progress.committedOffset !== entry.size) {
+      throw new TypeError('Completed receive files must have their full committed size');
+    }
+    if (!progress.completed && entry.size > 0 && progress.committedOffset === entry.size) {
+      throw new TypeError('A full-size receive file must be marked completed');
+    }
+    if (sawIncomplete && (progress.completed || progress.committedOffset !== 0)) {
+      throw new TypeError('Receive progress must be a completed prefix followed by at most one partial file');
+    }
+    if (!progress.completed) sawIncomplete = true;
+    return {
+      path: progress.path,
+      committedOffset: progress.committedOffset,
+      completed: progress.completed,
+    };
+  });
+  return { nextSequence: value.nextSequence, files: normalizedFiles };
+}
+
+function assertPlainDataObject(value: unknown, subject: string): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`${subject} must be a plain object`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${subject} must be a plain object`);
+  }
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (typeof key !== 'string' || !descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+      throw new TypeError(`${subject} must contain only enumerable string data properties`);
+    }
+  }
 }
 
 function validateChunkBounds(record: FileRecord, chunk: WriteChunkInput): void {
@@ -245,6 +314,16 @@ async function prepareStaging(config: WriterConfig): Promise<void> {
     if (!config.resumed) { if (stat) throw new Error(`Fresh receive staging file already exists: ${record.entry.path}`); continue; }
     if (!stat) { if (record.committedOffset !== 0 || record.completed) throw new Error(`Committed receive staging file is missing: ${record.entry.path}`); continue; }
     if (stat.isSymbolicLink() || !stat.isFile()) throw new TypeError(`Receive staging target must be a regular file: ${record.entry.path}`);
+    if (stat.size < record.committedOffset) throw new Error(`Receive staging file is shorter than committed progress: ${record.entry.path}`);
+    if (stat.size !== record.committedOffset) {
+      const handle = await config.fsPromises.open(record.target.stagingPath, fs.constants.O_RDWR);
+      try {
+        await handle.truncate(record.committedOffset);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    }
     if (record.completed) await verifyCompletedFile(record, config);
   }
 }
@@ -317,25 +396,110 @@ async function verifyCompletedFile(record: FileRecord, config: WriterConfig): Pr
   }
 }
 
+async function assertSafeTreeMatchesPlan(config: WriterConfig): Promise<void> {
+  const expected = new Map<string, string>();
+  expected.set(config.plan.stagingDirectory, 'directory');
+  for (const target of config.plan.targetByPath.values()) expected.set(target.stagingPath, target.kind);
+
+  async function visit(current: string): Promise<void> {
+    const stat = await config.fsPromises.lstat(current);
+    if (stat.isSymbolicLink()) throw new TypeError('Receive staging tree contains a symbolic link or junction');
+    const expectedKind = expected.get(current);
+    if (!expectedKind) throw new Error('Receive staging tree contains an unexpected entry');
+    if (expectedKind === 'directory') {
+      if (!stat.isDirectory()) throw new TypeError('Receive staging tree entry must be a directory');
+      const names = await config.fsPromises.readdir(current);
+      for (const name of names) await visit(path.join(current, name));
+    } else if (!stat.isFile()) {
+      throw new TypeError('Receive staging tree entry must be a regular file');
+    }
+  }
+  await visit(config.plan.stagingDirectory);
+
+  for (const [expectedPath, kind] of expected) {
+    if (kind === 'directory') continue;
+    if (!await lstatIfExists(expectedPath, config.fsPromises)) {
+      throw new Error('Receive staging tree is missing an expected file');
+    }
+  }
+}
+
 async function verifyReadyToPublish(config: WriterConfig, isAborted: () => boolean): Promise<void> {
+  await assertSafeTreeMatchesPlan(config);
   for (const record of config.files) { throwIfAborted(isAborted(), config.signal); await verifyCompletedFile(record, config); }
 }
 
+interface PublishedRoot {
+  sourceRoot: string;
+  stagingPath: string;
+  finalPath: string;
+  kind: string;
+  method: 'link' | 'rename';
+}
+
 async function publishAllRoots(config: WriterConfig, isAborted: () => boolean): Promise<boolean> {
-  for (const root of config.plan.roots) {
-    throwIfAborted(isAborted(), config.signal);
-    const sourceStat = await config.fsPromises.lstat(root.stagingPath);
-    if (sourceStat.isSymbolicLink()) throw new TypeError('Receive publication source is a symbolic link');
-    if (root.kind === 'file') {
-      if (!sourceStat.isFile()) throw new TypeError('Receive publication source changed type');
-      await config.fsPromises.link(root.stagingPath, root.finalPath);
-      try { await config.fsPromises.unlink(root.stagingPath); } catch { await config.fsPromises.unlink(root.finalPath).catch(() => {}); throw new Error('Receive publication cleanup failed'); }
-    } else {
-      if (!sourceStat.isDirectory()) throw new TypeError('Receive publication source changed type');
-      await config.fsPromises.rename(root.stagingPath, root.finalPath);
+  const published: PublishedRoot[] = [];
+  try {
+    for (const root of config.plan.roots) {
+      throwIfAborted(isAborted(), config.signal);
+      await assertSafeDirectoryChain(config.plan.receiveRoot, config.fsPromises, 'Receive root');
+      if (await lstatIfExists(root.finalPath, config.fsPromises)) {
+        throw new Error('Receive target already exists; refusing to overwrite');
+      }
+      const sourceStat = await config.fsPromises.lstat(root.stagingPath);
+      if (sourceStat.isSymbolicLink() || (root.kind === 'file' ? !sourceStat.isFile() : !sourceStat.isDirectory())) {
+        throw new TypeError('Receive publication source changed type before publication');
+      }
+      if (root.kind === 'file') {
+        await config.fsPromises.link(root.stagingPath, root.finalPath);
+        published.push({ ...root, method: 'link' });
+        try {
+          await config.fsPromises.unlink(root.stagingPath);
+        } catch (error) {
+          await config.fsPromises.unlink(root.finalPath).catch(() => {});
+          published.pop();
+          throw error;
+        }
+      } else {
+        await config.fsPromises.rename(root.stagingPath, root.finalPath);
+        published.push({ ...root, method: 'rename' });
+      }
+    }
+  } catch (error) {
+    const rollbackErrors = await rollbackPublished(published, config);
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError([error, ...rollbackErrors], 'Receive publication failed and rollback was incomplete');
+    }
+    throw error;
+  }
+
+  try {
+    await cleanupReceiveStaging({
+      fsPromises: config.fsPromises,
+      receiveRoot: config.plan.receiveRoot,
+      taskId: config.manifest.taskId,
+    });
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function rollbackPublished(published: PublishedRoot[], config: WriterConfig): Promise<unknown[]> {
+  const errors: unknown[] = [];
+  for (const root of published.reverse()) {
+    try {
+      if (root.method === 'rename') {
+        await config.fsPromises.rename(root.finalPath, root.stagingPath);
+      } else {
+        await config.fsPromises.link(root.finalPath, root.stagingPath);
+        await config.fsPromises.unlink(root.finalPath);
+      }
+    } catch (error) {
+      errors.push(error);
     }
   }
-  try { await cleanupReceiveStaging({ fsPromises: config.fsPromises, receiveRoot: config.plan.receiveRoot, taskId: config.manifest.taskId }); return false; } catch { return true; }
+  return errors;
 }
 
 async function assertSafeDirectoryChain(directory: string, fsPromises: typeof fs.promises, subject: string): Promise<void> {

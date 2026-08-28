@@ -24,6 +24,7 @@ const READ_OPEN_FLAGS = fs.constants.O_RDONLY |
 const SOURCE_FILE_KEYS = ['path', 'sha256', 'size', 'sourcePath'];
 const INPUT_KEYS = [
   'chunkSize',
+  'encryptChunk',
   'manifest',
   'resumeCheckpoint',
   'resumeOffsets',
@@ -66,10 +67,12 @@ interface ReaderConfig {
   readonly chunkSize: number;
   readonly startSequence: number;
   readonly signal: AbortSignal | undefined;
+  readonly encryptChunk: typeof encryptChunk;
 }
 
 interface EncryptedChunkReaderInput {
   readonly chunkSize?: number;
+  readonly encryptChunk?: typeof encryptChunk;
   readonly manifest: unknown;
   readonly resumeCheckpoint?: unknown;
   readonly resumeOffsets?: unknown;
@@ -161,6 +164,7 @@ function normalizeInput(input: EncryptedChunkReaderInput): ReaderConfig {
   assertResumeAlignment(sourceFiles, resume.files, chunkSize);
   assertSequenceCapacity(sourceFiles, resume.files, chunkSize, resume.nextSequence);
   const sessionKey = Buffer.from(input.sessionKey);
+  const encrypt = typeof input.encryptChunk === 'function' ? input.encryptChunk : encryptChunk;
 
   return Object.freeze({
     manifest,
@@ -170,6 +174,7 @@ function normalizeInput(input: EncryptedChunkReaderInput): ReaderConfig {
     chunkSize,
     startSequence: resume.nextSequence,
     signal,
+    encryptChunk: encrypt,
   });
 }
 
@@ -218,7 +223,7 @@ async function* readEncryptedChunks(config: ReaderConfig, releaseSessionKey: () 
         if (source.size === 0) {
           assertExpectedHash(sourceHash, source);
           const sequence = sequenceForChunk(config.startSequence, emittedChunks);
-          const encrypted = encryptChunk({
+          const encrypted = config.encryptChunk({
             key: config.sessionKey,
             taskId: config.manifest.taskId,
             path: source.path,
@@ -243,7 +248,7 @@ async function* readEncryptedChunks(config: ReaderConfig, releaseSessionKey: () 
               throwIfAborted(config.signal);
               sourceHash.update(plaintext);
               if (offset + plainLength === source.size) assertExpectedHash(sourceHash, source);
-              encrypted = encryptChunk({
+              encrypted = config.encryptChunk({
                 key: config.sessionKey,
                 taskId: config.manifest.taskId,
                 path: source.path,
@@ -305,6 +310,7 @@ function createChunk(
   }
   return Object.freeze({
     taskId,
+    path: relativePath,
     relativePath,
     offset,
     sequence,

@@ -5,7 +5,7 @@
 
 import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { encryptChunk, decryptChunk, KEY_BYTES } from '../reference/core-src/crypto/session.js';
+import { encryptChunk, decryptChunk, KEY_BYTES } from '../packages/core/src/crypto/session.js';
 
 async function runCryptoBenchmark(): Promise<void> {
   const CHUNK_SIZES = [64 * 1024, 256 * 1024, 1024 * 1024]; // 64 KiB, 256 KiB, 1 MiB

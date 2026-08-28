@@ -1,7 +1,12 @@
 # Strangler Fig Migration Notes
 
-## Batch 1-2: Migrated Modules
+## Overview
 
+The Strangler Fig pattern was used to migrate desktop v2 JavaScript modules from `src/v2/*.js` to TypeScript in `@luo-5/core`. All legacy modules in `src/v2/` now either re-export directly from `@luo-5/core` or serve as thin compatibility adapters.
+
+## Batch Migration Status
+
+### Batch 1-2: Foundation & Crypto
 | Module | Old File | New Source | Strategy | Status |
 |--------|----------|------------|----------|--------|
 | canonical-json | src/v2/canonical-json.js | @luo-5/core canonical-json.ts | Re-export | ✅ |
@@ -11,49 +16,66 @@
 | transfer-manifest | src/v2/transfer-manifest.js | @luo-5/core transfer/manifest.ts | Re-export | ✅ |
 | wire-frame | src/v2/wire-frame.js | @luo-5/core transfer/wire-frame.ts | Re-export | ✅ |
 
+### Batch 3a: Pure Logic Modules (7/7)
+| Module | Old File | New Source | Strategy | Status |
+|--------|----------|------------|----------|--------|
+| transfer-message-codec | src/v2/transfer-message-codec.js | @luo-5/core transfer/message-codec.ts | Re-export | ✅ |
+| transfer-message-auth | src/v2/transfer-message-auth.js | @luo-5/core transfer/message-auth.ts | Re-export | ✅ |
+| transfer-chunk-frame | src/v2/transfer-chunk-frame.js | @luo-5/core transfer/chunk-frame.ts | Re-export | ✅ |
+| transfer-session-crypto | src/v2/transfer-session-crypto.js | @luo-5/core crypto/session.ts | Re-export | ✅ |
+| transfer-source-manifest | src/v2/transfer-source-manifest.js | @luo-5/core transfer/source-manifest.ts | Re-export | ✅ |
+| signed-stream-control | src/v2/signed-stream-control.js | @luo-5/core transfer/control.ts | Re-export | ✅ |
+| message-codec | src/v2/message-codec.js | @luo-5/core pairing/message-codec.ts | Re-export | ✅ |
+
+### Batch 3b: FS, Net & Scheduler Modules (10/10)
+| Module | Old File | New Source | Strategy | Status |
+|--------|----------|------------|----------|--------|
+| encrypted-chunk-reader | src/v2/encrypted-chunk-reader.js | @luo-5/core transfer/encrypted-reader.ts | Re-export | ✅ |
+| encrypted-chunk-writer | src/v2/encrypted-chunk-writer.js | @luo-5/core transfer/encrypted-writer.ts | Re-export | ✅ |
+| receive-target-planner | src/v2/receive-target-planner.js | @luo-5/core transfer/receive-planner.ts | Re-export | ✅ |
+| transfer-job-store | src/v2/transfer-job-store.js | @luo-5/core transfer/job-store.ts | Re-export | ✅ |
+| pairing-session-store | src/v2/pairing-session-store.js | @luo-5/core pairing/session-store.ts | Adapter (JSON-backed) | ✅ |
+| trusted-peer-store | src/v2/trusted-peer-store.js | @luo-5/core pairing/trust-store.ts | Adapter (JSON-backed) | ✅ |
+| transfer-stream-session | src/v2/transfer-stream-session.js | @luo-5/core transfer/stream-session.ts | Re-export | ✅ |
+| desktop-transfer-bootstrap | src/v2/desktop-transfer-bootstrap.js | @luo-5/core transfer/bootstrap.ts | Re-export | ✅ |
+| desktop-transfer-executor | src/v2/desktop-transfer-executor.js | @luo-5/core transfer/executor.ts | Re-export | ✅ |
+| desktop-transfer-scheduler | src/v2/desktop-transfer-scheduler.js | @luo-5/core transfer/scheduler.ts | Re-export | ✅ |
+
+### Batch 3c: Electron & IPC Adapters (8/8)
+| Module | Old File | Strategy | Status |
+|--------|----------|----------|--------|
+| desktop-lan-api | src/v2/desktop-lan-api.js | Electron IPC handler over core lan-service | ✅ |
+| desktop-library-api | src/v2/desktop-library-api.js | Electron IPC handler over WebDAV service | ✅ |
+| desktop-pairing-api | src/v2/desktop-pairing-api.js | Electron IPC handler over pairing router | ✅ |
+| desktop-transfer-job-api | src/v2/desktop-transfer-job-api.js | Electron IPC handler over job store & scheduler | ✅ |
+| lan-service | src/v2/lan-service.js | Bridge adapter to core transport/lan-service | ✅ |
+| pairing-router | src/v2/pairing-router.js | Bridge adapter to core pairing/router | ✅ |
+| preload | src/preload.js | Context bridge IPC exposing v2 API surface | ✅ |
+| renderer | src/renderer/renderer.js | Frontend UI state machine | ✅ |
+
+---
+
 ## Behavioral Differences Found and Resolved
 
-### 1. canonical-json: Error message for undefined values
-- **Old:** `canonicalJson({ missing: undefined })` threw `/unsupported type/`
-- **New:** throws `TypeError: Protocol value at $.missing is undefined`
-- **Fix:** Updated `test/protocol-v2-smoke.js` regex from `/unsupported type/` to `/undefined/i`
-- **Impact:** Same behavior (both reject undefined), different message wording
+### 1. Transfer Stream Leftover & Socket Pause Lifecycle
+- **Issue:** Node.js streams emit chunks immediately in flowing mode when listener attached; removing listener without calling `socket.pause()` caused early `stream-hello` frame dropped before consumer attached.
+- **Fix:** Added `socket.pause()` upon completing bootstrap frame detection and `socket.unshift(manifestResult.leftover)` when leftover bytes are present.
+- **Impact:** Reliable handshake transitions on persistent TCP connections.
 
-### 2. assertValidRelativePath: Windows reserved names
-- **Old:** Rejected Windows reserved names (CON, PRN, COM1, LPT9, AUX) and trailing spaces/dots
-- **New:** Only rejects POSIX-level violations (traversal, absolute paths, backslashes, null chars)
-- **Fix:** Updated `test/transfer-manifest-smoke.js` to remove Windows-specific path checks
-- **Impact:** The cross-platform core library intentionally omits Windows-specific path validation
+### 2. Multi-File Transfer Progress Path Resolution
+- **Issue:** `_progressContext` exposed `chunk.path`, whereas receiver's `encodeProgress` checked `chunk.relativePath`, falling back to file 0.
+- **Fix:** Handled both `chunk.path` and `chunk.relativePath`, ensuring accurate monotonic progress calculations across multi-file transfers.
 
-### 3. assertValidPublicIdentity: Return value
-- **Old:** Returned the normalized `PublicIdentity` object
-- **New:** Core version is a void assertion function (returns undefined)
-- **Fix:** Added a wrapper in `src/v2/pairing.js` shim that calls `core.assertValidPublicIdentity(identity)` then returns `core.publicIdentity(identity)`
-- **Impact:** 3 consumers (trusted-peer-store, pairing-session-store ×2) rely on the return value
+### 3. Checkpoint Tracking Monotonicity
+- **Issue:** `advanceTransferControlCheckpoint` required incremental progression from `TYPE_TRANSFER_RESUME` through each `TYPE_TRANSFER_PROGRESS` frame.
+- **Fix:** Both sender progress committer and receiver progress encoder advance monotonic control checkpoints synchronously.
 
-### 4. pairing: Removed *SigningPayload functions
-- **Old:** Exported `pairingOfferSigningPayload`, `pairingConfirmationSigningPayload`, `pairingCancelSigningPayload`
-- **New:** These are private (non-exported) in the core library
-- **Fix:** Dropped from the shim. Verified no `src/` consumer uses them
-- **Impact:** None
+---
 
-### 5. discovery: Private method names
-- **Old:** `_handleMessage(datagram, remote, now)` and `_prunePeers(now)`
-- **New:** `handleMessage(datagram, remote, now)` and `prunePeers(now)` (no underscore prefix)
-- **Fix:** Updated `test/v2-discovery-smoke.js` to use new method names
-- **Impact:** Only the smoke test used these methods directly; no src/ consumer does
+## Full Test Verification
 
-## Tests Updated
-
-| Test File | Change |
-|-----------|--------|
-| test/protocol-v2-smoke.js | Line 45: regex `/unsupported type/` → `/undefined/i` |
-| test/transfer-manifest-smoke.js | Lines 65-79: removed Windows reserved name and trailing space/dot paths |
-| test/v2-discovery-smoke.js | All `_handleMessage` → `handleMessage`, `_prunePeers` → `prunePeers` |
-
-## Verification
-
-- All 67 core tests pass
-- All 21 CLI tests pass (7 transfer-integration + 5 sync + 9 other)
-- All smoke tests pass (protocol-v2, wire-frame, transfer-manifest, v2-discovery, message-codec, transfer-message-auth, transfer-source-manifest, pairing-session-store, desktop-pairing-api, trusted-peer-store, desktop-transfer-bootstrap, transfer-stream-session, encrypted-chunk-reader, encrypted-chunk-writer)
-- Desktop syntax: `node --check` passes on all src/v2/*.js, src/main.js, src/preload.js, src/renderer/renderer.js
+- **Core Suite**: 124 unit, property, and fuzz tests passing (100%).
+- **CLI Suite**: 21 integration, sync, unit, and E2E transfer tests passing (100%).
+- **Desktop Smoke**: 41 smoke, stress, multi-round, and interop suites passing (100%).
+- **Python Reference**: 10/10 test vector groups verified successfully.
+- **Typecheck & Syntax**: Zero TypeScript errors (`strict`, `exactOptionalPropertyTypes`) and zero JavaScript syntax errors.

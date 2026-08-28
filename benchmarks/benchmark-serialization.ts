@@ -3,8 +3,8 @@
  * Measures serialization latency in microseconds per operation (μs/op).
  */
 
-import { canonicalJson, parseCanonicalJson } from '../reference/core-src/canonical-json.js';
-import { optimizedCanonicalJson } from '../optimizations/optimized-canonical-json.js';
+import { canonicalJson, parseCanonicalJson } from '../packages/core/src/canonical-json.js';
+import { optimizedCanonicalJson } from '../packages/core/src/optimizations/optimized-canonical-json.js';
 
 function runSerializationBenchmark(): void {
   const SAMPLES = 50000;

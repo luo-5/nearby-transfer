@@ -13,9 +13,9 @@ import {
   FRAME_KIND_CONTROL,
   FRAME_KIND_PROGRESS,
   CONTROL_TYPES,
-} from '../reference/core-src/transfer/stream-session.js';
-import { encodeFrame as encodeChunkFrame, decodeFrame as decodeChunkFrame } from '../reference/core-src/transfer/chunk-frame.js';
-import { encryptChunk, decryptChunk, KEY_BYTES } from '../reference/core-src/crypto/session.js';
+} from '../packages/core/src/transfer/stream-session.js';
+import { encodeFrame as encodeChunkFrame, decodeFrame as decodeChunkFrame } from '../packages/core/src/transfer/chunk-frame.js';
+import { encryptChunk, decryptChunk, KEY_BYTES } from '../packages/core/src/crypto/session.js';
 
 async function runLoopbackBenchmark(): Promise<void> {
   const TOTAL_BYTES = 50 * 1024 * 1024; // 50 MB

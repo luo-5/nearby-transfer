@@ -213,34 +213,62 @@ test('e2e: sender → receiver transfers a 256 KB file with correct SHA-256', as
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as net.AddressInfo).port;
 
-    const controller = new AbortController();
-    const executor = await createDesktopTransferExecutor({
-      job: {
-        taskId: sm.manifest.taskId,
-        peerDeviceId: receiver.deviceId,
-        direction: JOB_DIRECTION.OUTGOING,
-        status: JOB_STATUS.TRANSFERRING,
-        manifest: sm.manifest,
-        sources: sm.files as never,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        errorMessage: null,
-        diagnosticCode: null,
-        files: [],
-        outgoingCheckpoint: null,
-        localDeviceId: sender.deviceId,
-        signingPrivateKey: sender.signingPrivateKey,
-        remoteSigningPublicKey: receiver.signingPublicKey,
-        remoteEncryptionPublicKey: receiver.encryptionPublicKey,
-        peer: { host: '127.0.0.1', port },
-      } as never,
-      checkpoint: null,
-      signal: controller.signal,
-      commitRemoteCheckpoint: () => ({}) as never,
-    });
+    try {
+      const controller = new AbortController();
+      const totalBytes = sm.files.reduce((sum, f) => sum + f.size, 0);
+      const checkpoint = {
+        files: sm.files.map((f) => ({ path: f.path, size: f.size, committedOffset: 0, completed: false })),
+        nextSequence: 0,
+        totalTransferred: 0,
+      };
+      const executor = await createDesktopTransferExecutor({
+        job: {
+          taskId: sm.manifest.taskId,
+          peerDeviceId: receiver.deviceId,
+          direction: JOB_DIRECTION.OUTGOING,
+          status: JOB_STATUS.TRANSFERRING,
+          manifest: sm.manifest,
+          sources: sm.files,
+          sourceMappingStatus: 'available',
+          progress: { transferredBytes: 0, totalBytes },
+        } as never,
+        checkpoint,
+        signal: controller.signal,
+        commitRemoteCheckpoint: (cp) => cp,
+        localDevice: {
+          deviceId: sender.deviceId,
+          signingPrivateKey: sender.signingPrivateKey,
+        },
+        trustedPeerStore: {
+          getTrustedPeer: () => ({
+            identity: {
+              deviceId: receiver.deviceId,
+              deviceName: receiver.deviceName,
+              fingerprint: receiver.fingerprint,
+              signingPublicKey: receiver.signingPublicKey,
+              encryptionPublicKey: receiver.encryptionPublicKey,
+            },
+            permissions: { transfer: true },
+            revokedAt: null,
+          }),
+        },
+        lanService: {
+          listPeers: () => [{
+            deviceId: receiver.deviceId,
+            deviceName: receiver.deviceName,
+            fingerprint: receiver.fingerprint,
+            signingPublicKey: receiver.signingPublicKey,
+            encryptionPublicKey: receiver.encryptionPublicKey,
+            host: '127.0.0.1',
+            port,
+          }],
+        },
+      });
 
-    await executor.done;
-    server.close();
+      await executor.done;
+    } finally {
+      server.close();
+    }
 
     const receivedPath = join(recvDir, 'test.bin');
     const receivedContent = readFileSync(receivedPath);
@@ -294,34 +322,62 @@ test('e2e: multiple files transfer with correct sizes and hashes', async () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as net.AddressInfo).port;
 
-    const controller = new AbortController();
-    const executor = await createDesktopTransferExecutor({
-      job: {
-        taskId: sm.manifest.taskId,
-        peerDeviceId: receiver.deviceId,
-        direction: JOB_DIRECTION.OUTGOING,
-        status: JOB_STATUS.TRANSFERRING,
-        manifest: sm.manifest,
-        sources: sm.files as never,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        errorMessage: null,
-        diagnosticCode: null,
-        files: [],
-        outgoingCheckpoint: null,
-        localDeviceId: sender.deviceId,
-        signingPrivateKey: sender.signingPrivateKey,
-        remoteSigningPublicKey: receiver.signingPublicKey,
-        remoteEncryptionPublicKey: receiver.encryptionPublicKey,
-        peer: { host: '127.0.0.1', port },
-      } as never,
-      checkpoint: null,
-      signal: controller.signal,
-      commitRemoteCheckpoint: () => ({}) as never,
-    });
+    try {
+      const controller = new AbortController();
+      const totalBytes = sm.files.reduce((sum, f) => sum + f.size, 0);
+      const checkpoint = {
+        files: sm.files.map((f) => ({ path: f.path, size: f.size, committedOffset: 0, completed: false })),
+        nextSequence: 0,
+        totalTransferred: 0,
+      };
+      const executor = await createDesktopTransferExecutor({
+        job: {
+          taskId: sm.manifest.taskId,
+          peerDeviceId: receiver.deviceId,
+          direction: JOB_DIRECTION.OUTGOING,
+          status: JOB_STATUS.TRANSFERRING,
+          manifest: sm.manifest,
+          sources: sm.files,
+          sourceMappingStatus: 'available',
+          progress: { transferredBytes: 0, totalBytes },
+        } as never,
+        checkpoint,
+        signal: controller.signal,
+        commitRemoteCheckpoint: (cp) => cp,
+        localDevice: {
+          deviceId: sender.deviceId,
+          signingPrivateKey: sender.signingPrivateKey,
+        },
+        trustedPeerStore: {
+          getTrustedPeer: () => ({
+            identity: {
+              deviceId: receiver.deviceId,
+              deviceName: receiver.deviceName,
+              fingerprint: receiver.fingerprint,
+              signingPublicKey: receiver.signingPublicKey,
+              encryptionPublicKey: receiver.encryptionPublicKey,
+            },
+            permissions: { transfer: true },
+            revokedAt: null,
+          }),
+        },
+        lanService: {
+          listPeers: () => [{
+            deviceId: receiver.deviceId,
+            deviceName: receiver.deviceName,
+            fingerprint: receiver.fingerprint,
+            signingPublicKey: receiver.signingPublicKey,
+            encryptionPublicKey: receiver.encryptionPublicKey,
+            host: '127.0.0.1',
+            port,
+          }],
+        },
+      });
 
-    await executor.done;
-    server.close();
+      await executor.done;
+    } finally {
+      server.close();
+    }
 
     const recvA = readFileSync(join(recvDir, 'a.bin'));
     const recvB = readFileSync(join(recvDir, 'b.bin'));

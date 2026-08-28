@@ -11,8 +11,8 @@ import { Buffer } from 'node:buffer';
 import { APP_ID, MESSAGE_TYPES, PROTOCOL_VERSION } from '../constants.js';
 import { encodeWireFrame, decodeWireFrame, WireFrameDecoder, type WireFrame } from './wire-frame.js';
 import {
-  TYPE_TRANSFER_DECISION, TYPE_TRANSFER_MANIFEST, TYPE_TRANSFER_PROGRESS,
-  decodeTransferMessage, encodeTransferMessage, type ControlCheckpoint,
+  TYPE_TRANSFER_DECISION, TYPE_TRANSFER_MANIFEST, TYPE_TRANSFER_PROGRESS, TYPE_TRANSFER_RESUME,
+  advanceTransferControlCheckpoint, decodeTransferMessage, encodeTransferMessage, type ControlCheckpoint,
 } from './message-codec.js';
 import { signTransferMessage, verifyTransferMessage } from './message-auth.js';
 import { serializeTransferManifest, normalizeTransferManifest, type TransferManifest } from './manifest.js';
@@ -79,8 +79,9 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
   const senderEphemeralPublicKey = envelope.senderEphemeralPublicKey as string;
   const sessionId = envelope.sessionId as string;
 
-  // Phase 2: send the accepted decision
+  // Phase 2: send the accepted decision and resume checkpoint frame
   const now = Date.now();
+  const manifestHash = crypto.createHash('sha256').update(serializeTransferManifest(manifest)).digest('hex');
   const decision = signTransferMessage(TYPE_TRANSFER_DECISION, {
     app: APP_ID, protocolVersion: PROTOCOL_VERSION, type: TYPE_TRANSFER_DECISION,
     taskId: manifest.taskId, sessionId,
@@ -91,10 +92,33 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
     header: { app: APP_ID, protocolVersion: PROTOCOL_VERSION, type: MESSAGE_TYPES.TRANSFER_DECISION },
     payload: encodeTransferMessage(TYPE_TRANSFER_DECISION, decision, { now }),
   });
-  await writeBuffer(config.socket, decisionFrame);
+
+  const resume = signTransferMessage(TYPE_TRANSFER_RESUME, {
+    app: APP_ID, protocolVersion: PROTOCOL_VERSION, type: TYPE_TRANSFER_RESUME,
+    taskId: manifest.taskId, sessionId,
+    senderDeviceId: config.localDeviceId, receiverDeviceId: senderDeviceId,
+    manifestHash,
+    files: manifest.entries
+      .filter((entry) => entry.kind === 'file')
+      .map((entry) => ({
+        path: entry.path,
+        size: entry.size,
+        committedOffset: 0,
+        completed: false,
+      })),
+    nextSequence: 0,
+    totalTransferred: 0,
+    issuedAt: now,
+    expiresAt: now + DEFAULT_TTL_MS,
+  } as Record<string, unknown>, config.localSigningPrivateKey, { now });
+  const resumeFrame = encodeWireFrame({
+    header: { app: APP_ID, protocolVersion: PROTOCOL_VERSION, type: MESSAGE_TYPES.TRANSFER_RESUME },
+    payload: encodeTransferMessage(TYPE_TRANSFER_RESUME, resume, { now }),
+  });
+
+  await writeBuffer(config.socket, Buffer.concat([decisionFrame, resumeFrame]));
 
   // Phase 3: derive the session key
-  const manifestHash = crypto.createHash('sha256').update(serializeTransferManifest(manifest)).digest('hex');
   const remoteEphemeralPem = rawX25519ToPem(senderEphemeralPublicKey);
   const sessionKey = deriveSessionKey({
     localPrivateKeyPem: config.localEncryptionPrivateKey,
@@ -123,10 +147,14 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
   });
 
   // Phase 6: create the stream session (receiver role)
-  let controlCheckpoint: ControlCheckpoint | null = null;
+  let controlCheckpoint: ControlCheckpoint | null = advanceTransferControlCheckpoint(TYPE_TRANSFER_RESUME, resume, { now, checkpoint: null });
   const fileSizes = new Map<string, number>();
   for (const entry of manifest.entries) {
     if (entry.kind === 'file') fileSizes.set(entry.path, entry.size);
+  }
+
+  if (manifestResult.leftover && manifestResult.leftover.length > 0) {
+    config.socket.unshift(manifestResult.leftover);
   }
 
   let session: ReturnType<typeof createTransferStreamSession>;
@@ -137,14 +165,13 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
     taskId: manifest.taskId,
     localPeerId: config.localDeviceId,
     remotePeerId: senderDeviceId,
-    ...(manifestResult.leftover ? { initialBuffer: manifestResult.leftover } : {}),
     encodeControl: (message, _ctx) => codec.encodeControl(message),
     decodeControl: (bytes, _ctx) => codec.decodeControl(bytes),
     verifyControl: (decoded, _ctx) => codec.verifyControl(decoded),
     encodeProgress: (progress: unknown, ctx: unknown) => {
       const wp = progress as WriterProgress;
-      const chunkCtx = ctx as { chunk?: ChunkFrameInput };
-      const path = chunkCtx?.chunk?.relativePath ?? wp.files[0]?.path ?? '';
+      const chunkCtx = ctx as { chunk?: { path?: string; relativePath?: string } };
+      const path = chunkCtx?.chunk?.path ?? chunkCtx?.chunk?.relativePath ?? wp.files[0]?.path ?? '';
       const fileSize = fileSizes.get(path) ?? 0;
       const fileProgress = wp.files.find((f) => f.path === path);
       const totalTransferred = wp.files.reduce((sum, f) => sum + f.committedOffset, 0);
@@ -158,7 +185,8 @@ export async function createTransferReceiver(input: TransferReceiverInput): Prom
         completed: fileProgress?.completed ?? false,
         nextSequence: wp.nextSequence, totalTransferred,
         issuedAt: ts, expiresAt: ts + DEFAULT_TTL_MS,
-      } as Record<string, unknown>, config.localSigningPrivateKey, { now: ts });
+      } as Record<string, unknown>, config.localSigningPrivateKey, { now: ts, checkpoint: controlCheckpoint });
+      controlCheckpoint = advanceTransferControlCheckpoint(TYPE_TRANSFER_PROGRESS, signed, { now: ts, checkpoint: controlCheckpoint });
       return Buffer.from(encodeTransferMessage(TYPE_TRANSFER_PROGRESS, signed, { now: ts }));
     },
     decodeProgress: (_bytes: Buffer, _ctx: unknown) => { throw new Error('Receiver does not decode progress'); },
@@ -222,6 +250,7 @@ async function receiveWireFrame(socket: import('node:net').Socket, timeoutMs: nu
         const frames = decoder.push(chunk);
         if (frames.length > 0) {
           clearTimeout(timer);
+          socket.pause();
           socket.removeListener('data', onData);
           socket.removeListener('error', onError);
           socket.removeListener('close', onClose);
@@ -232,14 +261,15 @@ async function receiveWireFrame(socket: import('node:net').Socket, timeoutMs: nu
         }
       } catch (error) {
         clearTimeout(timer);
+        socket.pause();
         socket.removeListener('data', onData);
         socket.removeListener('error', onError);
         socket.removeListener('close', onClose);
         reject(error as Error);
       }
     }
-    function onError(error: Error): void { clearTimeout(timer); reject(error); }
-    function onClose(): void { clearTimeout(timer); reject(new Error('Transfer stream closed during bootstrap')); }
+    function onError(error: Error): void { clearTimeout(timer); socket.pause(); reject(error); }
+    function onClose(): void { clearTimeout(timer); socket.pause(); reject(new Error('Transfer stream closed during bootstrap')); }
 
     socket.on('data', onData);
     socket.once('error', onError);

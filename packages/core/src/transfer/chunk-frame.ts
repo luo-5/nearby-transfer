@@ -25,6 +25,7 @@ export const MAX_FRAME_BYTES = HEADER_BYTES + TASK_ID_CHAR_LENGTH + MAX_RELATIVE
 export interface ChunkFrameInput {
   taskId: string;
   relativePath: string;
+  path?: string;
   offset: number;
   sequence: number;
   plainLength: number;
@@ -33,7 +34,9 @@ export interface ChunkFrameInput {
   ciphertext: Uint8Array;
 }
 
-export interface ChunkFrame extends Readonly<ChunkFrameInput> {}
+export interface ChunkFrame extends Readonly<ChunkFrameInput> {
+  readonly path?: string;
+}
 
 export function encodeFrame(input: ChunkFrameInput): Buffer {
   const frame = normalizeFrame(input);
@@ -175,11 +178,20 @@ function decodeCompleteFrame(encoded: Buffer, header: ChunkHeader): ChunkFrame {
   return Object.freeze({ taskId, relativePath, offset: header.offset, sequence: header.sequence, plainLength: header.plainLength, nonce, authTag, ciphertext });
 }
 
-function normalizeFrame(input: ChunkFrameInput): ChunkFrameInput {
+function normalizeFrame(input: ChunkFrameInput): ChunkFrameInput & { relativePath: string } {
   assertPlainObject(input, 'Transfer chunk frame');
-  assertExactKeys(input as unknown as Record<string, unknown>, ['taskId', 'relativePath', 'offset', 'sequence', 'plainLength', 'nonce', 'authTag', 'ciphertext'], 'Transfer chunk frame');
+  const allowedKeys = ['taskId', 'relativePath', 'path', 'offset', 'sequence', 'plainLength', 'nonce', 'authTag', 'ciphertext'];
+  for (const key of Object.keys(input)) {
+    if (!allowedKeys.includes(key)) {
+      throw new TypeError('Transfer chunk frame contains missing or unsupported fields');
+    }
+  }
+  const relativePath = input.relativePath ?? (input as { path?: string }).path;
+  if (typeof relativePath !== 'string') {
+    throw new TypeError('Transfer chunk frame contains missing or unsupported fields');
+  }
   assertValidTaskId(input.taskId);
-  assertValidRelativePath(input.relativePath);
+  assertValidRelativePath(relativePath);
   assertSafeInteger(input.offset, 'Transfer chunk offset');
   assertSafeInteger(input.sequence, 'Transfer chunk sequence');
   if (input.sequence > MAX_SEQUENCE) throw new RangeError('Transfer chunk sequence exceeds the supported range');
@@ -190,18 +202,18 @@ function normalizeFrame(input: ChunkFrameInput): ChunkFrameInput {
   const ciphertext = requireBytes(input.ciphertext, 'Transfer chunk ciphertext');
   if (ciphertext.length > MAX_CHUNK_BYTES || ciphertext.length !== input.plainLength) throw new RangeError('Transfer chunk ciphertext length must equal plainLength');
 
-  return { taskId: input.taskId, relativePath: input.relativePath, offset: input.offset, sequence: input.sequence, plainLength: input.plainLength, nonce: Buffer.from(nonce), authTag: Buffer.from(authTag), ciphertext: Buffer.from(ciphertext) };
+  return { taskId: input.taskId, path: relativePath, relativePath, offset: input.offset, sequence: input.sequence, plainLength: input.plainLength, nonce: Buffer.from(nonce), authTag: Buffer.from(authTag), ciphertext: Buffer.from(ciphertext) };
 }
 
 function decodeCanonicalUtf8(bytes: Buffer, subject: string): string {
+  let decoded: string;
   try {
-    const decoded = UTF8_DECODER.decode(bytes);
-    if (!Buffer.from(decoded, 'utf8').equals(bytes)) throw new TypeError(`${subject} is not canonical UTF-8`);
-    return decoded;
+    decoded = UTF8_DECODER.decode(bytes);
   } catch (error) {
-    if (error instanceof TypeError) throw error;
-    throw new TypeError(`${subject} is not valid UTF-8`);
+    throw new TypeError(`${subject} is not valid UTF-8`, { cause: error });
   }
+  if (!Buffer.from(decoded, 'utf8').equals(bytes)) throw new TypeError(`${subject} is not canonical UTF-8`);
+  return decoded;
 }
 
 function readSafeUInt64(encoded: Buffer, offset: number, subject: string): number {
