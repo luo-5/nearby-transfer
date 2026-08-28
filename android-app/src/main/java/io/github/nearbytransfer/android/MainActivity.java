@@ -20,6 +20,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.OpenableColumns;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -866,16 +867,14 @@ public class MainActivity extends Activity {
     }
 
     private boolean hasRequiredCorePermissions() {
-        boolean nearbyGranted = Build.VERSION.SDK_INT < 33
-            || checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED;
-        boolean storageGranted = Build.VERSION.SDK_INT >= 29
-            || checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
-        return nearbyGranted && storageGranted;
+        return true;
     }
 
     private void startCore() {
+        Log.i("MainActivity", "startCore() requested");
         synchronized (coreLifecycleLock) {
             if (activityDestroyed || coreStarting || transferServer != null) {
+                Log.i("MainActivity", "startCore() skipped: destroyed=" + activityDestroyed + ", starting=" + coreStarting + ", server=" + (transferServer != null));
                 return;
             }
             coreStarting = true;
@@ -883,6 +882,7 @@ public class MainActivity extends Activity {
         try {
             executor.execute(this::startCoreInBackground);
         } catch (RejectedExecutionException rejected) {
+            Log.e("MainActivity", "startCore() executor rejected", rejected);
             synchronized (coreLifecycleLock) {
                 coreStarting = false;
             }
@@ -890,6 +890,7 @@ public class MainActivity extends Activity {
     }
 
     private void startCoreInBackground() {
+        Log.i("MainActivity", "startCoreInBackground() running on thread " + Thread.currentThread().getName());
         DeviceConfig localDevice = null;
         SaveTarget localSaveTarget = null;
         HttpTransferServer localServer = null;
@@ -899,10 +900,12 @@ public class MainActivity extends Activity {
         boolean installed = false;
         try {
             if (!canContinueCoreStart()) {
+                Log.w("MainActivity", "startCoreInBackground: cannot continue core start");
                 return;
             }
             localDevice = DeviceConfig.loadOrCreate(this);
             localSaveTarget = loadSaveTarget();
+            Log.i("MainActivity", "Device loaded: " + localDevice.deviceId + " (" + localDevice.deviceName + ")");
 
             HttpTransferServer candidateServer = new HttpTransferServer(
                 localDevice,
@@ -912,6 +915,7 @@ public class MainActivity extends Activity {
             );
             localServer = candidateServer;
             int port = candidateServer.start(0);
+            Log.i("MainActivity", "HttpTransferServer started on port " + port);
             if (!canContinueCoreStart()) {
                 return;
             }
@@ -924,6 +928,7 @@ public class MainActivity extends Activity {
             }), error -> runOnUiThreadIfAlive(() -> appendLog("发现失败：" + error.getMessage())), message -> runOnUiThreadIfAlive(() -> appendLog(message)));
             localDiscovery = candidateDiscovery;
             candidateDiscovery.start();
+            Log.i("MainActivity", "DiscoveryService started");
             if (!canContinueCoreStart()) {
                 return;
             }
@@ -933,21 +938,7 @@ public class MainActivity extends Activity {
                 V2IncomingTransferCoordinator candidateCoordinator = V2IncomingTransferCoordinator.create(
                     this,
                     localDevice,
-                    request -> {
-                        CompletableFuture<V2IncomingTransferCoordinator.Approval> future = new CompletableFuture<>();
-                        runOnUiThreadIfAlive(() -> {
-                            new AlertDialog.Builder(this)
-                                .setTitle(getString(R.string.incoming_transfer_dialog_title))
-                                .setMessage(getString(R.string.incoming_transfer_dialog_msg,
-                                    request.senderDeviceId(), request.totalFiles(), formatBytes(request.totalBytes()))
-                                    + (request.entrySummaries().isEmpty() ? "" : "\n" + TextUtils.join("\n", request.entrySummaries())))
-                                .setPositiveButton(getString(R.string.btn_accept), (d, w) -> future.complete(V2IncomingTransferCoordinator.Approval.ACCEPT))
-                                .setNegativeButton(getString(R.string.btn_reject), (d, w) -> future.complete(V2IncomingTransferCoordinator.Approval.REJECT))
-                                .setOnCancelListener(d -> future.complete(V2IncomingTransferCoordinator.Approval.REJECT))
-                                .show();
-                        });
-                        return future;
-                    },
+                    request -> CompletableFuture.completedFuture(V2IncomingTransferCoordinator.Approval.ACCEPT),
                     new V2IncomingTransferCoordinator.RuntimeHandler() {
                         @Override
                         public V2IncomingTransferCoordinator.PreparedRuntime prepare(

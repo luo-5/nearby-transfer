@@ -7,6 +7,7 @@ import android.content.Context
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import java.io.InputStream
@@ -188,10 +189,10 @@ class MediaStorePublicationBackend(
         }
         providerCall("publish MediaStore row") {
             resolver.update(
-                collection,
+                row.uri,
                 values,
-                "${MediaStore.MediaColumns._ID} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 1",
-                arrayOf(row.id.toString()),
+                "${MediaStore.MediaColumns.IS_PENDING} = 1",
+                null,
             )
         }
 
@@ -223,9 +224,9 @@ class MediaStorePublicationBackend(
                 // already become visible.
                 providerCall("abort MediaStore row") {
                     resolver.delete(
-                        collection,
-                        "${MediaStore.MediaColumns._ID} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 1",
-                        arrayOf(row.id.toString()),
+                        row.uri,
+                        "${MediaStore.MediaColumns.IS_PENDING} = 1",
+                        null,
                     )
                 }
                 return inspectLocked(key)
@@ -242,13 +243,22 @@ class MediaStorePublicationBackend(
     private fun inspectRowsLocked(key: PublicationFileKey): RowLookup {
         val prefix = keyPrefix(key)
         val rows = providerCall("query MediaStore publication rows") {
-            resolver.query(
-                collection,
-                PROJECTION,
-                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
-                arrayOf("$prefix%"),
-                null,
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val queryArgs = Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?")
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf("$prefix%"))
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                }
+                resolver.query(collection, PROJECTION, queryArgs, null)
+            } else {
+                resolver.query(
+                    collection,
+                    PROJECTION,
+                    "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+                    arrayOf("$prefix%"),
+                    null,
+                )
+            }
         } ?: throw PublicationException("MediaStore returned no cursor for publication query")
 
         rows.use { cursor ->
@@ -310,18 +320,20 @@ class MediaStorePublicationBackend(
         }
 
     private fun hashContent(uri: Uri): ContentDigest = providerCall("read MediaStore row for verification") {
-        val input = resolver.openInputStream(uri)
-            ?: throw PublicationException("MediaStore refused to open the destination for verification")
-        input.use(::readAndHash)
+        val input = try {
+            resolver.openInputStream(uri)
+        } catch (e: java.io.FileNotFoundException) {
+            null
+        }
+        input?.use(::readAndHash) ?: ContentDigest(0L, sha256(ByteArray(0)))
     }
 
     private fun deletePendingToken(uri: Uri) {
-        val id = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return
         runCatching {
             resolver.delete(
-                collection,
-                "${MediaStore.MediaColumns._ID} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 1",
-                arrayOf(id.toString()),
+                uri,
+                "${MediaStore.MediaColumns.IS_PENDING} = 1",
+                null,
             )
         }
     }

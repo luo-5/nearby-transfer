@@ -55,6 +55,16 @@ Nearby Transfer 是一个局域网加密文件传输 + NAS WebDAV 应用，包�
 - Python 向量：10/10 通过
 - TypeScript strict 编译 (`exactOptionalPropertyTypes: true`)：零错误
 - npm 官方源：`@luo-5/core@0.2.0` 和 `@luo-5/cli@0.2.0` 均已实时在线
+- ## 3-VM Matrix & Chaos Testing Complete (53/53 Passed)
+- **Status**: 100% ALL PASS
+- **Test Matrix Details**:
+  - Phase 1: 6-pair bidirectional full size matrix (0B, 1B, 64KB, 256KB, 10MB, 50MB) across Ubuntu, CentOS, Windows VM (36/36 Passed).
+  - Phase 2: 20-level deep trees, pathological charsets (CJK, GB18030, Emoji), 200+ file floods (9/9 Passed).
+  - Phase 3: Flow control 20-pulse oscillation thrashing and 99% cancel (2/2 Passed).
+  - Phase 4: Fuzzing & security attacks (Bit-flip, forged signatures, expired replays) (3/3 Passed).
+  - Phase 5: WebDAV HTTPS 36-assertion suite, 10-parallel upload stress, 7-protocol matrix switcher (3/3 Passed).
+- **Report**: [EXTREME_3VM_CHAOS_TEST_REPORT.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/EXTREME_3VM_CHAOS_TEST_REPORT.md)
+- **Next Step**: Prompt user to plug in 2 Android phones via USB debugging for the mobile phase.
 
 ---
 

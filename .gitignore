@@ -23,3 +23,9 @@ references/
 running_ports.json
 phone_screen_*.png
 *.corrupt-*
+scratch/
+__pycache__/
+*.pyc
+test_payloads/
+*.tmp
+ui_tmp.xml

@@ -239,28 +239,42 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
 
     void handleManifestFrame(V2WireFrame.Frame frame, ConnectionHandle connection) {
         Objects.requireNonNull(connection, "connection");
-        if (isClosed()) return;
+        if (isClosed()) {
+            Log.w(TAG, "handleManifestFrame: coordinator is closed");
+            return;
+        }
 
         long receivedAt = clock.nowEpochMillis();
         V2TransferMessage.ManifestEnvelope decoded;
         try {
-            if (frame == null || !V2TransferMessage.TYPE_MANIFEST.equals(frame.header.opt("type"))) return;
+            if (frame == null || !V2TransferMessage.TYPE_MANIFEST.equals(frame.header.opt("type"))) {
+                Log.w(TAG, "handleManifestFrame: invalid frame header: " + (frame == null ? "null" : frame.header));
+                return;
+            }
             V2TransferMessage.Message candidate = V2TransferMessage.decode(
                 V2TransferMessage.TYPE_MANIFEST, frame.payload, receivedAt
             );
-            if (!(candidate instanceof V2TransferMessage.ManifestEnvelope)) return;
+            if (!(candidate instanceof V2TransferMessage.ManifestEnvelope)) {
+                Log.w(TAG, "handleManifestFrame: candidate is not ManifestEnvelope");
+                return;
+            }
             decoded = (V2TransferMessage.ManifestEnvelope) candidate;
-        } catch (Exception ignored) {
+        } catch (Exception error) {
+            Log.e(TAG, "handleManifestFrame: decode error", error);
             return;
         }
 
         V2TransferPeerAccess.AuthorizedPeer peer;
         try {
             peer = peerLookup.findAuthorizedPeer(decoded.senderDeviceId);
-        } catch (Exception ignored) {
+        } catch (Exception error) {
+            Log.e(TAG, "handleManifestFrame: findAuthorizedPeer error for " + decoded.senderDeviceId, error);
             return;
         }
-        if (peer == null || !decoded.senderDeviceId.equals(peer.getDeviceId())) return;
+        if (peer == null || !decoded.senderDeviceId.equals(peer.getDeviceId())) {
+            Log.w(TAG, "handleManifestFrame: peer unauthorized or null: " + decoded.senderDeviceId + ", found: " + (peer == null ? "null" : peer.getDeviceId()));
+            return;
+        }
 
         V2TransferBootstrap.VerifiedManifest verified;
         try {
@@ -271,7 +285,8 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
                 peer.getDeviceId(),
                 receivedAt
             );
-        } catch (Exception ignored) {
+        } catch (Exception error) {
+            Log.e(TAG, "handleManifestFrame: verifyIncomingManifestFrame error", error);
             return;
         }
 
@@ -374,6 +389,7 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
             try {
                 runtime = runtimeHandler.prepare(verified, currentPeer);
             } catch (Exception error) {
+                Log.e(TAG, "prepare runtime error for task " + verified.taskId, error);
                 jobs.transition(verified.taskId, "FAILED", clock.nowEpochMillis(), "Runtime preparation failed", false);
                 sendDecision(connection, verified, "rejected");
                 return;
@@ -398,6 +414,7 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
                     socket = null;
                     runtime = null;
                 } catch (Exception error) {
+                    Log.e(TAG, "runtime handoff/start error", error);
                     closeQuietly(socket);
                     transitionQuietly(
                         verified.taskId, "FAILED", "Incoming transfer runtime handoff failed.", true
@@ -410,6 +427,7 @@ final class V2IncomingTransferCoordinator implements V2LanService.TransferHandle
                 finishHandoff();
             }
         } catch (Exception error) {
+            Log.e(TAG, "approval coordination exception", error);
             if (persisted) {
                 transitionQuietly(verified.taskId, "FAILED", "Incoming transfer approval coordination failed.", false);
                 if (!acceptedDecisionStarted && !isClosed()) sendDecision(connection, verified, "rejected");

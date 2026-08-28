@@ -101,8 +101,9 @@ final class V2LanService implements Closeable {
         }
 
         void sendTransferDecisionFrame(V2WireFrame.Frame frame) throws Exception {
-            if (frame == null || !V2TransferMessage.TYPE_DECISION.equals(frame.header.opt("type"))) {
-                throw new IllegalArgumentException("A transfer-decision wire frame is required");
+            Object type = frame == null ? null : frame.header.opt("type");
+            if (frame == null || (!V2TransferMessage.TYPE_DECISION.equals(type) && !V2TransferMessage.TYPE_RESUME.equals(type))) {
+                throw new IllegalArgumentException("A transfer-decision or transfer-resume wire frame is required");
             }
             synchronized (this) {
                 if (!transferManifestDispatched || detached) {

@@ -170,10 +170,14 @@ final class V2TransferCrypto {
     static byte[] buildChunkAad(String taskId, String path, long offset, long sequence, long plainLength) {
         requireChunkMetadata(taskId, path, offset, sequence, plainLength);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        output.writeBytes(encodeFields(CONTEXT, CHUNK_AAD_LABEL, taskId, path));
-        output.writeBytes(encodeLong(offset));
-        output.writeBytes(encodeLong(sequence));
-        output.writeBytes(encodeInt((int) plainLength));
+        byte[] f = encodeFields(CONTEXT, CHUNK_AAD_LABEL, taskId, path);
+        output.write(f, 0, f.length);
+        byte[] o = encodeLong(offset);
+        output.write(o, 0, o.length);
+        byte[] s = encodeLong(sequence);
+        output.write(s, 0, s.length);
+        byte[] p = encodeInt((int) plainLength);
+        output.write(p, 0, p.length);
         return output.toByteArray();
     }
 
@@ -434,8 +438,9 @@ final class V2TransferCrypto {
             }
             requireWellFormedString(field, "Protocol field");
             byte[] encoded = field.getBytes(StandardCharsets.UTF_8);
-            output.writeBytes(encodeInt(encoded.length));
-            output.writeBytes(encoded);
+            byte[] lenBytes = encodeInt(encoded.length);
+            output.write(lenBytes, 0, lenBytes.length);
+            output.write(encoded, 0, encoded.length);
         }
         return output.toByteArray();
     }
@@ -468,7 +473,7 @@ final class V2TransferCrypto {
                 byte[] next = mac.doFinal();
                 Arrays.fill(previous, (byte) 0);
                 previous = next;
-                output.writeBytes(previous);
+                output.write(previous, 0, previous.length);
                 counter++;
             }
             return Arrays.copyOf(output.toByteArray(), outputLength);

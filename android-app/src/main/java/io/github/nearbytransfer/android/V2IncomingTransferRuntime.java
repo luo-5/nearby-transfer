@@ -260,13 +260,17 @@ public final class V2IncomingTransferRuntime implements Closeable, AutoCloseable
     }
 
     private void runStreamSession() {
+        android.util.Log.i("V2RxRuntime", "runStreamSession starting for task " + verified.taskId);
         try {
             streamSession.run();
+            android.util.Log.i("V2RxRuntime", "runStreamSession completed cleanly for task " + verified.taskId);
         } catch (CancellationException cancelled) {
+            android.util.Log.w("V2RxRuntime", "runStreamSession cancelled", cancelled);
             if (listener != null) {
                 listener.onTransferFailed(verified.taskId, "Transfer was cancelled.");
             }
         } catch (Throwable error) {
+            android.util.Log.e("V2RxRuntime", "runStreamSession error for task " + verified.taskId, error);
             String message = error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
             try {
                 persistence.transition(
