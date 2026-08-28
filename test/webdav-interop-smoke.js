@@ -120,6 +120,12 @@ async function main() {
       ok('GET file content matches', r.body === 'Hello WebDAV World', r.body);
       ok('GET returns Accept-Ranges: bytes', r.headers['accept-ranges'] === 'bytes', r.headers['accept-ranges']);
       ok('GET returns ETag', !!r.headers.etag, r.headers.etag);
+
+      // Range request verification (bytes=0-4 -> "Hello")
+      const rangeReq = await httpRequest({ ...base, method: 'GET', path: '/docs/hello.txt', headers: { ...authHeaders, Range: 'bytes=0-4' } });
+      ok('GET Range returns 206', rangeReq.statusCode === 206, `got ${rangeReq.statusCode}`);
+      ok('GET Range content matches', rangeReq.body === 'Hello', `got ${rangeReq.body}`);
+      ok('GET Range Content-Range header present', (rangeReq.headers['content-range'] || '').startsWith('bytes 0-4/'), rangeReq.headers['content-range']);
     }
 
     // ── Test 6: PUT upload (Content-Length) ─────────────────────────────────

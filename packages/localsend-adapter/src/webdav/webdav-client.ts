@@ -11,24 +11,24 @@ import { Readable } from 'node:stream';
 import { Buffer } from 'node:buffer';
 
 export interface WebDavAuth {
-  username?: string;
-  password?: string;
-  bearerToken?: string;
+  username?: string | undefined;
+  password?: string | undefined;
+  bearerToken?: string | undefined;
 }
 
 export interface WebDavClientOptions {
   baseUrl: string;
-  auth?: WebDavAuth;
-  rejectUnauthorized?: boolean;
-  timeoutMs?: number;
+  auth?: WebDavAuth | undefined;
+  rejectUnauthorized?: boolean | undefined;
+  timeoutMs?: number | undefined;
 }
 
 export interface WebDavItem {
   href: string;
   isCollection: boolean;
-  contentLength?: number;
-  lastModified?: string;
-  contentType?: string;
+  contentLength?: number | undefined;
+  lastModified?: string | undefined;
+  contentType?: string | undefined;
 }
 
 export interface WebDavResponse<T = unknown> {
@@ -40,7 +40,7 @@ export interface WebDavResponse<T = unknown> {
 
 export class WebDavClient {
   readonly baseUrl: URL;
-  readonly auth?: WebDavAuth;
+  readonly auth?: WebDavAuth | undefined;
   readonly rejectUnauthorized: boolean;
   readonly timeoutMs: number;
 

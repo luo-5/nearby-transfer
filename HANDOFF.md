@@ -62,9 +62,10 @@ Nearby Transfer 是一个局域网加密文件传输 + NAS WebDAV 应用，包�
   - Phase 2: 20-level deep trees, pathological charsets (CJK, GB18030, Emoji), 200+ file floods (9/9 Passed).
   - Phase 3: Flow control 20-pulse oscillation thrashing and 99% cancel (2/2 Passed).
   - Phase 4: Fuzzing & security attacks (Bit-flip, forged signatures, expired replays) (3/3 Passed).
-  - Phase 5: WebDAV HTTPS 36-assertion suite, 10-parallel upload stress, 7-protocol matrix switcher (3/3 Passed).
-- **Report**: [EXTREME_3VM_CHAOS_TEST_REPORT.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/EXTREME_3VM_CHAOS_TEST_REPORT.md)
-- **Next Step**: Prompt user to plug in 2 Android phones via USB debugging for the mobile phase.
+  - Phase 5: WebDAV HTTPS 39-assertion suite, rclone 10-stream interop, 7-protocol matrix switcher (3/3 Passed).
+  - Phase 6: Android 9-matrix hardware verification on Redmi K50 (HyperOS) and Samsung S10+ (9/9 Passed).
+- **Release Packages**: Windows (`.exe`/`.zip`), Linux (`.deb`/`.rpm`/`.AppImage`/`.tar.gz`/`.zip`), Android (`.apk`). Real installation verified on Ubuntu & CentOS.
+- **Reports**: [RELEASE_NOTES_v1.3.0.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/RELEASE_NOTES_v1.3.0.md), [RELEASE_READINESS_REPORT.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/RELEASE_READINESS_REPORT.md), [EXTREME_3VM_CHAOS_TEST_REPORT.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/EXTREME_3VM_CHAOS_TEST_REPORT.md).
 
 ---
 

@@ -418,16 +418,19 @@ class DesktopLibraryService {
     }
 
     // Strip optional /webdav prefix
+    let urlPrefix = '';
     if (pathname.startsWith('/webdav/')) {
       pathname = pathname.slice(7);
+      urlPrefix = '/webdav';
     } else if (pathname === '/webdav') {
       pathname = '/';
+      urlPrefix = '/webdav';
     }
 
     // Root list of shares
     if (pathname === '/' || pathname === '') {
       if (method === 'PROPFIND') {
-        return this._handleRootPropfind(req, res);
+        return this._handleRootPropfind(req, res, urlPrefix);
       } else if (method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ shares: this.listShares() }));
@@ -469,10 +472,10 @@ class DesktopLibraryService {
 
     switch (method) {
       case 'PROPFIND':
-        return this._handlePropfind(req, targetPath, shareId, subPath, res);
+        return this._handlePropfind(req, targetPath, shareId, subPath, res, urlPrefix);
       case 'GET':
       case 'HEAD':
-        return this._handleGet(targetPath, method === 'HEAD', res);
+        return this._handleGet(req, targetPath, method === 'HEAD', res);
       case 'PUT':
         return this._handlePut(targetPath, share, session, req, res);
       case 'MKCOL':
@@ -490,7 +493,7 @@ class DesktopLibraryService {
     }
   }
 
-  _handleRootPropfind(req, res) {
+  _handleRootPropfind(req, res, urlPrefix = '') {
     const depth = (req.headers['depth'] || '1').toString();
     const xmlItems = depth === '0' ? '' : this.listShares().map((s) => {
       const sStat = { size: 0, mtime: new Date(0) };
@@ -500,7 +503,7 @@ class DesktopLibraryService {
       } catch (_) {}
       return `
       <D:response>
-        <D:href>/${encodeURIComponent(s.id)}/</D:href>
+        <D:href>${urlPrefix}/${encodeURIComponent(s.id)}/</D:href>
         <D:propstat>
           <D:prop>
             <D:displayname>${escapeXml(s.name)}</D:displayname>
@@ -518,7 +521,7 @@ class DesktopLibraryService {
     const xml = `<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:">
   <D:response>
-    <D:href>/</D:href>
+    <D:href>${urlPrefix || '/'}</D:href>
     <D:propstat>
       <D:prop>
         <D:displayname>root</D:displayname>
@@ -536,7 +539,7 @@ class DesktopLibraryService {
     res.end(xml);
   }
 
-  _handlePropfind(req, targetPath, shareId, subPath, res) {
+  _handlePropfind(req, targetPath, shareId, subPath, res, urlPrefix = '') {
     const share = this.shares.get(shareId);
     if (!share) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -553,9 +556,11 @@ class DesktopLibraryService {
     const depth = (req.headers['depth'] || '1').toString();
     const stat = fs.statSync(targetPath);
     const isDir = stat.isDirectory();
-    // Encode each subPath segment individually so nested/Unicode paths round-trip
-    const encodedSubPath = subPath ? subPath.split('/').map(encodeURIComponent).join('/') : '';
-    const hrefPrefix = `/${encodeURIComponent(shareId)}/${encodedSubPath}`;
+    // Normalize and clean subPath
+    const cleanSubPath = (subPath || '').replace(/^\/+|\/+$/g, '');
+    const encodedSubPath = cleanSubPath ? cleanSubPath.split('/').filter(Boolean).map(encodeURIComponent).join('/') : '';
+    const hrefBase = `${urlPrefix}/${encodeURIComponent(shareId)}${encodedSubPath ? '/' + encodedSubPath : ''}`;
+    const selfHref = `${hrefBase}${isDir ? '/' : ''}`;
 
     let childrenXml = '';
     if (isDir && depth !== '0') {
@@ -568,7 +573,7 @@ class DesktopLibraryService {
             return '';
           }
           const entryStat = fs.statSync(entryPath);
-          const childHref = `/${encodeURIComponent(shareId)}/${encodedSubPath ? encodedSubPath + '/' : ''}${encodeURIComponent(entry.name)}${entryStat.isDirectory() ? '/' : ''}`;
+          const childHref = `${hrefBase}/${encodeURIComponent(entry.name)}${entryStat.isDirectory() ? '/' : ''}`;
           return `
             <D:response>
               <D:href>${childHref}</D:href>
@@ -593,7 +598,7 @@ class DesktopLibraryService {
     const xml = `<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:">
   <D:response>
-    <D:href>${hrefPrefix}${isDir && !hrefPrefix.endsWith('/') ? '/' : ''}</D:href>
+    <D:href>${selfHref}</D:href>
     <D:propstat>
       <D:prop>
         <D:displayname>${escapeXml(path.basename(targetPath) || shareId)}</D:displayname>
@@ -630,7 +635,7 @@ class DesktopLibraryService {
     }
   }
 
-  _handleGet(targetPath, isHeadOnly, res) {
+  _handleGet(req, targetPath, isHeadOnly, res) {
     if (!fs.existsSync(targetPath)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'File not found' }));
@@ -642,6 +647,41 @@ class DesktopLibraryService {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Cannot download a directory directly. Use PROPFIND.' }));
       return;
+    }
+
+    const rangeHeader = req && req.headers ? req.headers['range'] : null;
+    if (rangeHeader && rangeHeader.startsWith('bytes=')) {
+      const parts = rangeHeader.slice(6).split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] && parts[1].length > 0 ? parseInt(parts[1], 10) : stat.size - 1;
+
+      if (!isNaN(start) && start >= 0 && start <= end && end < stat.size) {
+        const chunkSize = (end - start) + 1;
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkSize,
+          'Content-Type': 'application/octet-stream',
+          'ETag': `"${stat.mtimeMs}-${stat.size}"`,
+          'Last-Modified': stat.mtime.toUTCString()
+        });
+
+        if (isHeadOnly) {
+          res.end();
+          return;
+        }
+
+        const stream = fs.createReadStream(targetPath, { start, end });
+        stream.pipe(res);
+        return;
+      } else {
+        res.writeHead(416, {
+          'Content-Range': `bytes */${stat.size}`,
+          'Content-Type': 'application/json'
+        });
+        res.end(JSON.stringify({ error: 'Requested range not satisfiable' }));
+        return;
+      }
     }
 
     res.writeHead(200, {
@@ -921,6 +961,27 @@ class DesktopLibraryService {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: `Failed to move resource: ${err.message}` }));
     }
+  }
+
+  close() {
+    return new Promise((resolve) => {
+      for (const timer of this.debounceTimers.values()) clearTimeout(timer);
+      this.debounceTimers.clear();
+      for (const id of Array.from(this.shares.keys())) this._unwatchShare(id);
+      for (const client of this.sseClients) {
+        try { client.end(); } catch (_) {}
+      }
+      this.sseClients.clear();
+      if (this.server) {
+        this.server.close(() => {
+          this.server = null;
+          this.port = null;
+          resolve();
+        });
+      } else {
+        resolve();
+      }
+    });
   }
 }
 

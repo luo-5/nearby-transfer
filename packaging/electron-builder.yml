@@ -29,10 +29,12 @@ linux:
         - arm64
 win:
   target:
-    - target: nsis
+    - target: zip
       arch:
         - x64
-        - arm64
+    - target: portable
+      arch:
+        - x64
   signAndEditExecutable: false
 nsis:
   oneClick: false

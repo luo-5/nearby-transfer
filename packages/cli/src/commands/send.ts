@@ -116,14 +116,36 @@ export async function sendCommand(args: string[]): Promise<void> {
 
   const controller = new AbortController();
   const commitRemoteCheckpoint = () => job; // no-op checkpoint commit for CLI
+  const checkpoint = {
+    files: sourceManifest.files.map((f) => ({ path: f.path, size: f.size, committedOffset: 0, completed: false })),
+    nextSequence: 0,
+    totalTransferred: 0,
+  };
 
   process.stdout.write('Starting encrypted transfer...\n');
   try {
     const executor = await createDesktopTransferExecutor({
       job: job as never,
-      checkpoint: null,
+      checkpoint: checkpoint as never,
       signal: controller.signal,
       commitRemoteCheckpoint: commitRemoteCheckpoint as never,
+      localDevice: {
+        deviceId: device.deviceId,
+        signingPrivateKey: device.signingPrivateKey,
+      },
+      trustedPeerStore: {
+        getTrustedPeer: () => ({
+          identity: {
+            deviceId: peer.deviceId,
+            signingPublicKey: peer.signingPublicKey,
+            encryptionPublicKey: peer.encryptionPublicKey,
+          },
+          permissions: { transfer: true },
+        }),
+      },
+      lanService: {
+        listPeers: () => [peer as never],
+      },
     });
 
     executor.done.then(() => {

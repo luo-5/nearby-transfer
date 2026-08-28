@@ -162,14 +162,36 @@ export async function syncCommand(args: string[]): Promise<void> {
   };
 
   const controller = new AbortController();
+  const checkpoint = {
+    files: sources.map((f) => ({ path: f.path, size: f.size, committedOffset: 0, completed: false })),
+    nextSequence: 0,
+    totalTransferred: 0,
+  };
 
   process.stdout.write('Starting encrypted sync...\n');
   try {
     const executor = await createDesktopTransferExecutor({
       job: job as never,
-      checkpoint: null,
+      checkpoint: checkpoint as never,
       signal: controller.signal,
       commitRemoteCheckpoint: (() => job) as never,
+      localDevice: {
+        deviceId: device.deviceId,
+        signingPrivateKey: device.signingPrivateKey,
+      },
+      trustedPeerStore: {
+        getTrustedPeer: () => ({
+          identity: {
+            deviceId: peer.deviceId,
+            signingPublicKey: peer.signingPublicKey,
+            encryptionPublicKey: peer.encryptionPublicKey,
+          },
+          permissions: { transfer: true },
+        }),
+      },
+      lanService: {
+        listPeers: () => [peer as never],
+      },
     });
     await executor.done;
     process.stdout.write('\nSync completed successfully!\n');
