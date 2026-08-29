@@ -2,6 +2,59 @@
 
 All notable changes to Nearby Transfer will be documented in this file.
 
+## [Unreleased] - Audit Remediation - 2026-08-29
+
+### Security
+- **Library handshake now requires a signature** (`/api/session`): requests must carry
+  `deviceId`, `timestamp`, `nonce`, and an Ed25519 `signature` over
+  `nearby-transfer:library-auth:<deviceId>:<timestamp>:<nonce>`; timestamps outside a
+  60 s window and reused nonces are rejected, with a 10 req/min per-IP rate limit and a
+  64 KB body cap. Previously a body with only `deviceId` yielded a bearer token
+  (authentication bypass). Android clients now sign the handshake. **Breaking: desktop
+  and Android must ship together.**
+- **Android library client pins the desktop TLS certificate** (`WebDavClient`): the
+  trust-all `X509TrustManager` / `HostnameVerifier` is gone. The first connection per
+  endpoint records the presented certificate (persisted in `webdav-pins.properties` via
+  `WebDavPinStore`); every later connection fails closed unless the certificate matches.
+  The desktop also records its WebDAV certificate SHA-256 (`webdavCertFp`) into the
+  trusted-peer record at pairing completion (SQLite migration v3).
+- **Least-privilege pairing**: newly paired peers are granted **no** permissions by
+  default (`trusted-peer-store`); re-pairing no longer resets or widens existing grants,
+  and the desktop pairing UI directs users to enable permissions explicitly. **Behavior
+  change: enable permissions on the trusted device card after pairing.**
+- **Default shared library is read-only**; write access requires explicitly choosing a
+  share directory (persisted as `writable` in `library_config.json`). Resetting restores
+  read-only.
+- **Re-pairing a revoked device is rejected** (`TRUSTED_PEER_REVOKED`) until the record
+  is deleted from the trusted list.
+- WebDAV `COPY`/`MOVE` now honor the same no-overwrite default as `PUT` (`Overwrite: F`
+  unless explicitly requested).
+- Removed the wildcard `Access-Control-Allow-Origin` from the SSE stream.
+- Removed the global BouncyCastle provider re-ordering on Android (`CryptoUtil`).
+
+### Fixed
+- **Packaged desktop app missing `@luo-5/core`**: the 20 `src/v2` strangler-fig adapters
+  now require the core library from a vendored build (`src/vendor/luo5-core`, produced by
+  `scripts/build-vendor.js` and wired via `prestart`/`predist`/`pretest`), so
+  electron-builder ships a working bundle again.
+- **`npm ci` failed on a fresh clone**: `package-lock.json` regenerated to include all
+  workspace packages (`@luo-5/protocol-spec`, `@luo-5/core`).
+- Main-process error logs are written to `<userData>/logs/main_error.log` instead of a
+  read-only asar path / CWD.
+- Drag-and-drop multi-selection total size is computed once over all files (was
+  double-counted across directories).
+- Malformed percent-encoding in library service paths returns `400` instead of hanging
+  the connection.
+
+### Changed
+- CI matrix aligned with the real runtime: Node `22.x`/`24.x` only (`node:sqlite`
+  requires >= 22.5; `@luo-5/core` engines >= 22); release builds use Node 22.
+- npm packages publish with `--provenance`; GitHub Releases include `SHA256SUMS.txt`.
+- Repository layout: one-off development scripts moved to `scripts/dev/` (private VM
+  addresses parameterized via env vars), working notes moved to `docs/internal/`,
+  committed `__pycache__` artifacts removed; README/`docs/audit.md` use the real package
+  name `@luo-5/core`; `packages/core` README documents install and usage.
+
 ## [@luo-5/core & @luo-5/cli 0.2.0] - 2026-08-25
 
 ### Added
