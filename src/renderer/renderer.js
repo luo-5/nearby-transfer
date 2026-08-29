@@ -1389,7 +1389,15 @@ async function runV2SessionAction(session, pendingMessage, action) {
     await action(pairingApi);
     await refreshV2Pairing({ silent: true });
   } catch (error) {
-    setPairingMessage(errorMessage(error), true);
+    const rawMessage = errorMessage(error);
+    if (/TRUSTED_PEER_REVOKED|has been revoked/i.test(rawMessage)) {
+      const isZh = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
+      setPairingMessage(isZh
+        ? '该设备已被移除信任，请先在受信设备列表中删除该记录，再重新配对。'
+        : 'This device has been revoked. Delete it from the trusted list, then pair again.', true);
+    } else {
+      setPairingMessage(rawMessage, true);
+    }
   } finally {
     pairingState.busySessionIds.delete(session.pairingId);
     renderV2Pairing();

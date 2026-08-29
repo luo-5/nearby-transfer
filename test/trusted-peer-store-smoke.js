@@ -128,6 +128,16 @@ function testPersistenceAndMetadata() {
       assert.strictEqual(store.getTrustedPeer(alpha.deviceId, { includeRevoked: true }).revokedAt, 1760000001000);
       assert.strictEqual(store.listTrustedPeers().length, 1);
       assert.strictEqual(store.listTrustedPeers({ includeRevoked: true }).length, 2);
+
+      // A revoked device cannot silently regain trust by re-pairing; it has
+      // to be deleted from the trusted list first.
+      assert.throws(
+        () => store.upsertTrustedPeer({ identity: alpha }),
+        (error) => error.code === 'TRUSTED_PEER_REVOKED'
+      );
+      assert.strictEqual(store.deleteTrustedPeer(alpha.deviceId), true);
+      const repaired = store.upsertTrustedPeer({ identity: alpha });
+      assert.strictEqual(repaired.revokedAt, null);
       assert.strictEqual(store.deleteTrustedPeer(alpha.deviceId), true);
       assert.strictEqual(store.deleteTrustedPeer(alpha.deviceId), false);
     });

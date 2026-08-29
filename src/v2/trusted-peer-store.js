@@ -49,6 +49,11 @@ class TrustedPeerStore {
       ).get(peer.deviceId);
       if (existing) {
         assertIdentityUnchanged(existing, peer);
+        if (existing.revoked_at !== null && existing.revoked_at !== undefined) {
+          const error = new Error('This device has been revoked. Delete it from the trusted list before pairing again.');
+          error.code = 'TRUSTED_PEER_REVOKED';
+          throw error;
+        }
       }
       const updatedAt = nextUpdatedAt(existing && existing.updated_at);
       const effectiveLastSeen = existing ? Math.max(existing.last_seen || existing.paired_at, lastSeen) : lastSeen;
@@ -64,7 +69,6 @@ class TrustedPeerStore {
           display_name = excluded.display_name,
           paired_at = excluded.paired_at,
           last_seen = excluded.last_seen,
-          revoked_at = NULL,
           updated_at = excluded.updated_at,
           webdav_cert_fp = COALESCE(excluded.webdav_cert_fp, trusted_peers.webdav_cert_fp)
       `).run(
