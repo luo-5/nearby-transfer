@@ -102,8 +102,38 @@ const elements = {
   copyWebDavUrlButton: document.getElementById('copyWebDavUrlButton')
 };
 
-let selectedProtocol = 'v2-stream';
+let selectedProtocol = 'v1-classic';
 let selectedProtocolCategory = 'all';
+let protocolAvailability = new Map();
+
+function applyProtocolAvailability(entries) {
+  protocolAvailability = new Map(
+    (Array.isArray(entries) ? entries : []).map((entry) => [entry.id, entry])
+  );
+  document.querySelectorAll('.protocol-card').forEach((card) => {
+    const entry = protocolAvailability.get(card.getAttribute('data-protocol'));
+    const unavailable = entry && entry.available === false;
+    card.classList.toggle('protocol-unavailable', Boolean(unavailable));
+    card.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
+    if (unavailable) card.setAttribute('title', t('protocol_unavailable'));
+    else card.removeAttribute('title');
+  });
+  refreshProtocolAvailabilityLabels();
+}
+
+function refreshProtocolAvailabilityLabels() {
+  document.querySelectorAll('.protocol-card.protocol-unavailable').forEach((card) => {
+    const titleGroup = card.querySelector('.protocol-card-title-group');
+    if (!titleGroup) return;
+    let label = titleGroup.querySelector('.protocol-availability-tag');
+    if (!label) {
+      label = document.createElement('span');
+      label.className = 'protocol-tag protocol-availability-tag';
+      titleGroup.appendChild(label);
+    }
+    label.textContent = t('protocol_experimental_badge');
+  });
+}
 
 function updateProtocolBadge(proto) {
   if (!elements.currentProtocolBadge) return;
@@ -189,13 +219,20 @@ function initializeProtocolSelector() {
     }
 
     const onSelect = async () => {
-      selectedProtocol = proto;
-      renderProtocolCards();
       if (window.lanTransfer && typeof window.lanTransfer.setProtocol === 'function') {
         try {
-          await window.lanTransfer.setProtocol(proto);
+          const result = await window.lanTransfer.setProtocol(proto);
+          if (!result || !result.ok) {
+            setStatus(result && result.code === 'PROTOCOL_UNKNOWN'
+              ? (result.error || t('operation_failed'))
+              : t('protocol_unavailable'));
+            return;
+          }
+          selectedProtocol = result.protocol || proto;
+          renderProtocolCards();
         } catch (e) {
           console.error('Failed to set protocol:', e);
+          setStatus(t('protocol_unavailable'));
         }
       }
     };
@@ -210,6 +247,7 @@ function initializeProtocolSelector() {
 
   if (window.lanTransfer && typeof window.lanTransfer.getProtocol === 'function') {
     window.lanTransfer.getProtocol().then(res => {
+      applyProtocolAvailability(res && res.protocols);
       if (res && res.protocol) {
         selectedProtocol = res.protocol;
         renderProtocolCards();
@@ -254,6 +292,7 @@ function reRenderAll() {
   refreshLibraryInfo();
   renderV2Pairing();
   renderTransferJobs();
+  refreshProtocolAvailabilityLabels();
   updateProtocolBadge(selectedProtocol);
 }
 

@@ -18,7 +18,7 @@
 - **Encrypted direct transfer · 加密直传** — device-to-device over TCP/UDP on the LAN, no relay or cloud. Ed25519-signed identities, X25519 ECDH session keys, AES-256-GCM per-chunk encryption.
 - **6-digit SAS pairing · 6 位配对码** — mutual verification with a short authentication string before trust is saved; replay-protected signed confirmations.
 - **Resumable chunked transfer · 断点续传** — 4 MiB chunks with committed-offset checkpoints; transfers resume after interruption.
-- **7-protocol engine · 七协议引擎** — hot-switchable drivers (`v2-stream`, `turbo-parallel`, `quic-udp`, `smb-share`, `webdav-sync`, `v1-classic`, `ftps-secure`) with category-based selection.
+- **Protocol migration · 协议迁移** — the desktop transfer flow currently uses `v1-classic`. The `v2-stream`, Turbo, QUIC, SMB, WebDAV-driver, and FTPS adapters remain visible as experimental roadmap entries but cannot be selected until their send/receive paths are integrated.
 - **Shared library (WebDAV) · 共享库** — turn a device into an HTTPS WebDAV NAS; browse, upload, download, and delete with Bearer-token auth over self-signed TLS.
 - **Concurrent multi-device · 多设备并发** — send to and receive from several peers simultaneously.
 - **Cross-platform · 跨平台** — desktop (Electron, Linux/Windows) and Android share one protocol; interoperable across all three.
@@ -52,7 +52,7 @@ Open `android-app/` in Android Studio (or run `./gradlew.bat :android-app:assemb
 
 ## Current Status · 当前状态
 
-Released at **v1.3.0**. The v2 protocol — Ed25519 identities, SAS pairing, AES-256-GCM chunk encryption, resumable transfers, WebDAV shared library, and the 7-protocol engine — is stable and cross-platform tested across Windows, Ubuntu, and CentOS. Work is underway to extract the protocol core into a reusable TypeScript package (`@luo-5/core`) and to grow the ecosystem (CLI, Docker, LocalSend interop) per the roadmap.
+Released at **v1.3.0**. The desktop app currently sends files through the classic encrypted HTTP stream. V2 pairing, transfer primitives, and resumable job infrastructure are under active integration, while the WebDAV shared-library service is available separately. The remaining protocol adapters are experimental scaffolds rather than complete transfer implementations. Work is underway to extract the protocol core into a reusable TypeScript package (`@luo-5/core`) and to grow the ecosystem (CLI, Docker, LocalSend interop) per the roadmap.
 
 ### v0.2 Transfer Flow
 
