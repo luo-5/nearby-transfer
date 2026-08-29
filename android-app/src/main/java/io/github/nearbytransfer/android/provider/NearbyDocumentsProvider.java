@@ -55,7 +55,10 @@ public class NearbyDocumentsProvider extends DocumentsProvider {
     }
 
     private String getTargetServerIp() {
-        return "192.168.9.151";
+        Context ctx = getContext();
+        if (ctx == null) return null;
+        return ctx.getSharedPreferences("nearby-transfer", Context.MODE_PRIVATE)
+            .getString("target_server_ip", null);
     }
 
     private int getTargetServerPort() {

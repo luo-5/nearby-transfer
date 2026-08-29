@@ -1341,7 +1341,8 @@ public class MainActivity extends Activity {
         if (!v2Peers.isEmpty() && v2Peers.get(0).host != null && !v2Peers.get(0).host.isEmpty()) {
             return v2Peers.get(0).host;
         }
-        return "192.168.9.151";
+        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return sp != null ? sp.getString("target_server_ip", null) : null;
     }
 
     /**
