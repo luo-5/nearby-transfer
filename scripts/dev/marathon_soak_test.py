@@ -28,21 +28,21 @@ VM_CONFIGS = {
     "ubuntu": {
         "host": os.getenv("VM_UBUNTU_HOST", "192.168.80.128"),
         "user": os.getenv("VM_USER", "l"),
-        "pass": os.getenv("VM_PASS", "123"),
+        "pass": os.getenv("VM_PASS"),
         "agent_port": 49152,
         "transfer_port": 49153,
     },
     "centos": {
         "host": os.getenv("VM_CENTOS_HOST", "192.168.80.130"),
         "user": os.getenv("VM_USER", "l"),
-        "pass": os.getenv("VM_PASS", "123"),
+        "pass": os.getenv("VM_PASS"),
         "agent_port": 49152,
         "transfer_port": 49153,
     },
     "winvm": {
         "host": os.getenv("VM_WIN_HOST", "192.168.80.129"),
         "user": os.getenv("WIN_USER", "31752"),
-        "pass": os.getenv("WIN_PASS", "123"),
+        "pass": os.getenv("WIN_PASS"),
         "agent_port": 49152,
         "transfer_port": 49153,
     },
@@ -87,7 +87,11 @@ def ensure_vm_agents():
         log(f"Starting agent on {name} ({cfg['host']})...")
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(cfg["host"], 22, username=cfg["user"], password=cfg["pass"], timeout=8)
+        ssh.connect(
+            cfg["host"], 22, username=cfg["user"], password=cfg["pass"],
+            allow_agent=not bool(cfg["pass"]), look_for_keys=not bool(cfg["pass"]),
+            timeout=8,
+        )
         if name == "winvm":
             ssh.exec_command("powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\"")
             ssh.exec_command("powershell -Command \"Start-Process node -ArgumentList 'C:\\nearby-transfer\\vm-agent.mjs' -WindowStyle Hidden\"")

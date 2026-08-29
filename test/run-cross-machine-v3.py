@@ -3,15 +3,29 @@
 import paramiko, subprocess, json, time, os, hashlib, tempfile
 
 TMP = tempfile.gettempdir()
-REPO = r"D:\github项目\pr\pr\nearby-transfer-next-version"
-CENTOS = {"ip": "192.168.105.129", "name": "centos"}
-UBUNTU = {"ip": "192.168.105.128", "name": "ubuntu"}
-WINDOWS = {"ip": "192.168.105.1", "name": "windows", "local": True}
+REPO = os.getenv("NT_LOCAL_REPO", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CENTOS = {"ip": os.getenv("NT_CENTOS_IP"), "name": "centos"}
+UBUNTU = {"ip": os.getenv("NT_UBUNTU_IP"), "name": "ubuntu"}
+WINDOWS = {"ip": os.getenv("NT_WINDOWS_IP"), "name": "windows", "local": True}
+SSH_USER = os.getenv("NT_VM_SSH_USER", "l")
+SSH_PASSWORD = os.getenv("NT_VM_SSH_PASSWORD")
+SSH_KEY = os.getenv("NT_VM_SSH_KEY")
 
 def ssh(ip):
+    if not ip:
+        raise RuntimeError("VM IP is not configured")
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(ip, port=22, username="l", password="123", timeout=10, allow_agent=False, look_for_keys=False)
+    c.connect(
+        ip,
+        port=22,
+        username=SSH_USER,
+        password=SSH_PASSWORD,
+        key_filename=SSH_KEY,
+        timeout=10,
+        allow_agent=not bool(SSH_PASSWORD),
+        look_for_keys=not bool(SSH_PASSWORD),
+    )
     return c
 
 def ssh_run(c, cmd, t=120):
@@ -234,7 +248,7 @@ def test(sender, receiver, port, label):
 
 if __name__ == "__main__":
     # Clean up VMs first
-    for ip in ["192.168.105.128", "192.168.105.129"]:
+    for ip in [machine["ip"] for machine in (UBUNTU, CENTOS) if machine["ip"]]:
         try:
             c = ssh(ip)
             c.exec_command("pkill -f cross-machine-transfer 2>/dev/null", timeout=5)

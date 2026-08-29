@@ -1,16 +1,23 @@
+import os
 import paramiko
 
 vms = [
-    ('Ubuntu', '192.168.80.128', 'l', '123', 'pwd; which node; node -v; which npm; npm -v; git --version; find ~ -maxdepth 3 -name "nearby-transfer*" -o -name "pr*" 2>/dev/null'),
-    ('CentOS', '192.168.80.130', 'l', '123', 'pwd; which node; node -v; which npm; npm -v; git --version; find ~ -maxdepth 3 -name "nearby-transfer*" -o -name "pr*" 2>/dev/null'),
-    ('Windows VM', '192.168.80.129', '31752', '123', 'cd & where node & node -v & where npm & npm -v & where git & dir /s /b C:\\Users\\31752\\*nearby-transfer* 2>nul')
+    ('Ubuntu', os.getenv('VM_UBUNTU_HOST'), os.getenv('VM_USER', 'l'), os.getenv('VM_PASS'), os.getenv('VM_SSH_KEY'), 'pwd; which node; node -v; which npm; npm -v; git --version'),
+    ('CentOS', os.getenv('VM_CENTOS_HOST'), os.getenv('VM_USER', 'l'), os.getenv('VM_PASS'), os.getenv('VM_SSH_KEY'), 'pwd; which node; node -v; which npm; npm -v; git --version'),
+    ('Windows VM', os.getenv('VM_WIN_HOST'), os.getenv('WIN_USER'), os.getenv('WIN_PASS'), os.getenv('WIN_SSH_KEY'), 'cd & where node & node -v & where npm & npm -v & where git')
 ]
 
-for name, host, user, pwd, cmd in vms:
+for name, host, user, password, key, cmd in vms:
+    if not host or not user:
+        print(f"[SKIP] {name}: host/user environment is not configured")
+        continue
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(host, port=22, username=user, password=pwd, timeout=8)
+        ssh.connect(
+            host, port=22, username=user, password=password, key_filename=key,
+            allow_agent=not bool(password), look_for_keys=not bool(password), timeout=8,
+        )
         stdin, stdout, stderr = ssh.exec_command(cmd)
         out = stdout.read().decode('utf-8', errors='ignore').strip()
         err = stderr.read().decode('utf-8', errors='ignore').strip()

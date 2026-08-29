@@ -21,10 +21,10 @@ if hasattr(sys.stderr, "reconfigure"):
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 SCRATCH = WORKSPACE / "scratch" / "rclone_test"
-HOST_IP = "192.168.80.1"
-UBUNTU_IP = "192.168.80.128"
+HOST_IP = os.getenv("NT_WINDOWS_IP")
+UBUNTU_IP = os.getenv("NT_UBUNTU_IP")
 VM_USER = os.getenv("VM_USER", "l")
-VM_PASS = os.getenv("VM_PASS", "123")
+VM_PASS = os.getenv("VM_PASS")
 PORT = 56588
 
 def compute_sha256(filepath):
@@ -34,7 +34,12 @@ def compute_sha256(filepath):
             h.update(chunk)
     return h.hexdigest()
 
+def require_network_config():
+    if not HOST_IP or not UBUNTU_IP:
+        raise RuntimeError("NT_WINDOWS_IP and NT_UBUNTU_IP must be configured")
+
 def main():
+    require_network_config()
     print("=" * 60)
     print("   WEBDAV & RCLONE DEEP INTEROPERABILITY TEST SUITE   ")
     print("=" * 60)
@@ -159,7 +164,11 @@ start().catch(err => {{
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         for attempt in range(5):
             try:
-                ssh.connect(UBUNTU_IP, 22, username=VM_USER, password=VM_PASS, timeout=15, banner_timeout=30)
+                ssh.connect(
+                    UBUNTU_IP, 22, username=VM_USER, password=VM_PASS,
+                    allow_agent=not bool(VM_PASS), look_for_keys=not bool(VM_PASS),
+                    timeout=15, banner_timeout=30,
+                )
                 break
             except Exception as e:
                 if attempt == 4:
