@@ -95,6 +95,24 @@ function testPersistenceAndMetadata() {
         /64 lowercase hexadecimal/
       );
 
+      // Least-privilege defaults: pairing grants nothing, and re-pairing
+      // cannot change existing grants (only updateTrustedPeer can).
+      const charlie = createIdentity('Charlie tablet');
+      const freshPeer = store.upsertTrustedPeer({ identity: charlie });
+      assert.deepStrictEqual(freshPeer.permissions, { transfer: false, libraryRead: false, libraryUpload: false });
+      store.upsertTrustedPeer({
+        identity: charlie,
+        permissions: { transfer: true, libraryRead: true, libraryUpload: true }
+      });
+      assert.deepStrictEqual(
+        store.getTrustedPeer(charlie.deviceId).permissions,
+        { transfer: false, libraryRead: false, libraryUpload: false },
+        're-pairing must not silently widen permissions'
+      );
+      const granted = store.updateTrustedPeerPermissions(charlie.deviceId, { transfer: true });
+      assert.deepStrictEqual(granted.permissions, { transfer: true, libraryRead: false, libraryUpload: false });
+      assert.strictEqual(store.deleteTrustedPeer(charlie.deviceId), true);
+
       assert.strictEqual(store.database.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
       assert.strictEqual(store.database.prepare('PRAGMA synchronous').get().synchronous, 2);
       assert.strictEqual(store.database.prepare('PRAGMA quick_check').get().quick_check, 'ok');

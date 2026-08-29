@@ -57,7 +57,9 @@ const pairingState = {
 };
 
 const PAIRING_CAPABILITIES = Object.freeze(['pairing']);
-const MINIMUM_PAIRING_PERMISSIONS = Object.freeze({ transfer: true });
+// Pairing grants nothing by itself: permissions must be enabled explicitly on
+// the trusted device card after pairing completes (least privilege by default).
+const MINIMUM_PAIRING_PERMISSIONS = Object.freeze({});
 
 const elements = {
   langZhBtn: document.getElementById('langZhBtn'),

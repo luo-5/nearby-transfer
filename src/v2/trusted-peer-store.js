@@ -62,9 +62,6 @@ class TrustedPeerStore {
         ON CONFLICT(device_id) DO UPDATE SET
           device_name = excluded.device_name,
           display_name = excluded.display_name,
-          transfer_allowed = excluded.transfer_allowed,
-          library_read_allowed = excluded.library_read_allowed,
-          library_upload_allowed = excluded.library_upload_allowed,
           paired_at = excluded.paired_at,
           last_seen = excluded.last_seen,
           revoked_at = NULL,
@@ -332,9 +329,9 @@ function normalizePermissions(permissions) {
     throw new TypeError('Peer permissions must be an object');
   }
   const normalized = {
-    transfer: permissions.transfer !== false,
-    libraryRead: permissions.libraryRead !== false,
-    libraryUpload: permissions.libraryUpload !== false
+    transfer: permissions.transfer === true,
+    libraryRead: permissions.libraryRead === true,
+    libraryUpload: permissions.libraryUpload === true
   };
   if (normalized.libraryUpload && !normalized.libraryRead) {
     throw new TypeError('Library upload permission requires library read permission');
