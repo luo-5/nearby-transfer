@@ -52,7 +52,7 @@ jobs:
           set -e
           if [ "$status" -ne 124 ]; then
             echo "Installed application exited unexpectedly with status $status" >&2
-            exit "$status"
+            exit 1
           fi
 
       - name: Upload artifacts
