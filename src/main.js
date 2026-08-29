@@ -30,16 +30,23 @@ let saveDirectory = null;
 let selectedFilePath = null;
 let selectedFilePaths = [];
 const activeTransferControllers = new Map();
-process.on('uncaughtException', (err) => {
+
+function appendMainErrorLog(prefix, error) {
   try {
-    fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNCAUGHT: ' + (err.stack || err.message) + '\n', { flag: 'a' });
+    // userData is writable even when the app runs from a read-only asar.
+    const logDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    const detail = error && error.stack ? error.stack : (error && error.message ? error.message : String(error));
+    fs.appendFileSync(path.join(logDir, 'main_error.log'), prefix + detail + '\n');
   } catch (_e) { }
+}
+
+process.on('uncaughtException', (err) => {
+  appendMainErrorLog('UNCAUGHT: ', err);
 });
 
 process.on('unhandledRejection', (err) => {
-  try {
-    fs.writeFileSync(path.join(__dirname, '..', 'main_error.log'), 'UNHANDLED REJECTION: ' + (err ? (err.stack || err.message) : 'unknown') + '\n', { flag: 'a' });
-  } catch (_e) { }
+  appendMainErrorLog('UNHANDLED REJECTION: ', err);
 });
 
 app.whenReady().then(async () => {
@@ -54,9 +61,7 @@ app.whenReady().then(async () => {
     }
   });
 }).catch((error) => {
-  try {
-    fs.writeFileSync('main_error.log', (error.stack || error.message) + '\n', 'utf8');
-  } catch (_e) { }
+  appendMainErrorLog('MAIN ERROR: ', error);
   console.error('MAIN ERROR:', error);
   dialog.showErrorBox('附近传输启动失败', error.stack || error.message);
   app.quit();
@@ -192,19 +197,17 @@ ipcMain.handle('select-dropped-files', async (_event, filePaths) => {
     return { ok: false, error: currentLanguage === 'zh' ? '未选择任何文件' : 'No files selected' };
   }
   const validFiles = [];
-  let totalSize = 0;
   for (const fp of filePaths) {
     try {
       const stat = await fs.promises.stat(fp);
       if (stat.isDirectory()) {
         walkDirectory(fp, validFiles);
-        totalSize = validFiles.reduce((sum, f) => sum + f.size, 0);
       } else if (stat.isFile()) {
         validFiles.push({ path: fp, name: path.basename(fp), size: stat.size });
-        totalSize += stat.size;
       }
     } catch (_) { }
   }
+  const totalSize = validFiles.reduce((sum, f) => sum + f.size, 0);
   if (validFiles.length === 0) {
     return { ok: false, error: currentLanguage === 'zh' ? '所选路径中未包含有效文件' : 'No valid files found in selected paths' };
   }
@@ -511,11 +514,6 @@ async function startCore() {
   const defaultShareDir = path.join(userDataDir, 'SharedLibrary');
   if (!fs.existsSync(defaultShareDir)) {
     fs.mkdirSync(defaultShareDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(defaultShareDir, '欢迎使用附近传输-共享库.txt'),
-      '恭喜！您已成功连接到电脑端受控 NAS 共享文件库。\n您可以在手机上随时下载此文件，也可以从手机上传相片和文档！\n',
-      'utf8'
-    );
   }
 
   let activeShareDir = defaultShareDir;

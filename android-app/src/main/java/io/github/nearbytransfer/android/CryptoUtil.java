@@ -1,7 +1,5 @@
 package io.github.nearbytransfer.android;
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -14,7 +12,6 @@ import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.Provider;
 import java.security.PublicKey;
-import java.security.Security;
 import java.security.Signature;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
@@ -32,10 +29,9 @@ final class CryptoUtil {
     private static final int FRAME_HEADER_BYTES = 32;
     private static final int FRAME_SIZE = 1024 * 1024;
 
-    static {
-        Security.removeProvider("BC");
-        Security.insertProviderAt(new BouncyCastleProvider(), 1);
-    }
+    // No global provider insertion: every call site requests BouncyCastle
+    // explicitly via getInstance(algorithm, "BC"), so the process-wide
+    // provider preference order is left untouched.
 
     private CryptoUtil() {}
 

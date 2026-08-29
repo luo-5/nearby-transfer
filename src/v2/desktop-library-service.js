@@ -271,8 +271,7 @@ class DesktopLibraryService {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
+      'Connection': 'keep-alive'
     });
     res.write(': sse-init\n\n');
     res.write(`event: connected\ndata: ${JSON.stringify({ type: 'connected', deviceId: session.deviceId, timestamp: Date.now() })}\n\n`);
@@ -988,7 +987,9 @@ class DesktopLibraryService {
       return;
     }
     const { destPath } = dest;
-    const overwrite = (req.headers['overwrite'] || 'T').toUpperCase();
+    // Keep the no-overwrite policy consistent with PUT: an explicit
+    // `Overwrite: T` header is required to replace an existing destination.
+    const overwrite = (req.headers['overwrite'] || 'F').toUpperCase();
     if (overwrite === 'F' && fs.existsSync(destPath)) {
       res.writeHead(412, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Precondition Failed: Destination exists and Overwrite is F' }));
@@ -1037,7 +1038,9 @@ class DesktopLibraryService {
       res.end(JSON.stringify({ error: 'Source and destination are identical' }));
       return;
     }
-    const overwrite = (req.headers['overwrite'] || 'T').toUpperCase();
+    // Keep the no-overwrite policy consistent with PUT: an explicit
+    // `Overwrite: T` header is required to replace an existing destination.
+    const overwrite = (req.headers['overwrite'] || 'F').toUpperCase();
     const destExisted = fs.existsSync(destPath);
     if (overwrite === 'F' && destExisted) {
       res.writeHead(412, { 'Content-Type': 'application/json' });
