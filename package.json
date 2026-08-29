@@ -50,7 +50,7 @@
     "predist:linux": "npm run build:vendor"
   },
   "devDependencies": {
-    "@luo-5/core": "^0.2.0",
+    "@luo-5/core": "^0.2.1",
     "electron": "^43.4.0",
     "electron-builder": "^26.15.3",
     "esbuild": "0.28.2"

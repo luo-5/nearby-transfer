@@ -1,6 +1,6 @@
 {
   "name": "@luo-5/core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Protocol core for Nearby Transfer — crypto, discovery, pairing, transfer, and protocol registry as a pure TypeScript library.",
   "type": "module",
   "license": "MIT",

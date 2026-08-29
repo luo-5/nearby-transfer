@@ -1,6 +1,6 @@
 {
   "name": "@luo-5/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Command-line encrypted file transfer for nearby devices on the LAN.",
   "type": "module",
   "license": "MIT",
@@ -30,7 +30,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@luo-5/core": "^0.2.0"
+    "@luo-5/core": "^0.2.1"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

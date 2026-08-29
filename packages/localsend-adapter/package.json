@@ -1,6 +1,6 @@
 {
   "name": "@luo-5/localsend-adapter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "LocalSend protocol interop adapter for Nearby Transfer.",
   "type": "module",
   "license": "MIT",
@@ -39,7 +39,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@luo-5/core": "^0.2.0"
+    "@luo-5/core": "^0.2.1"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

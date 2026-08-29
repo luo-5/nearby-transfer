@@ -2,6 +2,19 @@
 
 All notable changes to Nearby Transfer will be documented in this file.
 
+## [@luo-5/core 0.2.1, @luo-5/cli 0.2.1 & @luo-5/localsend-adapter 0.1.1] - 2026-08-30
+
+### Security
+- CLI send and sync require a persisted trusted signing key that matches discovery.
+- LocalSend receive paths, sizes, sessions, concurrency, expiry, and non-overwrite
+  publication are fail-closed and bounded.
+
+### Fixed
+- Loopback transfer shutdown and canonical temporary roots are portable across Linux,
+  macOS, and Windows.
+- Package builds and tests run on Node.js 24 with verified publish contents and npm
+  provenance.
+
 ## [Unreleased] - Audit Remediation - 2026-08-29
 
 ### Security
