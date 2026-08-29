@@ -40,5 +40,10 @@
     "@luo-5/core": "^0.2.0",
     "electron": "^43.4.0",
     "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "esbuild@0.27.7": true,
+    "esbuild@0.28.2": true,
+    "electron@43.4.0": true
   }
 }
