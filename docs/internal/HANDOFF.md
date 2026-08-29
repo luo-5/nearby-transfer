@@ -1,7 +1,8 @@
 # Nearby Transfer 项目交接文档
 
-**交接日期：** 2026-08-28
-**当前 HEAD：** 自动提交中
+**交接日期：** 2026-08-29
+**当前 HEAD：** 22f9b72 (main)
+**权威交接文档：** 根目录 [AGENT_HANDOVER.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/AGENT_HANDOVER.md)
 **GitHub：** https://github.com/luo-5/nearby-transfer.git
 **分支：** main
 **git 身份：** luo-5 / lluo77250@gmail.com
