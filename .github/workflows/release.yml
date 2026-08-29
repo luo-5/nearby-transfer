@@ -84,9 +84,11 @@ jobs:
           npm pack --workspace '${{ steps.target.outputs.workspace }}' --pack-destination release-assets
           tarball="$(find release-assets -maxdepth 1 -name '*.tgz' -print -quit)"
           test -n "$tarball"
-          tar -tzf "$tarball" | grep -q '^package/LICENSE$'
-          tar -tzf "$tarball" | grep -q '^package/README.md$'
-          tar -tzf "$tarball" | grep -q '^package/package.json$'
+          contents="$RUNNER_TEMP/npm-package-contents.txt"
+          tar -tzf "$tarball" > "$contents"
+          grep -Fxq 'package/LICENSE' "$contents"
+          grep -Fxq 'package/README.md' "$contents"
+          grep -Fxq 'package/package.json' "$contents"
           (cd release-assets && sha256sum *.tgz > SHA256SUMS.txt)
 
       - name: Publish selected package
