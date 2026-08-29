@@ -13,8 +13,8 @@ async function runTransferControlsTest() {
   console.log('     TESTING TRANSFER CONTROLS: PAUSE, RESUME, CANCEL ');
   console.log('======================================================');
 
-  const tempDir = path.join(os.tmpdir(), 'nearby-transfer-control-test-' + Date.now());
-  fs.mkdirSync(tempDir, { recursive: true });
+  const tempRoot = fs.realpathSync.native(os.tmpdir());
+  const tempDir = fs.mkdtempSync(path.join(tempRoot, 'nearby-transfer-control-test-'));
 
   const senderDir = path.join(tempDir, 'sender');
   const receiverDir = path.join(tempDir, 'receiver');
