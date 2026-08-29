@@ -12,6 +12,7 @@ import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.Provider;
 import java.security.PublicKey;
+import java.security.Security;
 import java.security.Signature;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
@@ -25,22 +26,26 @@ import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-final class CryptoUtil {
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+
+public final class CryptoUtil {
     private static final int FRAME_HEADER_BYTES = 32;
     private static final int FRAME_SIZE = 1024 * 1024;
 
-    // No global provider insertion: every call site requests BouncyCastle
-    // explicitly via getInstance(algorithm, "BC"), so the process-wide
-    // provider preference order is left untouched.
+    static {
+        if (Security.getProvider("BC") == null) {
+            Security.addProvider(new BouncyCastleProvider());
+        }
+    }
 
     private CryptoUtil() {}
 
-    static KeyPair generateEd25519KeyPair() throws GeneralSecurityException {
+    public static KeyPair generateEd25519KeyPair() throws GeneralSecurityException {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519", "BC");
         return generator.generateKeyPair();
     }
 
-    static KeyPair generateX25519KeyPair() throws GeneralSecurityException {
+    public static KeyPair generateX25519KeyPair() throws GeneralSecurityException {
         for (Provider provider : Security.getProviders()) {
             if (!"BC".equals(provider.getName())) {
                 for (String name : new String[] { "X25519", "XDH" }) {
@@ -54,7 +59,7 @@ final class CryptoUtil {
         return KeyPairGenerator.getInstance("X25519", "BC").generateKeyPair();
     }
 
-    static PublicKey readPublicKey(String pem, String algorithm) throws GeneralSecurityException {
+    public static PublicKey readPublicKey(String pem, String algorithm) throws GeneralSecurityException {
         byte[] der = readPem(pem);
         if ("X25519".equalsIgnoreCase(algorithm)) {
             for (Provider provider : Security.getProviders()) {
@@ -71,7 +76,7 @@ final class CryptoUtil {
         return KeyFactory.getInstance(algorithm, "BC").generatePublic(new X509EncodedKeySpec(der));
     }
 
-    static PrivateKey readPrivateKey(String pem, String algorithm) throws GeneralSecurityException {
+    public static PrivateKey readPrivateKey(String pem, String algorithm) throws GeneralSecurityException {
         byte[] der = readPem(pem);
         if ("X25519".equalsIgnoreCase(algorithm)) {
             for (Provider provider : Security.getProviders()) {
@@ -88,15 +93,15 @@ final class CryptoUtil {
         return KeyFactory.getInstance(algorithm, "BC").generatePrivate(new PKCS8EncodedKeySpec(der));
     }
 
-    static String toPublicPem(PublicKey key) {
+    public static String toPublicPem(PublicKey key) {
         return toPem("PUBLIC KEY", key.getEncoded());
     }
 
-    static String toPrivatePem(PrivateKey key) {
+    public static String toPrivatePem(PrivateKey key) {
         return toPem("PRIVATE KEY", key.getEncoded());
     }
 
-    static String fingerprintFor(String signingPublicKeyPem) throws GeneralSecurityException {
+    public static String fingerprintFor(String signingPublicKeyPem) throws GeneralSecurityException {
         byte[] digest = sha256Digest().digest(signingPublicKeyPem.getBytes(StandardCharsets.UTF_8));
         StringBuilder hex = new StringBuilder();
         for (byte b : digest) {
@@ -106,7 +111,7 @@ final class CryptoUtil {
             + "-" + hex.substring(12, 16) + "-" + hex.substring(16, 20) + "-" + hex.substring(20, 24);
     }
 
-    static String deviceIdFor(String signingPublicKeyPem) throws GeneralSecurityException {
+    public static String deviceIdFor(String signingPublicKeyPem) throws GeneralSecurityException {
         byte[] digest = sha256Digest().digest(signingPublicKeyPem.getBytes(StandardCharsets.UTF_8));
         StringBuilder hex = new StringBuilder();
         for (byte b : digest) {
@@ -115,14 +120,14 @@ final class CryptoUtil {
         return hex.substring(0, 16);
     }
 
-    static String sign(String message, String privateKeyPem) throws GeneralSecurityException {
+    public static String sign(String message, String privateKeyPem) throws GeneralSecurityException {
         Signature signature = Signature.getInstance("Ed25519", "BC");
         signature.initSign(readPrivateKey(privateKeyPem, "Ed25519"));
         signature.update(message.getBytes(StandardCharsets.UTF_8));
         return Base64.getEncoder().encodeToString(signature.sign());
     }
 
-    static boolean verify(String message, String signatureBase64, String publicKeyPem) {
+    public static boolean verify(String message, String signatureBase64, String publicKeyPem) {
         try {
             Signature signature = Signature.getInstance("Ed25519", "BC");
             signature.initVerify(readPublicKey(publicKeyPem, "Ed25519"));

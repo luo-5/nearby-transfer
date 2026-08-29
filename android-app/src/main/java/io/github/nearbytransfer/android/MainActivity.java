@@ -1856,7 +1856,11 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             try {
                 if (libraryToken == null) {
-                    WebDavClient.SessionResult auth = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
+                    DeviceConfig localDevice = device;
+                    if (localDevice == null || localDevice.signingPrivateKey == null) {
+                        throw new IllegalStateException("设备身份尚未就绪");
+                    }
+                    WebDavClient.SessionResult auth = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId, localDevice.signingPrivateKey);
                     if (!auth.ok) throw new IllegalStateException(auth.error);
                     libraryToken = auth.token;
                     if (!auth.shares.isEmpty()) libraryShareId = auth.shares.get(0).id;
@@ -1925,11 +1929,12 @@ public class MainActivity extends Activity {
                 if (token == null) {
                     try {
                         String myDeviceId = getDeviceIdOrNull();
-                        if (myDeviceId == null) {
+                        DeviceConfig localDevice = device;
+                        if (myDeviceId == null || localDevice == null || localDevice.signingPrivateKey == null) {
                             Thread.sleep(2000);
                             continue;
                         }
-                        WebDavClient.SessionResult auth = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
+                        WebDavClient.SessionResult auth = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId, localDevice.signingPrivateKey);
                         if (auth.ok) {
                             token = auth.token;
                             libraryToken = token;

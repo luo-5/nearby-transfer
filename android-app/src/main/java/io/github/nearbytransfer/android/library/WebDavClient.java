@@ -3,6 +3,8 @@ package io.github.nearbytransfer.android.library;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import io.github.nearbytransfer.android.CryptoUtil;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -498,15 +500,21 @@ public class WebDavClient {
                         if (certs == null || certs.length == 0) {
                             throw new java.security.cert.CertificateException("Empty certificate chain");
                         }
-                        String observed = sha256Hex(certs[0].getEncoded());
-                        // The pinned fingerprint is the endpoint identity: the
-                        // hostname check is intentionally not consulted for
-                        // self-signed LAN certificates.
-                        if (!MessageDigest.isEqual(
-                                observed.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8),
-                                expectedFingerprint.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8))) {
-                            throw new java.security.cert.CertificateException(
-                                "Desktop certificate changed; re-pair the device to trust it again");
+                        try {
+                            String observed = sha256Hex(certs[0].getEncoded());
+                            // The pinned fingerprint is the endpoint identity: the
+                            // hostname check is intentionally not consulted for
+                            // self-signed LAN certificates.
+                            if (!MessageDigest.isEqual(
+                                    observed.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8),
+                                    expectedFingerprint.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8))) {
+                                throw new java.security.cert.CertificateException(
+                                    "Desktop certificate changed; re-pair the device to trust it again");
+                            }
+                        } catch (java.security.cert.CertificateException ce) {
+                            throw ce;
+                        } catch (Exception e) {
+                            throw new java.security.cert.CertificateException("Failed to process certificate", e);
                         }
                     }
                 }
@@ -525,13 +533,17 @@ public class WebDavClient {
                 new X509TrustManager() {
                     public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
                     public void checkClientTrusted(X509Certificate[] certs, String authType) { }
-                    public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) throws java.security.cert.CertificateException {
                         // First connection to this endpoint: record what was
                         // presented so capturePin() can persist the pin. The
                         // recorded certificate is not yet trusted for later
                         // connections; the pin enforces it from now on.
                         if (certs != null && certs.length > 0) {
-                            OBSERVED_FINGERPRINT.set(sha256Hex(certs[0].getEncoded()));
+                            try {
+                                OBSERVED_FINGERPRINT.set(sha256Hex(certs[0].getEncoded()));
+                            } catch (Exception e) {
+                                throw new java.security.cert.CertificateException("Failed to encode certificate", e);
+                            }
                         }
                     }
                 }

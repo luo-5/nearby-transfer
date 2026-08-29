@@ -11,6 +11,7 @@ import android.provider.DocumentsContract;
 import android.provider.DocumentsProvider;
 import android.webkit.MimeTypeMap;
 
+import io.github.nearbytransfer.android.DeviceConfig;
 import io.github.nearbytransfer.android.R;
 import io.github.nearbytransfer.android.library.WebDavClient;
 
@@ -24,24 +25,23 @@ import java.util.List;
 public class NearbyDocumentsProvider extends DocumentsProvider {
 
     public static final String AUTHORITY = "io.github.nearbytransfer.android.documents";
-    private static final String ROOT_ID = "nearby_nas_root";
+    private static final String ROOT_ID = "root";
     private static final String DEFAULT_SHARE_ID = "default-share";
 
     private static final String[] DEFAULT_ROOT_PROJECTION = new String[] {
         DocumentsContract.Root.COLUMN_ROOT_ID,
-        DocumentsContract.Root.COLUMN_MIME_TYPES,
-        DocumentsContract.Root.COLUMN_FLAGS,
-        DocumentsContract.Root.COLUMN_ICON,
+        DocumentsContract.Root.COLUMN_DOCUMENT_ID,
         DocumentsContract.Root.COLUMN_TITLE,
         DocumentsContract.Root.COLUMN_SUMMARY,
-        DocumentsContract.Root.COLUMN_DOCUMENT_ID,
+        DocumentsContract.Root.COLUMN_FLAGS,
+        DocumentsContract.Root.COLUMN_MIME_TYPES,
         DocumentsContract.Root.COLUMN_AVAILABLE_BYTES
     };
 
     private static final String[] DEFAULT_DOCUMENT_PROJECTION = new String[] {
         DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-        DocumentsContract.Document.COLUMN_MIME_TYPE,
         DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+        DocumentsContract.Document.COLUMN_MIME_TYPE,
         DocumentsContract.Document.COLUMN_LAST_MODIFIED,
         DocumentsContract.Document.COLUMN_FLAGS,
         DocumentsContract.Document.COLUMN_SIZE
@@ -68,15 +68,28 @@ public class NearbyDocumentsProvider extends DocumentsProvider {
     private String getDeviceId() {
         Context ctx = getContext();
         if (ctx == null) return null;
-        return ctx.getSharedPreferences("nearby-transfer", Context.MODE_PRIVATE)
-            .getString("device_id", null);
+        try {
+            return DeviceConfig.loadOrCreate(ctx).deviceId;
+        } catch (Exception e) {
+            return ctx.getSharedPreferences("nearby-transfer", Context.MODE_PRIVATE)
+                .getString("device_id", null);
+        }
     }
 
     private String getSessionToken() {
-        String deviceId = getDeviceId();
-        if (deviceId == null) return null;
+        Context ctx = getContext();
+        if (ctx == null) return null;
+        String host = getTargetServerIp();
+        if (host == null || host.isEmpty()) return null;
         try {
-            WebDavClient.SessionResult res = WebDavClient.authenticate(getTargetServerIp(), getTargetServerPort(), deviceId);
+            DeviceConfig config = DeviceConfig.loadOrCreate(ctx);
+            if (config.deviceId == null || config.signingPrivateKey == null) return null;
+            WebDavClient.SessionResult res = WebDavClient.authenticate(
+                host,
+                getTargetServerPort(),
+                config.deviceId,
+                config.signingPrivateKey
+            );
             if (res.ok) {
                 return res.token;
             }

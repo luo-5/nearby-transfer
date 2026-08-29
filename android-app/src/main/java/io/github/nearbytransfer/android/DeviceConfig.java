@@ -11,16 +11,16 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 
-final class DeviceConfig {
-    final String deviceId;
-    final String deviceName;
-    final String fingerprint;
-    final String signingPublicKey;
-    final String signingPrivateKey;
-    final String encryptionPublicKey;
-    final String encryptionPrivateKey;
+public final class DeviceConfig {
+    public final String deviceId;
+    public final String deviceName;
+    public final String fingerprint;
+    public final String signingPublicKey;
+    public final String signingPrivateKey;
+    public final String encryptionPublicKey;
+    public final String encryptionPrivateKey;
 
-    DeviceConfig(
+    public DeviceConfig(
         String deviceId,
         String deviceName,
         String fingerprint,
@@ -38,7 +38,7 @@ final class DeviceConfig {
         this.encryptionPrivateKey = encryptionPrivateKey;
     }
 
-    static DeviceConfig loadOrCreate(Context context) throws Exception {
+    public static DeviceConfig loadOrCreate(Context context) throws Exception {
         File configFile = new File(context.getFilesDir(), "device.json");
         if (configFile.exists()) {
             JSONObject json = new JSONObject(readText(configFile));
