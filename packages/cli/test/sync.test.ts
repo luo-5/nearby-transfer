@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, rmSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash, randomFillSync } from 'node:crypto';
@@ -216,7 +216,7 @@ test('e2e: sync 10 small files with correct SHA-256 for each', async () => {
   const sender = createTestDevice();
   const receiver = createTestDevice();
 
-  const tmpBase = join(tmpdir(), `nt-sync-e2e-${Date.now()}`);
+  const tmpBase = mkdtempSync(join(realpathSync(tmpdir()), 'nt-sync-e2e-'));
   const sendDir = join(tmpBase, 'send');
   const recvDir = join(tmpBase, 'recv');
   mkdirSync(sendDir, { recursive: true });

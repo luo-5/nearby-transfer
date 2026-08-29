@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash, randomFillSync } from 'node:crypto';
@@ -179,7 +179,7 @@ test('e2e: sender → receiver transfers a 256 KB file with correct SHA-256', as
   const sender = createTestDevice('sender');
   const receiver = createTestDevice('receiver');
 
-  const tmpBase = join(tmpdir(), `nt-e2e-${Date.now()}`);
+  const tmpBase = mkdtempSync(join(realpathSync(tmpdir()), 'nt-e2e-'));
   const sendDir = join(tmpBase, 'send');
   const recvDir = join(tmpBase, 'recv');
   mkdirSync(sendDir, { recursive: true });
@@ -290,7 +290,7 @@ test('e2e: multiple files transfer with correct sizes and hashes', async () => {
   const sender = createTestDevice('sender');
   const receiver = createTestDevice('receiver');
 
-  const tmpBase = join(tmpdir(), `nt-e2e-multi-${Date.now()}`);
+  const tmpBase = mkdtempSync(join(realpathSync(tmpdir()), 'nt-e2e-multi-'));
   const sendDir = join(tmpBase, 'send');
   const recvDir = join(tmpBase, 'recv');
   mkdirSync(sendDir, { recursive: true });
