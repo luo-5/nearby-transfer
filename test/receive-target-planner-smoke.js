@@ -19,7 +19,8 @@ const TASK_B = Buffer.alloc(16, 32).toString('base64url');
 const TASK_C = Buffer.alloc(16, 33).toString('base64url');
 
 async function main() {
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-transfer-target-planner-'));
+  const tempRoot = fs.realpathSync.native(os.tmpdir());
+  const sandbox = fs.mkdtempSync(path.join(tempRoot, 'nearby-transfer-target-planner-'));
   try {
     await testStableWholeTreeRenaming(sandbox);
     await testTraversalReservedNamesAndCaseCollisions(sandbox);
