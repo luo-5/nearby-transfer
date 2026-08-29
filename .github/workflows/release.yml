@@ -33,8 +33,9 @@ jobs:
 
       - name: Build Packages
         run: |
-          npm run build:core --if-present
+          npm run build --workspace @luo-5/core --if-present
           npm run build --workspace @luo-5/cli --if-present
+          npm run build --workspace @luo-5/localsend-adapter --if-present
 
       - name: Publish to npm
         env:
@@ -42,11 +43,12 @@ jobs:
         run: |
           npm publish --provenance --workspace @luo-5/core --access public
           npm publish --provenance --workspace @luo-5/cli --access public
+          npm publish --provenance --workspace @luo-5/localsend-adapter --access public
 
       - name: Generate npm tarball checksums
         run: |
           mkdir -p release-assets
-          npm pack --workspace @luo-5/core --workspace @luo-5/cli --pack-destination release-assets
+          npm pack --workspace @luo-5/core --workspace @luo-5/cli --workspace @luo-5/localsend-adapter --pack-destination release-assets
           cd release-assets
           sha256sum *.tgz > SHA256SUMS.txt
 
