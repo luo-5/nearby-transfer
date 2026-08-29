@@ -15,7 +15,7 @@ const {
   encodeWireFrame,
   decodeWireFrame,
   WireFrameDecoder,
-} = require('@luo-5/core');
+} = require('../vendor/luo5-core/index.cjs');
 
 module.exports = {
   FRAME_LENGTH_BYTES,

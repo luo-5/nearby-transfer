@@ -15,7 +15,7 @@ const {
   MAX_CAPABILITIES,
   MAX_CAPABILITY_LENGTH,
   MESSAGE_TYPES,
-} = require('@luo-5/core');
+} = require('../vendor/luo5-core/index.cjs');
 
 module.exports = {
   APP_ID,

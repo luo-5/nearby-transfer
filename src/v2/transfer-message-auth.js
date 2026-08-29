@@ -5,7 +5,7 @@
  * The original implementation has been replaced by the TypeScript core library.
  */
 
-const { signTransferMessage, verifyTransferMessage } = require('@luo-5/core');
+const { signTransferMessage, verifyTransferMessage } = require('../vendor/luo5-core/index.cjs');
 
 module.exports = {
   signTransferMessage,

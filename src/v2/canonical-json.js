@@ -5,6 +5,6 @@
  * The original implementation has been replaced by the TypeScript core library.
  */
 
-const { canonicalJson, parseCanonicalJson } = require('@luo-5/core');
+const { canonicalJson, parseCanonicalJson } = require('../vendor/luo5-core/index.cjs');
 
 module.exports = { canonicalJson, parseCanonicalJson };

@@ -1,6 +1,6 @@
 'use strict';
 
-const core = require('@luo-5/core');
+const core = require('../vendor/luo5-core/index.cjs');
 
 module.exports = {
   DEFAULT_TIMEOUTS: core.DEFAULT_TIMEOUTS,

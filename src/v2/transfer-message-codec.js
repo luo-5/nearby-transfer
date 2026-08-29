@@ -5,7 +5,7 @@
  * The original implementation has been replaced by the TypeScript core library.
  */
 
-const core = require('@luo-5/core');
+const core = require('../vendor/luo5-core/index.cjs');
 
 module.exports = {
   COMPLETION_DIAGNOSTICS: core.COMPLETION_DIAGNOSTICS,

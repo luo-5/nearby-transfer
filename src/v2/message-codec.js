@@ -10,7 +10,7 @@ const {
   encodeControlMessage,
   decodeControlMessage,
   validateControlMessage,
-} = require('@luo-5/core');
+} = require('../vendor/luo5-core/index.cjs');
 
 module.exports = {
   MAX_CONTROL_PAYLOAD_BYTES,

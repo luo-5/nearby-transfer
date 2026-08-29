@@ -21,7 +21,7 @@ const {
   normalizeTransferManifest,
   parsePersistedTransferManifest,
   serializeTransferManifest,
-} = require('@luo-5/core');
+} = require('../vendor/luo5-core/index.cjs');
 
 module.exports = {
   CONFLICT_STRATEGY_AUTO_RENAME,

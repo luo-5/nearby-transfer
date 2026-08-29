@@ -15,7 +15,7 @@ const {
   parseDiscoveryDatagram,
   assertValidDiscoveryAnnouncement,
   assertFreshDiscoveryAnnouncement,
-} = require('@luo-5/core');
+} = require('../vendor/luo5-core/index.cjs');
 
 module.exports = {
   V2Discovery,

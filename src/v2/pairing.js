@@ -16,7 +16,7 @@
  * consumers (trusted-peer-store, pairing-session-store) keep working.
  */
 
-const core = require('@luo-5/core');
+const core = require('../vendor/luo5-core/index.cjs');
 
 function assertValidPublicIdentity(identity) {
   core.assertValidPublicIdentity(identity);
