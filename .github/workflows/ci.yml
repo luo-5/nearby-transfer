@@ -60,4 +60,4 @@ jobs:
         run: pip install cryptography
 
       - name: Verify All 10 Test Vector Groups
-        run: python python-ref/verify_vectors.py
+        run: python packages/python-ref/verify_vectors.py
