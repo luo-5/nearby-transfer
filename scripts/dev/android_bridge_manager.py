@@ -4,7 +4,7 @@ android_bridge_manager.py — ADB Reverse/Forward & VM Network Bridge Manager
 
 Provides:
 - Detection of connected Android devices via ADB
-- Dynamic TCP proxy bridging between VMnet8 (192.168.80.1) <-> ADB Port <-> Android Device
+- Dynamic TCP proxy bridging between VMnet8 (host IP, see --host-vm-ip / VM_HOST_IP) <-> ADB Port <-> Android Device
 - Bidirectional support (VM ➔ Android, Android ➔ VM, Android ➔ Android)
 - Zero-residue cleanup and configuration restoration
 """
@@ -21,7 +21,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 class AndroidBridgeManager:
-    def __init__(self, host_vm_ip="192.168.80.1"):
+    def __init__(self, host_vm_ip=os.getenv("VM_HOST_IP", "192.168.80.1")):
         self.host_vm_ip = host_vm_ip
         self.running = True
         self.active_proxies = []

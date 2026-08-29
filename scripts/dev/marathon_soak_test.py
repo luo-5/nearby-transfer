@@ -26,21 +26,21 @@ SCRATCH = WORKSPACE / "scratch" / "marathon_soak"
 
 VM_CONFIGS = {
     "ubuntu": {
-        "host": "192.168.80.128",
+        "host": os.getenv("VM_UBUNTU_HOST", "192.168.80.128"),
         "user": os.getenv("VM_USER", "l"),
         "pass": os.getenv("VM_PASS", "123"),
         "agent_port": 49152,
         "transfer_port": 49153,
     },
     "centos": {
-        "host": "192.168.80.130",
+        "host": os.getenv("VM_CENTOS_HOST", "192.168.80.130"),
         "user": os.getenv("VM_USER", "l"),
         "pass": os.getenv("VM_PASS", "123"),
         "agent_port": 49152,
         "transfer_port": 49153,
     },
     "winvm": {
-        "host": "192.168.80.129",
+        "host": os.getenv("VM_WIN_HOST", "192.168.80.129"),
         "user": os.getenv("WIN_USER", "31752"),
         "pass": os.getenv("WIN_PASS", "123"),
         "agent_port": 49152,

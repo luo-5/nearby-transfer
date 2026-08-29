@@ -52,7 +52,7 @@ Open `android-app/` in Android Studio (or run `./gradlew.bat :android-app:assemb
 
 ## Current Status · 当前状态
 
-Released at **v1.3.0**. The v2 protocol — Ed25519 identities, SAS pairing, AES-256-GCM chunk encryption, resumable transfers, WebDAV shared library, and the 7-protocol engine — is stable and cross-platform tested across Windows, Ubuntu, and CentOS. Work is underway to extract the protocol core into a reusable TypeScript package (`@nearby-transfer/core`) and to grow the ecosystem (CLI, Docker, LocalSend interop) per the roadmap.
+Released at **v1.3.0**. The v2 protocol — Ed25519 identities, SAS pairing, AES-256-GCM chunk encryption, resumable transfers, WebDAV shared library, and the 7-protocol engine — is stable and cross-platform tested across Windows, Ubuntu, and CentOS. Work is underway to extract the protocol core into a reusable TypeScript package (`@luo-5/core`) and to grow the ecosystem (CLI, Docker, LocalSend interop) per the roadmap.
 
 ### v0.2 Transfer Flow
 

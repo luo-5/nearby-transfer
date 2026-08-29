@@ -13,7 +13,50 @@ Protocol core for [Nearby Transfer](https://github.com/luo-5/nearby-transfer) �
 
 ## Status
 
-`0.1.0` — under active development (M1 extraction). The desktop app will switch to consuming this package once migration is complete.
+`0.2.0` — under active development (M1 extraction). The desktop app consumes this package through strangler-fig adapters in `src/v2/`, and the packaged bundle vendors the built artifact (`scripts/build-vendor.js`).
+
+## Install
+
+```bash
+npm install @luo-5/core
+```
+
+Requires Node.js >= 22. Ships dual ESM/CJS builds with TypeScript declarations.
+
+## Example
+
+```ts
+import {
+  createX25519KeyPair,
+  deriveSessionKey,
+  encryptChunk,
+} from '@luo-5/core';
+
+const sender = createX25519KeyPair();
+const receiver = createX25519KeyPair();
+
+const key = deriveSessionKey({
+  localPrivateKeyPem: sender.privateKey,
+  remotePublicKeyPem: receiver.publicKey,
+  senderDeviceId: '0123456789abcdef',
+  receiverDeviceId: 'fedcba9876543210',
+  taskId: 'AQIDBAUGBwgJCgsMDQ4PEA', // 16-byte base64url task id
+  manifestSha256: '64-hex-manifest-digest',
+});
+
+// The nonce is generated internally; the AAD binds the chunk to its position.
+const { nonce, ciphertext, authTag } = encryptChunk({
+  key,
+  taskId: 'AQIDBAUGBwgJCgsMDQ4PEA',
+  path: 'docs/report.pdf',
+  offset: 0,
+  sequence: 0,
+  plaintext: new TextEncoder().encode('hello'),
+});
+```
+
+Cross-language test vectors (TypeScript / Java / Python) live in the repository
+under `test/fixtures/`.
 
 ## License
 
