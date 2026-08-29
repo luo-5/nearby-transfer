@@ -140,7 +140,9 @@ function loadOrCreateDevice(args, defaultName) {
 
 async function runReceiver(args) {
   const port = parseInt(args.port || '47000', 10);
-  const receiveDir = args['receive-dir'] || path.join(os.tmpdir(), 'nt-recv-' + Date.now());
+  const receiveDir = args['receive-dir'] || fs.mkdtempSync(
+    path.join(fs.realpathSync.native(os.tmpdir()), 'nt-recv-')
+  );
   const senderIdentityFile = args['sender-identity-file'];
   fs.mkdirSync(receiveDir, { recursive: true });
 

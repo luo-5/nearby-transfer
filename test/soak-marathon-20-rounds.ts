@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash, randomFillSync } from 'node:crypto';
@@ -49,8 +49,7 @@ function createTestDevice(name: string): TestDevice {
 
 test('20-Round Marathon Soak, Memory Integrity & Chaos Suite', { timeout: 300000 }, async () => {
   try {
-  const baseDir = join(tmpdir(), `nt-soak-20r-${Date.now()}`);
-  mkdirSync(baseDir, { recursive: true });
+  const baseDir = mkdtempSync(join(realpathSync(tmpdir()), 'nt-soak-20r-'));
 
   const sender = createTestDevice('Sender-Soak');
   const receiver = createTestDevice('Receiver-Soak');
@@ -100,16 +99,22 @@ test('20-Round Marathon Soak, Memory Integrity & Chaos Suite', { timeout: 300000
     const totalBytes = sm.files.reduce((sum, f) => sum + f.size, 0);
 
     // Setup Receiver TCP Server
+    const receiverTasks: Promise<void>[] = [];
     const server = net.createServer((socket) => {
       socket.setNoDelay(true);
-      createTransferReceiver({
+      const receiverTask = createTransferReceiver({
         socket,
         receiveDir: recvDir,
         localDeviceId: receiver.deviceId,
         localSigningPrivateKey: receiver.signingPrivateKey,
         localEncryptionPrivateKey: receiver.encryptionPrivateKey,
         lookupPeer: (deviceId: string) => trustedPeers.get(deviceId) ?? null,
-      }).then((recv) => recv.done).then(() => socket.destroy()).catch(() => socket.destroy());
+      }).then((receiverSession) => receiverSession.done).catch((error) => {
+        socket.destroy();
+        throw error;
+      });
+      receiverTask.catch(() => {});
+      receiverTasks.push(receiverTask);
     });
 
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -167,7 +172,7 @@ test('20-Round Marathon Soak, Memory Integrity & Chaos Suite', { timeout: 300000
     });
 
     await executor.done;
-    await new Promise((res) => setTimeout(res, 50));
+    await Promise.all(receiverTasks);
     await new Promise<void>((res) => server.close(() => res()));
 
     // Verify SHA-256 for all received files
