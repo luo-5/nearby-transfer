@@ -21,16 +21,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: npm
           registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
 
       - name: Select and verify package target
         id: target
@@ -92,9 +92,7 @@ jobs:
           (cd release-assets && sha256sum *.tgz > SHA256SUMS.txt)
 
       - name: Publish selected package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --workspace '${{ steps.target.outputs.workspace }}' --access public
+        run: npm publish --workspace '${{ steps.target.outputs.workspace }}' --access public
 
       - name: Create package GitHub release
         uses: softprops/action-gh-release@v2
