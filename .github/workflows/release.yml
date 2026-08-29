@@ -1,55 +1,107 @@
-name: Release & npm Publish
+name: Publish npm package
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'core-v*.*.*'
+      - 'cli-v*.*.*'
+      - 'localsend-adapter-v*.*.*'
+
+permissions:
+  contents: read
 
 jobs:
-  release:
-    name: Build, Publish npm & GitHub Release
-    runs-on: ubuntu-latest
+  publish:
+    name: Verify and publish one npm package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
       id-token: write
 
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '24.x'
+          node-version: 24
+          cache: npm
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install Dependencies
+      - name: Select and verify package target
+        id: target
+        shell: bash
+        run: |
+          case "$GITHUB_REF_NAME" in
+            core-v*)
+              workspace='@luo-5/core'
+              manifest='packages/core/package.json'
+              slug='core'
+              expected="${GITHUB_REF_NAME#core-v}"
+              ;;
+            cli-v*)
+              workspace='@luo-5/cli'
+              manifest='packages/cli/package.json'
+              slug='cli'
+              expected="${GITHUB_REF_NAME#cli-v}"
+              ;;
+            localsend-adapter-v*)
+              workspace='@luo-5/localsend-adapter'
+              manifest='packages/localsend-adapter/package.json'
+              slug='localsend-adapter'
+              expected="${GITHUB_REF_NAME#localsend-adapter-v}"
+              ;;
+            *)
+              echo "Unsupported package tag: $GITHUB_REF_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          actual="$(node -p "require('./$manifest').version")"
+          if [ "$expected" != "$actual" ]; then
+            echo "Tag version $expected does not match $manifest version $actual" >&2
+            exit 1
+          fi
+
+          echo "workspace=$workspace" >> "$GITHUB_OUTPUT"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "version=$actual" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build and Verify All Packages
+      - name: Build and verify repository
         run: npm run ci:verify
 
-      - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm publish --provenance --workspace @luo-5/core --access public
-          npm publish --provenance --workspace @luo-5/cli --access public
-          npm publish --provenance --workspace @luo-5/localsend-adapter --access public
-
-      - name: Generate npm tarball checksums
+      - name: Verify package contents
+        shell: bash
         run: |
           mkdir -p release-assets
-          npm pack --workspace @luo-5/core --workspace @luo-5/cli --workspace @luo-5/localsend-adapter --pack-destination release-assets
-          cd release-assets
-          sha256sum *.tgz > SHA256SUMS.txt
+          npm pack --workspace '${{ steps.target.outputs.workspace }}' --pack-destination release-assets
+          tarball="$(find release-assets -maxdepth 1 -name '*.tgz' -print -quit)"
+          test -n "$tarball"
+          tar -tzf "$tarball" | grep -q '^package/LICENSE$'
+          tar -tzf "$tarball" | grep -q '^package/README.md$'
+          tar -tzf "$tarball" | grep -q '^package/package.json$'
+          (cd release-assets && sha256sum *.tgz > SHA256SUMS.txt)
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Publish selected package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --workspace '${{ steps.target.outputs.workspace }}' --access public
+
+      - name: Create package GitHub release
+        uses: softprops/action-gh-release@v2
         with:
+          name: '${{ steps.target.outputs.slug }} v${{ steps.target.outputs.version }}'
           generate_release_notes: true
           draft: false
           prerelease: false
-          files: release-assets/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*.tgz
+            release-assets/SHA256SUMS.txt

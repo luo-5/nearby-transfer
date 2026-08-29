@@ -1,0 +1,94 @@
+name: Release desktop application
+
+on:
+  push:
+    tags:
+      - 'app-v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release tag and repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify application version
+        shell: bash
+        run: |
+          actual="$(node -p "require('./package.json').version")"
+          expected="${GITHUB_REF_NAME#app-v}"
+          if [ "$expected" != "$actual" ]; then
+            echo "Tag version $expected does not match package.json version $actual" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and verify repository
+        run: npm run ci:verify
+
+  build-linux:
+    needs: verify
+    uses: ./.github/workflows/build-linux.yml
+
+  build-windows:
+    needs: verify
+    uses: ./.github/workflows/build-windows.yml
+
+  release:
+    name: Publish verified desktop assets
+    needs: [verify, build-linux, build-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies for SBOM
+        run: npm ci --ignore-scripts
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nearby-transfer-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SBOM and checksums
+        shell: bash
+        run: |
+          npm sbom --sbom-format spdx > release-assets/sbom.spdx.json
+          find release-assets -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > release-assets/SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 'Nearby Transfer ${{ github.ref_name }}'
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*

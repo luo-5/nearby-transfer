@@ -1,9 +1,7 @@
 name: Build Linux
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
