@@ -40,8 +40,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm publish --workspace @luo-5/core --access public
-          npm publish --workspace @luo-5/cli --access public
+          npm publish --provenance --workspace @luo-5/core --access public
+          npm publish --provenance --workspace @luo-5/cli --access public
+
+      - name: Generate npm tarball checksums
+        run: |
+          mkdir -p release-assets
+          npm pack --workspace @luo-5/core --workspace @luo-5/cli --pack-destination release-assets
+          cd release-assets
+          sha256sum *.tgz > SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -49,3 +56,4 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+          files: release-assets/SHA256SUMS.txt
