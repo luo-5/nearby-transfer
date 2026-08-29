@@ -80,6 +80,21 @@ function testPersistenceAndMetadata() {
         store.listTrustedPeers().map((peer) => peer.identity.deviceId),
         [bravo.deviceId, alpha.deviceId]
       );
+
+      // WebDAV certificate fingerprints persist and survive later upserts
+      // that do not carry a new fingerprint.
+      const fingerprint = 'a'.repeat(64);
+      const pinned = store.upsertTrustedPeer({ identity: bravo, webdavCertFp: fingerprint });
+      assert.strictEqual(pinned.webdavCertFp, fingerprint);
+      const repinned = store.upsertTrustedPeer({ identity: bravo });
+      assert.strictEqual(repinned.webdavCertFp, fingerprint, 'upsert without a fingerprint must keep the stored pin');
+      const rotated = store.upsertTrustedPeer({ identity: bravo, webdavCertFp: 'b'.repeat(64) });
+      assert.strictEqual(rotated.webdavCertFp, 'b'.repeat(64), 'a new fingerprint must replace the stored pin');
+      assert.throws(
+        () => store.upsertTrustedPeer({ identity: bravo, webdavCertFp: 'not-a-fingerprint' }),
+        /64 lowercase hexadecimal/
+      );
+
       assert.strictEqual(store.database.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
       assert.strictEqual(store.database.prepare('PRAGMA synchronous').get().synchronous, 2);
       assert.strictEqual(store.database.prepare('PRAGMA quick_check').get().quick_check, 'ok');

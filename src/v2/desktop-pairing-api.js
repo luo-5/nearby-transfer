@@ -1,6 +1,7 @@
 'use strict';
 
 const { createPairingOffer, signPairingOffer } = require('./pairing');
+const certManager = require('./cert-manager');
 
 function createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore }) {
   if (!device || typeof device.signingPrivateKey !== 'string') {
@@ -65,7 +66,12 @@ function createDesktopPairingApi({ device, trustedPeerStore, pairingSessionStore
       confirmation: payload.confirmation,
       signature: payload.signature
     }),
-    complete: (pairingId, options) => pairingSessionStore.complete(pairingId, trustedPeerStore, options)
+    complete: (pairingId, options) => pairingSessionStore.complete(pairingId, trustedPeerStore, {
+      ...options,
+      // Pin the local WebDAV certificate into the trust record so clients can
+      // verify the library channel after pairing.
+      webdavCertFp: certManager.getCertFingerprint()
+    })
   });
 }
 
@@ -101,7 +107,8 @@ function toPublicPeer(peer) {
     pairedAt: peer.pairedAt,
     lastSeen: peer.lastSeen,
     revokedAt: peer.revokedAt,
-    updatedAt: peer.updatedAt
+    updatedAt: peer.updatedAt,
+    webdavCertFp: peer.webdavCertFp
   };
 }
 

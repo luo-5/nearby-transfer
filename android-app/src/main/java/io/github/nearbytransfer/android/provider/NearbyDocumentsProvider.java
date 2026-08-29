@@ -49,6 +49,8 @@ public class NearbyDocumentsProvider extends DocumentsProvider {
 
     @Override
     public boolean onCreate() {
+        java.io.File pinsFile = new java.io.File(getContext().getFilesDir(), "webdav-pins.properties");
+        WebDavClient.initPins(pinsFile);
         return true;
     }
 

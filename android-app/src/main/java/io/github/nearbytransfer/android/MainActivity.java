@@ -209,6 +209,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        WebDavClient.initPins(new File(getFilesDir(), "webdav-pins.properties"));
         currentProtocol = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_TRANSFER_PROTOCOL, PROTOCOL_V2);
         buildUi();
         restoreSelectedFile(savedInstanceState);

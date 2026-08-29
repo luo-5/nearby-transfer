@@ -12,6 +12,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -114,6 +115,7 @@ public class WebDavClient {
             }
 
             int code = conn.getResponseCode();
+            capturePin(conn);
             InputStream in = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
             String responseStr = readString(in);
 
@@ -162,6 +164,7 @@ public class WebDavClient {
             conn.setRequestProperty("Authorization", "Bearer " + token);
 
             int code = conn.getResponseCode();
+            capturePin(conn);
             if (code != 200) {
                 throw new IllegalStateException("读取目录失败 (HTTP " + code + ")");
             }
@@ -206,6 +209,7 @@ public class WebDavClient {
             conn.setRequestProperty("Authorization", "Bearer " + token);
 
             int code = conn.getResponseCode();
+            capturePin(conn);
             if (code != 200) {
                 throw new IllegalStateException("下载失败 (HTTP " + code + ")");
             }
@@ -311,6 +315,7 @@ public class WebDavClient {
             }
 
             int code = conn.getResponseCode();
+            capturePin(conn);
             if (code != 200 && code != 201) {
                 String err = readString(conn.getErrorStream());
                 throw new IllegalStateException("上传失败 (HTTP " + code + "): " + err);
@@ -342,6 +347,7 @@ public class WebDavClient {
             conn.setReadTimeout(5000);
             conn.setRequestProperty("Authorization", "Bearer " + token);
             int code = conn.getResponseCode();
+            capturePin(conn);
             if (code != 200 && code != 201 && code != 204) {
                 String err = readString(conn.getErrorStream());
                 throw new IllegalStateException("创建文件夹失败 (HTTP " + code + "): " + err);
@@ -373,6 +379,7 @@ public class WebDavClient {
             conn.setReadTimeout(5000);
             conn.setRequestProperty("Authorization", "Bearer " + token);
             int code = conn.getResponseCode();
+            capturePin(conn);
             if (code != 200 && code != 204) {
                 String err = readString(conn.getErrorStream());
                 throw new IllegalStateException("删除失败 (HTTP " + code + "): " + err);
@@ -395,6 +402,7 @@ public class WebDavClient {
             conn.setRequestProperty("Accept", "text/event-stream");
 
             int code = conn.getResponseCode();
+            capturePin(conn);
             if (code != 200) {
                 if (listener != null) listener.onError(new IllegalStateException("SSE 订阅连接失败 (HTTP " + code + ")"));
                 return;
@@ -469,34 +477,121 @@ public class WebDavClient {
         }
     }
 
-    private static javax.net.ssl.SSLSocketFactory sslSocketFactory = null;
-    private static final HostnameVerifier HOSTNAME_VERIFIER = (hostname, session) -> true;
+    // Endpoint -> certificate pin persistence. Callers must initialize this
+    // once (initPins) from a writable app directory.
+    private static volatile WebDavPinStore pinStore = null;
+    // Fingerprint observed by the recording trust manager during the current
+    // connection attempt (trust-on-first-use capture).
+    private static final ThreadLocal<String> OBSERVED_FINGERPRINT = new ThreadLocal<>();
 
-    private static synchronized void initSsl() {
-        if (sslSocketFactory != null) return;
+    public static void initPins(java.io.File file) {
+        pinStore = new WebDavPinStore(file);
+    }
+
+    private static synchronized javax.net.ssl.SSLSocketFactory buildPinnedFactory(String expectedFingerprint) {
         try {
-            TrustManager[] trustAllCerts = new TrustManager[]{
+            TrustManager[] pinned = new TrustManager[]{
                 new X509TrustManager() {
                     public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
                     public void checkClientTrusted(X509Certificate[] certs, String authType) { }
-                    public void checkServerTrusted(X509Certificate[] certs, String authType) { }
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) throws java.security.cert.CertificateException {
+                        if (certs == null || certs.length == 0) {
+                            throw new java.security.cert.CertificateException("Empty certificate chain");
+                        }
+                        String observed = sha256Hex(certs[0].getEncoded());
+                        // The pinned fingerprint is the endpoint identity: the
+                        // hostname check is intentionally not consulted for
+                        // self-signed LAN certificates.
+                        if (!MessageDigest.isEqual(
+                                observed.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8),
+                                expectedFingerprint.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8))) {
+                            throw new java.security.cert.CertificateException(
+                                "Desktop certificate changed; re-pair the device to trust it again");
+                        }
+                    }
                 }
             };
             SSLContext sc = SSLContext.getInstance("TLS");
-            sc.init(null, trustAllCerts, new java.security.SecureRandom());
-            sslSocketFactory = sc.getSocketFactory();
+            sc.init(null, pinned, new SecureRandom());
+            return sc.getSocketFactory();
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new IllegalStateException("Unable to initialize pinned TLS context", e);
+        }
+    }
+
+    private static synchronized javax.net.ssl.SSLSocketFactory buildRecordingFactory() {
+        try {
+            TrustManager[] recording = new TrustManager[]{
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) { }
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                        // First connection to this endpoint: record what was
+                        // presented so capturePin() can persist the pin. The
+                        // recorded certificate is not yet trusted for later
+                        // connections; the pin enforces it from now on.
+                        if (certs != null && certs.length > 0) {
+                            OBSERVED_FINGERPRINT.set(sha256Hex(certs[0].getEncoded()));
+                        }
+                    }
+                }
+            };
+            SSLContext sc = SSLContext.getInstance("TLS");
+            sc.init(null, recording, new SecureRandom());
+            return sc.getSocketFactory();
+        } catch (Exception e) {
+            throw new IllegalStateException("Unable to initialize TLS context", e);
+        }
+    }
+
+    private static String pinnedFingerprintFor(HttpURLConnection conn) {
+        WebDavPinStore store = pinStore;
+        if (store == null) return null;
+        return store.get(conn.getURL().getHost(), conn.getURL().getPort());
+    }
+
+    private static void capturePin(HttpURLConnection conn) {
+        WebDavPinStore store = pinStore;
+        String observed = OBSERVED_FINGERPRINT.get();
+        OBSERVED_FINGERPRINT.remove();
+        if (store == null || observed == null) return;
+        String host = conn.getURL().getHost();
+        int port = conn.getURL().getPort();
+        if (store.get(host, port) == null) {
+            store.put(host, port, observed);
+        }
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(data);
+            StringBuilder builder = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                builder.append(String.format(Locale.ROOT, "%02x", b));
+            }
+            return builder.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
         }
     }
 
     private static void configureSsl(HttpURLConnection conn) {
         if (conn instanceof HttpsURLConnection) {
-            initSsl();
-            if (sslSocketFactory != null) {
-                ((HttpsURLConnection) conn).setSSLSocketFactory(sslSocketFactory);
+            HttpsURLConnection https = (HttpsURLConnection) conn;
+            OBSERVED_FINGERPRINT.remove();
+            String expected = pinnedFingerprintFor(conn);
+            if (expected != null) {
+                https.setSSLSocketFactory(buildPinnedFactory(expected));
+            } else {
+                // No pin yet: record the presented certificate; every later
+                // connection to this endpoint fails closed unless the
+                // certificate still matches the recorded pin.
+                https.setSSLSocketFactory(buildRecordingFactory());
             }
-            ((HttpsURLConnection) conn).setHostnameVerifier(HOSTNAME_VERIFIER);
+            // The certificate pin is the endpoint identity check; the default
+            // hostname verifier would reject self-signed LAN certificates
+            // whose SAN list does not include the current DHCP address.
+            https.setHostnameVerifier((hostname, session) -> true);
         }
     }
 }

@@ -227,7 +227,7 @@ class PairingSessionStore {
     return this.get(pairingId, { includeTerminal: true });
   }
 
-  complete(pairingId, trustedPeerStore, { displayName, permissions, now = Date.now() } = {}) {
+  complete(pairingId, trustedPeerStore, { displayName, permissions, webdavCertFp, now = Date.now() } = {}) {
     const session = this._requireActiveSession(pairingId, now);
     if (session.status !== SESSION_STATUS.READY_TO_TRUST || !session.localConfirmedAt || !session.remoteConfirmedAt) {
       throw new Error('Both pairing confirmations are required before trusting a peer');
@@ -239,6 +239,7 @@ class PairingSessionStore {
       identity: session.peer.identity,
       displayName,
       permissions,
+      webdavCertFp,
       pairedAt: now
     });
     this.database.prepare(`

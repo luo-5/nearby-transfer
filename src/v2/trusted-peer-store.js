@@ -27,19 +27,21 @@ class TrustedPeerStore {
 
   upsertTrustedPeer(options) {
     assertPlainObject(options, 'Trusted peer');
-    assertAllowedKeys(options, ['identity', 'displayName', 'permissions', 'pairedAt', 'lastSeen'], 'trusted peer');
+    assertAllowedKeys(options, ['identity', 'displayName', 'permissions', 'pairedAt', 'lastSeen', 'webdavCertFp'], 'trusted peer');
     const {
       identity,
       displayName,
       permissions = {},
       pairedAt = Date.now(),
-      lastSeen = pairedAt
+      lastSeen = pairedAt,
+      webdavCertFp = null
     } = options;
     const peer = assertValidPublicIdentity(identity);
     const name = normalizeDisplayName(displayName || peer.deviceName);
     const grants = normalizePermissions(permissions);
     assertTimestamp(pairedAt, 'Pairing time');
     assertTimestamp(lastSeen, 'Last-seen time');
+    const certFp = normalizeWebdavCertFp(webdavCertFp);
 
     return this._transaction(() => {
       const existing = this.database.prepare(
@@ -54,8 +56,9 @@ class TrustedPeerStore {
       this.database.prepare(`
         INSERT INTO trusted_peers (
           device_id, device_name, display_name, fingerprint, signing_public_key, encryption_public_key,
-          transfer_allowed, library_read_allowed, library_upload_allowed, paired_at, last_seen, revoked_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+          transfer_allowed, library_read_allowed, library_upload_allowed, paired_at, last_seen, revoked_at, updated_at,
+          webdav_cert_fp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         ON CONFLICT(device_id) DO UPDATE SET
           device_name = excluded.device_name,
           display_name = excluded.display_name,
@@ -65,7 +68,8 @@ class TrustedPeerStore {
           paired_at = excluded.paired_at,
           last_seen = excluded.last_seen,
           revoked_at = NULL,
-          updated_at = excluded.updated_at
+          updated_at = excluded.updated_at,
+          webdav_cert_fp = COALESCE(excluded.webdav_cert_fp, trusted_peers.webdav_cert_fp)
       `).run(
         peer.deviceId,
         peer.deviceName,
@@ -78,7 +82,8 @@ class TrustedPeerStore {
         grants.libraryUpload ? 1 : 0,
         pairedAt,
         effectiveLastSeen,
-        updatedAt
+        updatedAt,
+        certFp
       );
       return this.getTrustedPeer(peer.deviceId, { includeRevoked: true });
     });
@@ -311,6 +316,13 @@ class TrustedPeerStore {
       this.database.prepare(`
         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, ?)
       `).run(Date.now());
+
+      if (!columns.some((column) => column.name === 'webdav_cert_fp')) {
+        this.database.exec('ALTER TABLE trusted_peers ADD COLUMN webdav_cert_fp TEXT');
+      }
+      this.database.prepare(`
+        INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)
+      `).run(Date.now());
     });
   }
 }
@@ -362,6 +374,16 @@ function normalizeDisplayName(value) {
     throw new TypeError('Peer display name is invalid');
   }
   return normalized;
+}
+
+function normalizeWebdavCertFp(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new TypeError('WebDAV certificate fingerprint must be 64 lowercase hexadecimal characters');
+  }
+  return value;
 }
 
 function normalizeQueryOptions(options) {
@@ -469,7 +491,8 @@ function rowToPeer(row) {
     pairedAt: row.paired_at,
     lastSeen: row.last_seen || row.paired_at,
     revokedAt: row.revoked_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    webdavCertFp: row.webdav_cert_fp || null
   };
 }
 

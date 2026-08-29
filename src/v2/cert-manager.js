@@ -130,6 +130,16 @@ class CertManager {
     return this.generateCert();
   }
 
+  /** SHA-256 of the DER certificate, hex-encoded. Clients pin this fingerprint. */
+  getCertFingerprint() {
+    const { cert } = this.getOrCreateCert();
+    const der = Buffer.from(
+      cert.replace(/-----BEGIN CERTIFICATE-----/, '').replace(/-----END CERTIFICATE-----/, '').replace(/\s+/g, ''),
+      'base64'
+    );
+    return crypto.createHash('sha256').update(der).digest('hex');
+  }
+
   generateCert() {
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
       modulusLength: 2048,
