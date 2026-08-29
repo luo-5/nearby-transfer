@@ -44,7 +44,7 @@ npm test
 
 # build current desktop artifacts
 npm run dist:windows   # Windows portable executable + zip (unsigned)
-npm run dist:linux     # Linux tar.gz + zip
+npm run dist:linux     # Linux x64 Debian package
 ```
 
 Pre-built installers for the latest release are on the [Releases page](https://github.com/luo-5/nearby-transfer/releases).
@@ -71,7 +71,7 @@ Released at **v1.3.0**. The desktop app currently sends files through the classi
 
 | Platform | Supported range | Architectures | Packages |
 | --- | --- | --- | --- |
-| Linux | Build on a compatible current distribution | x64 currently automated | tar.gz, zip |
+| Linux | Debian/Ubuntu-compatible distribution | x64 currently automated | deb |
 | Windows | Windows 10-11 | x64 currently automated | unsigned portable exe, zip |
 | Android | Android 8+, API 26+ | device ABI depends on the Gradle build | debug APK from CI; signed public release not automated |
 
@@ -122,9 +122,10 @@ manifest serialization) are in
 npm run dist:linux
 ```
 
-The current `dist:linux` command uses `electron-builder` and creates `tar.gz` and
-`zip` artifacts. Other Linux package formats remain release-roadmap work until a
-published workflow builds and verifies them.
+The current `dist:linux` command uses `electron-builder` and creates an x64 Debian
+package. The package installer configures Electron's Chromium sandbox and the Ubuntu
+24+ AppArmor profile. Raw `tar.gz` and `zip` bundles are not published because they
+cannot safely install the required sandbox ownership and policy.
 
 ## Build Desktop Packages
 

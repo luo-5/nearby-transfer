@@ -10,7 +10,6 @@ This guide describes how to build Nearby Transfer from source for Linux, Windows
 - Java 17 for Android builds.
 - Android SDK platform 35 and build tools 35.0.0 for Android builds.
 - No global Gradle installation is required; use the checked-in Gradle Wrapper.
-- `rpmbuild` on Linux if RPM packages are needed.
 
 ## Install Desktop Dependencies
 
@@ -48,16 +47,17 @@ Start the app on two devices on the same LAN. Firewalls must allow UDP `47777` f
 npm run dist:linux
 ```
 
-The standard command currently requests Linux `tar.gz` and `zip` archives.
+The standard command builds an installable x64 Debian package.
 
 Expected artifacts:
 
-- `nearby-transfer-<version>-linux-x64.tar.gz`
-- `nearby-transfer-<version>-linux-x64.zip`
+- `nearby-transfer-<version>-linux-amd64.deb`
 
-The electron-builder configuration also contains deb/rpm targets, but they are not
-part of the standard script or current release workflow and must not be advertised as
-published until a workflow builds and verifies them.
+The Debian installer configures Electron's Chromium sandbox and an AppArmor profile on
+supported Ubuntu releases. Raw Linux archives are not public release artifacts because
+extracting an archive cannot securely establish the sandbox ownership and policy.
+RPM, AppImage, and additional architectures remain release-roadmap work until matching
+CI and real-system installation tests are added.
 
 ## Build Windows Packages
 

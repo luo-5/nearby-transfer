@@ -15,6 +15,11 @@ extraMetadata:
 linux:
   category: Network
   executableName: nearby-transfer
+  icon: android-app/src/main/res/drawable/app_icon.png
+  syncDesktopName: true
+  desktop:
+    entry:
+      Name: Nearby Transfer
   maintainer: Nearby Transfer Contributors
   synopsis: Encrypted nearby file transfer
   description: Encrypted local-network file transfer application for nearby devices.
@@ -28,6 +33,7 @@ linux:
         - x64
         - arm64
 win:
+  icon: android-app/src/main/res/drawable/app_icon.png
   target:
     - target: zip
       arch:
@@ -35,7 +41,7 @@ win:
     - target: portable
       arch:
         - x64
-  signAndEditExecutable: false
+  signExecutable: false
 nsis:
   oneClick: false
   perMachine: false

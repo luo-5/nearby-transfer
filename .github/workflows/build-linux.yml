@@ -1,6 +1,17 @@
 name: Build Linux
 
 on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "src/**"
+      - "packages/core/**"
+      - "android-app/src/main/res/drawable/app_icon.png"
+      - "scripts/build-vendor.js"
+      - "packaging/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/build-linux.yml"
   workflow_call:
   workflow_dispatch:
 
@@ -24,15 +35,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install RPM tooling
-        run: sudo apt-get update && sudo apt-get install -y rpm
+      - name: Build Linux Debian package
+        run: npm run dist:linux -- --config.directories.output=dist
 
-      - name: Build Linux packages
-        run: npm run dist:linux -- --publish never --config.directories.output=dist
+      - name: Install and launch package with Chromium sandbox enabled
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb ./dist/*.deb
+          mkdir -p "$RUNNER_TEMP/nearby-transfer-config"
+          set +e
+          timeout 20s xvfb-run -a env \
+            XDG_CONFIG_HOME="$RUNNER_TEMP/nearby-transfer-config" \
+            /opt/nearby-transfer/nearby-transfer
+          status=$?
+          set -e
+          if [ "$status" -ne 124 ]; then
+            echo "Installed application exited unexpectedly with status $status" >&2
+            exit "$status"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: nearby-transfer-linux
-          path: dist/**/*
+          path: dist/*.deb
           if-no-files-found: error

@@ -78,7 +78,7 @@ jobs:
         shell: bash
         run: |
           npm sbom --sbom-format spdx > release-assets/sbom.spdx.json
-          find release-assets -type f ! -name SHA256SUMS.txt -print0 \
+          find release-assets -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
             | sort -z \
             | xargs -0 sha256sum > release-assets/SHA256SUMS.txt
 

@@ -25,6 +25,9 @@ they differ.
 
 ## Current signing boundary
 
+- Linux application releases use an installed `.deb` whose post-install script enables
+  the Electron Chromium sandbox and loads a supported AppArmor profile. Raw Linux
+  archives are not release assets.
 - Windows artifacts are unsigned until a protected code-signing identity is wired
   into the release workflow. Release notes must say so.
 - Android CI produces a debug APK for verification only. It is deliberately excluded

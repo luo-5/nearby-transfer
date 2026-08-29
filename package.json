@@ -1,6 +1,7 @@
 {
   "name": "nearby-transfer",
   "version": "1.3.0",
+  "desktopName": "nearby-transfer.desktop",
   "private": true,
   "description": "Encrypted nearby device file transfer and NAS WebDAV library sync app for desktop and Android.",
   "engines": {
@@ -29,7 +30,7 @@
     "test": "node test/crypto-smoke.js && node test/discovery-smoke.js && node test/multicast-interfaces-smoke.js && node test/local-transfer-smoke.js && node test/path-utils-smoke.js && node test/protocol-v2-smoke.js && node test/trusted-peer-store-smoke.js && node test/pairing-session-store-smoke.js && node test/desktop-pairing-api-smoke.js && node test/transfer-manifest-smoke.js && node test/transfer-source-manifest-smoke.js && node test/transfer-message-codec-smoke.js && node test/transfer-message-auth-smoke.js && node test/desktop-transfer-bootstrap-smoke.js && node test/desktop-transfer-executor-smoke.js && node test/transfer-session-crypto-smoke.js && node test/transfer-chunk-frame-smoke.js && node test/transfer-stream-session-smoke.js && node test/signed-stream-control-smoke.js && node test/encrypted-chunk-reader-smoke.js && node test/encrypted-chunk-writer-smoke.js && node test/receive-target-planner-smoke.js && node test/wire-frame-smoke.js && node test/transfer-job-store-smoke.js && node test/desktop-transfer-job-api-smoke.js && node test/desktop-transfer-scheduler-smoke.js && node test/v2-discovery-smoke.js && node test/message-codec-smoke.js && node test/v2-lan-service-smoke.js && node test/desktop-lan-api-smoke.js && node test/desktop-library-service-smoke.js && node test/desktop-library-api-smoke.js && node test/protocol-v2-fixtures-smoke.js && node test/transfer-controls-smoke.js && node test/disk-space-precheck-smoke.js && node test/multi-round-batch-dragdrop-smoke.js && node test/multi-round-https-webdav-stress.js && node test/protocols-engine-smoke.js && node test/protocol-matrix-switcher-smoke.js && node test/core-integration-smoke.js && node test/webdav-interop-smoke.js",
     "test:interop": "node test/webdav-interop-smoke.js && bash scripts/interop-webdav.sh",
     "test:soak": "npx tsx --test test/soak-marathon-20-rounds.ts",
-    "dist:linux": "electron-builder --config packaging/linux/electron-builder.yml --linux tar.gz zip --x64 --publish never",
+    "dist:linux": "electron-builder --config packaging/linux/electron-builder.yml --linux deb --x64 --publish never",
     "dist:windows": "electron-builder --config packaging/electron-builder.yml --win zip portable --x64 --publish never",
     "dist:desktop": "npm run dist:linux && npm run dist:windows",
     "build:core": "npm run build --workspace @luo-5/core",
