@@ -6,6 +6,12 @@ const { Discovery } = require('./core/discovery');
 const { TransferServer } = require('./core/server');
 const { ensureSafeDirectory, walkDirectory } = require('./core/path-utils');
 const { sendFile } = require('./core/transfer');
+const {
+  DEFAULT_TRANSFER_PROTOCOL,
+  listProtocolAvailability,
+  normalizeTransferProtocol,
+  validateTransferProtocol
+} = require('./protocols/availability');
 const { TrustedPeerStore } = require('./v2/trusted-peer-store');
 const { PairingSessionStore } = require('./v2/pairing-session-store');
 const { createDesktopPairingApi, registerPairingIpcHandlers } = require('./v2/desktop-pairing-api');
@@ -321,7 +327,7 @@ ipcMain.handle('open-transfer-folder', async (_event, filePath) => {
   return { ok: false, error: '文件路径无效' };
 });
 
-let currentTransferProtocol = 'v2-stream';
+let currentTransferProtocol = DEFAULT_TRANSFER_PROTOCOL;
 
 function loadProtocolConfig(userDataDir) {
   try {
@@ -329,7 +335,7 @@ function loadProtocolConfig(userDataDir) {
     if (fs.existsSync(file)) {
       const data = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (data && data.protocol) {
-        currentTransferProtocol = data.protocol;
+        currentTransferProtocol = normalizeTransferProtocol(data.protocol);
       }
     }
   } catch (_) {}
@@ -343,23 +349,16 @@ function saveProtocolConfig(userDataDir, protocol) {
 }
 
 ipcMain.handle('get-protocol', async () => {
-  return { protocol: currentTransferProtocol };
+  return {
+    protocol: currentTransferProtocol,
+    protocols: listProtocolAvailability()
+  };
 });
 
 ipcMain.handle('set-protocol', async (_event, protocol) => {
-  const allowed = [
-    'v2-stream',
-    'turbo-parallel',
-    'quic-udp',
-    'smb-share',
-    'webdav-sync',
-    'v1-classic',
-    'ftps-secure'
-  ];
-  if (!allowed.includes(protocol)) {
-    return { ok: false, error: 'Invalid protocol' };
-  }
-  currentTransferProtocol = protocol;
+  const validation = validateTransferProtocol(protocol);
+  if (!validation.ok) return validation;
+  currentTransferProtocol = validation.protocol;
   try {
     const userDataDir = app.getPath('userData');
     saveProtocolConfig(userDataDir, protocol);

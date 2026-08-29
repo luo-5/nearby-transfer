@@ -37,6 +37,9 @@ All notable changes to Nearby Transfer will be documented in this file.
 - Removed the global BouncyCastle provider re-ordering on Android (`CryptoUtil`).
 
 ### Fixed
+- Desktop protocol selection now fails closed for adapters that are not connected to the
+  real send/receive path. Stale experimental selections fall back to `v1-classic`, and the
+  UI labels unavailable protocols instead of reporting a successful switch.
 - **Packaged desktop app missing `@luo-5/core`**: the 20 `src/v2` strangler-fig adapters
   now require the core library from a vendored build (`src/vendor/luo5-core`, produced by
   `scripts/build-vendor.js` and wired via `prestart`/`predist`/`pretest`), so

@@ -94,10 +94,10 @@
     <section class="panel protocol-settings-panel" aria-labelledby="protocolSettingsTitle">
       <div class="panel-title-row">
         <div>
-          <h2 id="protocolSettingsTitle" data-i18n="protocol_settings_title">传输协议矩阵设置</h2>
-          <p class="pairing-intro" data-i18n="protocol_settings_subtitle">支持自研极速流、系统原生共享与国际标准存储 7 大主流协议热切换</p>
+          <h2 id="protocolSettingsTitle" data-i18n="protocol_settings_title">传输协议状态</h2>
+          <p class="pairing-intro" data-i18n="protocol_settings_subtitle">V1 经典协议当前可用；其余协议为正在集成的实验性适配器</p>
         </div>
-        <span id="currentProtocolBadge" class="badge">V2 稳定流</span>
+        <span id="currentProtocolBadge" class="badge">V1 轻量</span>
       </div>
 
       <!-- 分类筛选标签 -->
@@ -110,7 +110,7 @@
 
       <div class="protocol-grid">
         <!-- 1. V2 Stream (fast) -->
-        <div class="protocol-card active" data-protocol="v2-stream" data-category="fast" tabindex="0" role="radio" aria-checked="true">
+        <div class="protocol-card" data-protocol="v2-stream" data-category="fast" tabindex="0" role="radio" aria-checked="false">
           <div class="protocol-card-header">
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
@@ -255,7 +255,7 @@
         </div>
 
         <!-- 6. V1 Classic (standard) -->
-        <div class="protocol-card" data-protocol="v1-classic" data-category="standard" tabindex="0" role="radio" aria-checked="false">
+        <div class="protocol-card active" data-protocol="v1-classic" data-category="standard" tabindex="0" role="radio" aria-checked="true">
           <div class="protocol-card-header">
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
