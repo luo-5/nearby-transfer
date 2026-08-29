@@ -72,12 +72,16 @@ async function main() {
   });
 
   const originalWatch = fs.watch;
-  const watchedPaths = [];
+  const watchCalls = [];
   let service;
   try {
-    fs.watch = (watchPath, ...args) => {
-      watchedPaths.push(watchPath);
-      return originalWatch(watchPath, ...args);
+    fs.watch = (watchPath, options, listener) => {
+      const watcher = {
+        on() { return watcher; },
+        close() {}
+      };
+      watchCalls.push({ watchPath, options, listener });
+      return watcher;
     };
     service = new DesktopLibraryService({
       trustedPeerStore: peerStore,
@@ -89,10 +93,14 @@ async function main() {
   } finally {
     fs.watch = originalWatch;
   }
-  assert.deepStrictEqual(watchedPaths, [
+  assert.deepStrictEqual(watchCalls.map(({ watchPath }) => watchPath), [
     fs.realpathSync.native(shareADir),
     fs.realpathSync.native(shareBDir)
   ]);
+  for (const { options, listener } of watchCalls) {
+    assert.deepStrictEqual(options, { recursive: true });
+    assert.strictEqual(typeof listener, 'function');
+  }
 
   const port = await service.start(0);
   assert.ok(port > 0, 'Service must bind to a dynamic port');
