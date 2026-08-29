@@ -71,13 +71,28 @@ async function main() {
     }
   });
 
-  const service = new DesktopLibraryService({
-    trustedPeerStore: peerStore,
-    shares: [
-      { id: 'docs', name: 'Documents', localPath: shareADir, readOnly: false },
-      { id: 'readonly', name: 'ReadOnlyShare', localPath: shareBDir, readOnly: true }
-    ]
-  });
+  const originalWatch = fs.watch;
+  const watchedPaths = [];
+  let service;
+  try {
+    fs.watch = (watchPath, ...args) => {
+      watchedPaths.push(watchPath);
+      return originalWatch(watchPath, ...args);
+    };
+    service = new DesktopLibraryService({
+      trustedPeerStore: peerStore,
+      shares: [
+        { id: 'docs', name: 'Documents', localPath: shareADir, readOnly: false },
+        { id: 'readonly', name: 'ReadOnlyShare', localPath: shareBDir, readOnly: true }
+      ]
+    });
+  } finally {
+    fs.watch = originalWatch;
+  }
+  assert.deepStrictEqual(watchedPaths, [
+    fs.realpathSync.native(shareADir),
+    fs.realpathSync.native(shareBDir)
+  ]);
 
   const port = await service.start(0);
   assert.ok(port > 0, 'Service must bind to a dynamic port');

@@ -211,12 +211,24 @@ class DesktopLibraryService {
   _watchShare(shareId, localPath) {
     if (this.watchers.has(shareId)) return;
     try {
-      const watcher = fs.watch(localPath, { recursive: true }, (eventType, filename) => {
+      // Windows temporary paths may contain an 8.3 alias (for example RUNNER~1)
+      // while libuv reports recursive events with the long path. Watching the
+      // canonical path prevents Node's Windows fs-event prefix assertion.
+      const watchPath = fs.realpathSync.native(localPath);
+      const watcher = fs.watch(watchPath, { recursive: true }, (eventType, filename) => {
         this._onLocalFileChanged(shareId, eventType, filename);
       });
-      watcher.on('error', () => {});
+      watcher.on('error', (error) => {
+        if (this.logger && typeof this.logger.warn === 'function') {
+          this.logger.warn(`Share watcher failed for ${shareId}`, error);
+        }
+      });
       this.watchers.set(shareId, watcher);
-    } catch (_e) {}
+    } catch (error) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn(`Unable to watch share ${shareId}`, error);
+      }
+    }
   }
 
   _unwatchShare(shareId) {
