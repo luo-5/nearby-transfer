@@ -258,7 +258,7 @@ async function testSymlinkJunctionAndUnexpectedEntryDefense(sandbox) {
   if (linked) {
     await assert.rejects(
       send(symlinkWriter, symlinkFixture.manifest.taskId, 'folder/file.bin', 0, 0, Buffer.from('safe')),
-      /already exists|symbolic link/i
+      /already exists|symbolic link|regular file/i
     );
     assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
     fs.rmSync(stagingFile, { force: true });
