@@ -9,21 +9,24 @@
 [![Android](https://img.shields.io/badge/Android-8%2B-3DDC84?style=for-the-badge&logo=android&logoColor=black&labelColor=1a1a2e)](https://developer.android.com)
 [![Electron](https://img.shields.io/badge/Electron-43-47848F?style=for-the-badge&logo=electron&logoColor=white&labelColor=1a1a2e)](https://www.electronjs.org)
 
-**English** · Nearby Transfer is an encrypted local-network file transfer and NAS WebDAV library-sync app for nearby devices. It runs as an Electron desktop app on Linux and Windows, with a separate Android client that reuses the same v2 protocol. Files move directly between devices over the LAN — no relay server, no cloud — encrypted end-to-end with Ed25519 identities, X25519 key agreement, and AES-256-GCM chunk encryption.
+The **Downloads** badge counts GitHub Release asset downloads. It does not include npm
+package downloads; npm publishes separate per-package statistics.
 
-**中文** · Nearby Transfer 是一款面向局域网近场设备的加密文件传输与 NAS WebDAV 共享库同步应用。桌面端基于 Electron，支持 Linux 与 Windows；Android 端为独立应用，复用同一套 v2 协议。文件在设备间经局域网直传，无需中继服务器、不经过云端，全程采用 Ed25519 身份签名、X25519 密钥协商与 AES-256-GCM 分块加密。
+**English** · Nearby Transfer is a local-network file transfer and NAS WebDAV library app for nearby devices. The current Electron desktop data path uses the classic encrypted transfer protocol; protocol-v2 cryptography, pairing, persistence, and transfer components are being integrated behind it. Android, CLI, and LocalSend support have different maturity and security boundaries, documented in the [capability matrix](docs/capabilities.md).
+
+**中文** · Nearby Transfer 是一款面向局域网近场设备的文件传输与 NAS WebDAV 共享应用。当前 Electron 桌面端的数据通路使用经典加密传输协议；协议 v2 的密码学、配对、持久化和传输组件仍在逐步接入。Android、CLI 和 LocalSend 兼容层的成熟度与安全边界并不相同，详见[能力矩阵](docs/capabilities.md)。
 
 ## Features · 功能
 
-- **Encrypted direct transfer · 加密直传** — device-to-device over TCP/UDP on the LAN, no relay or cloud. Ed25519-signed identities, X25519 ECDH session keys, AES-256-GCM per-chunk encryption.
-- **6-digit SAS pairing · 6 位配对码** — mutual verification with a short authentication string before trust is saved; replay-protected signed confirmations.
-- **Resumable chunked transfer · 断点续传** — 4 MiB chunks with committed-offset checkpoints; transfers resume after interruption.
+- **Encrypted direct transfer · 加密直传** — the current desktop path sends file contents directly over the LAN without a relay. Protocol-v2 provides Ed25519 identity, X25519 key agreement, and AES-256-GCM chunk primitives but is not yet the desktop default data path.
+- **V2 pairing foundation · V2 配对基础** — signed offers, 6-digit SAS derivation, trust persistence, and replay-aware control messages are implemented and tested as v2 components; application integration remains in progress.
+- **Resumable transfer foundation · 断点续传基础** — protocol-v2 includes chunk checkpoints and recovery state machines. Do not assume every current client or protocol path can resume yet.
 - **Protocol migration · 协议迁移** — the desktop transfer flow currently uses `v1-classic`. The `v2-stream`, Turbo, QUIC, SMB, WebDAV-driver, and FTPS adapters remain visible as experimental roadmap entries but cannot be selected until their send/receive paths are integrated.
 - **Shared library (WebDAV) · 共享库** — turn a device into an HTTPS WebDAV NAS; browse, upload, download, and delete with Bearer-token auth over self-signed TLS.
 - **Concurrent multi-device · 多设备并发** — send to and receive from several peers simultaneously.
-- **Cross-platform · 跨平台** — desktop (Electron, Linux/Windows) and Android share one protocol; interoperable across all three.
-- **Directory sync · 目录同步** — CLI `sync` command recursively transfers directories with incremental detection (quick 1 MiB hash + full SHA-256), conflict resolution (rename-new/overwrite/skip), and resume support.
-- **Security hardened · 安全加固** — timing-safe comparisons prevent side-channel attacks; DoS protection via frame size limits (16 MB wire / 1 MB chunk / 4 MB message); 96-bit random nonces per chunk (no IV reuse); path traversal prevention in receive planner.
+- **Cross-platform foundations · 跨平台基础** — Electron, Android, and Node implementations live in one repository and share protocol fixtures. End-to-end compatibility is tracked per client rather than claimed globally.
+- **Directory sync preview · 目录同步预览** — the CLI contains directory scanning, hashing, conflict, and resume components, but its trust and pairing workflow is not yet ready for general use.
+- **Scoped security hardening · 分范围安全加固** — protocol-v2 components enforce bounded frames, random chunk nonces, authenticated metadata, and receive-path validation. These guarantees do not automatically apply to the classic, WebDAV, or LocalSend paths.
 
 ## Quick Start · 快速开始
 
@@ -39,8 +42,8 @@ npm start
 # run the smoke test suite
 npm test
 
-# build installers
-npm run dist:windows   # Windows NSIS installer
+# build current desktop artifacts
+npm run dist:windows   # Windows portable executable + zip (unsigned)
 npm run dist:linux     # Linux tar.gz + zip
 ```
 
@@ -52,9 +55,9 @@ Open `android-app/` in Android Studio (or run `./gradlew.bat :android-app:assemb
 
 ## Current Status · 当前状态
 
-Released at **v1.3.0**. The desktop app currently sends files through the classic encrypted HTTP stream. V2 pairing, transfer primitives, and resumable job infrastructure are under active integration, while the WebDAV shared-library service is available separately. The remaining protocol adapters are experimental scaffolds rather than complete transfer implementations. Work is underway to extract the protocol core into a reusable TypeScript package (`@luo-5/core`) and to grow the ecosystem (CLI, Docker, LocalSend interop) per the roadmap.
+Released at **v1.3.0**. The desktop app currently sends files through the classic encrypted HTTP stream. V2 pairing, transfer primitives, and resumable job infrastructure are under active integration, while the WebDAV shared-library service is available separately. The remaining protocol adapters are experimental scaffolds rather than complete transfer implementations. The npm packages are pre-1.0 and may change. See the [capability and security matrix](docs/capabilities.md) before choosing a client or protocol.
 
-### v0.2 Transfer Flow
+### Current classic transfer flow
 
 - Finds other running app instances on the same LAN with UDP multicast.
 - Sends files directly between devices without a relay server.
@@ -68,10 +71,9 @@ Released at **v1.3.0**. The desktop app currently sends files through the classi
 
 | Platform | Supported range | Architectures | Packages |
 | --- | --- | --- | --- |
-| Linux RPM family | RHEL/Rocky/Alma/CentOS Stream 8-10 | x64, arm64 | rpm |
-| Linux DEB family | Ubuntu 22.04-26.04 or newer compatible releases | x64, arm64 | deb |
-| Windows | Windows 10-11 | x64, arm64 | exe installer, zip test package |
-| Android | Android 8-16, API 26+ | arm64-v8a first, x86_64 for emulator later | apk/aab planned |
+| Linux | Build on a compatible current distribution | x64 currently automated | tar.gz, zip |
+| Windows | Windows 10-11 | x64 currently automated | unsigned portable exe, zip |
+| Android | Android 8+, API 26+ | device ABI depends on the Gradle build | debug APK from CI; signed public release not automated |
 
 Unsigned Windows builds are intended for testing. Public Windows releases should use platform code signing.
 
@@ -92,13 +94,12 @@ npm test
 ## Build Guide
 
 See [`docs/build.md`](docs/build.md) for complete Linux, Windows, and Android build steps, signing notes, and release artifact guidance.
+Release tags and independent application/package version lines are documented in
+[`docs/releasing.md`](docs/releasing.md).
 
 For the v1.0 rewrite plan, current implementation boundary, and moving the
 working directory to another computer, see
 [`docs/next-version-handoff.md`](docs/next-version-handoff.md).
-
-For a one-page path index covering the handoff, UI, Android, desktop, protocol,
-and test entry points, see [`HANDOFF.md`](HANDOFF.md).
 
 ## Protocol Specification · 协议规范
 
@@ -121,8 +122,9 @@ manifest serialization) are in
 npm run dist:linux
 ```
 
-The Linux build uses `electron-builder` and creates `deb` and `rpm` artifacts under `../nearby-transfer-dist/`.
-Linux packages install under `/opt/nearby-transfer` while keeping the desktop display name `Nearby Transfer`.
+The current `dist:linux` command uses `electron-builder` and creates `tar.gz` and
+`zip` artifacts. Other Linux package formats remain release-roadmap work until a
+published workflow builds and verifies them.
 
 ## Build Desktop Packages
 

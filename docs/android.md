@@ -40,5 +40,8 @@ The current Android MVP can:
 
 ## Remaining Work
 
-- Add a foreground service for reliable discovery and receiving under Android background limits.
-- Add Android instrumentation tests and real-device transfer matrix coverage.
+- Connect the durable v2 services to the default user-facing transfer route only after
+  lifecycle, trust, recovery, and cross-client tests pass.
+- Add Android instrumentation tests and repeatable real-device transfer matrix coverage.
+- Configure protected release signing and artifact verification. Current CI APKs are
+  debug artifacts only.

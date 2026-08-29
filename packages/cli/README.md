@@ -6,8 +6,8 @@ Command-line encrypted file transfer for nearby devices on the LAN.
 > components, but the `pair` command does not yet complete and persist a mutual
 > pairing. `send` and `sync` fail closed unless a matching trusted signing key is
 > already provisioned. Do not treat the CLI as a production pairing workflow.
-> Follow the repository [capability matrix](../../docs/capabilities.md) for the
-> current boundary.
+> Follow the repository [capability matrix](https://github.com/luo-5/nearby-transfer/blob/main/docs/capabilities.md)
+> for the current boundary.
 
 ## Install
 

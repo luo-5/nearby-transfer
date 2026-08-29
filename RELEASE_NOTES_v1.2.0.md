@@ -1,45 +1,41 @@
-# Nearby Transfer v1.2.0 Release Notes
+# Nearby Transfer v1.2.0 release notes
 
-Welcome to **Nearby Transfer v1.2.0**! This major release brings full bilingual (English & Simplified Chinese) internationalization across Desktop and Android, comprehensive security hardening for LAN WebDAV & P2P transfers, enhanced transfer controls (bidirectional pause, resume, cancel), robust subfolder navigation on mobile, and superior multi-round stress resilience.
+Accuracy correction: 2026-08-29
 
----
+This corrected record distinguishes shipped assets from planned package formats and
+test claims in the original draft.
 
-## 🌟 Highlights / 核心亮点
+## Published assets
 
-### 🌐 1. Full-Platform Bilingual Localization (全平台中英双语国际化)
-- **Desktop (桌面端)**: Integrated sleek language toggle `[ 中文 | English ]` with complete DOM & dynamic string i18n engine. Native dialogs (`dialog.showMessageBox`, `dialog.showOpenDialog`) and batch transfer notifications automatically adapt to the user's selected language.
-- **Android (安卓端)**: Added full string resources in `values/strings.xml` and `values-zh-rCN/strings.xml`. Foreground notifications, channel details, and Storage Access Framework (SAF) Document Provider titles dynamically render according to system locale.
+The public v1.2.0 GitHub Release contains:
 
-### 🛡️ 2. Deep Security Hardening & Isolation (深度安全加固)
-- **WebDAV Digital Signature Auth**: Added cryptographic proof-of-possession verification (Ed25519) to `/api/session` to prevent unauthorized device ID spoofing on shared local networks.
-- **Scoped SSL/TLS on Android**: Refactored `WebDavClient` to isolate self-signed TLS socket factory and hostname verifier per connection instance, protecting the global JVM network security policy.
-- **Windows Reserved Names & Symlink Safety**: Protected against Windows reserved filenames (`CON`, `PRN`, `AUX`, `NUL`, etc.) and eliminated infinite recursion on cyclic symlinks during folder drag-and-drop.
+- `nearby-transfer-1.2.0-android.apk`
+- `nearby-transfer-1.2.0-linux-x64.tar.gz`
+- `nearby-transfer-1.2.0-linux-x64.zip`
+- `nearby-transfer-1.2.0-win-x64.zip`
 
-### ⚡ 3. Advanced Transfer Controls & History (传输控制与体验增强)
-- **Bidirectional Controls**: Both sender and receiver can now seamlessly **Pause**, **Resume**, or **Cancel** streaming transfers at any point.
-- **Quick File Access**: One-click "Open Folder" action on completed transfers in the desktop client to instantly locate received items.
-- **History Management**: Added batch clear functionality for transfer records.
+It does not contain the Windows NSIS/ARM64, deb, rpm, Linux ARM64, AppImage, or AAB
+assets listed in the earlier draft. The Android asset's signing identity and build
+type are not established by the public release workflow, so it must not be described
+as a verified production-signed APK.
 
-### 📱 4. Android Navigation & Background Service (安卓层级导航与前台保活)
-- **Subfolder Breadcrumb Navigation**: Seamless dual-mode directory browsing (custom UI + SAF DocumentsProvider) with Android hardware back-button gesture support.
-- **Foreground Transfer Service**: Android Foreground Service with persistent notifications prevents system task killing during large file background transfers.
+Release page: <https://github.com/luo-5/nearby-transfer/releases/tag/v1.2.0>
 
----
+## Source highlights
 
-## 📦 Multi-Platform Release Assets / 各平台安装包
+- English and Simplified Chinese desktop/Android resources.
+- WebDAV session authentication and Android connection-scoped TLS changes.
+- Windows reserved-name and folder traversal handling.
+- Transfer pause/resume/cancel UI and history controls.
+- Android navigation and foreground-transfer service work.
 
-| Platform | Architecture / Format | Package Name |
-| :--- | :--- | :--- |
-| **Android** | APK (ARM64 / ARMv7 / x86_64) | `nearby-transfer-1.2.0-android.apk` |
-| **Windows** | x64 (NSIS Installer) | `nearby-transfer-1.2.0-win-x64.exe` |
-| **Windows** | ARM64 (NSIS Installer) | `nearby-transfer-1.2.0-win-arm64.exe` |
-| **Linux** | x64 (Debian / Ubuntu `.deb`) | `nearby-transfer-1.2.0-linux-amd64.deb` |
-| **Linux** | x64 (RHEL / Fedora `.rpm`) | `nearby-transfer-1.2.0-linux-x86_64.rpm` |
-| **Linux** | ARM64 (Debian / Ubuntu `.deb`) | `nearby-transfer-1.2.0-linux-arm64.deb` |
-| **Linux** | ARM64 (RHEL / Fedora `.rpm`) | `nearby-transfer-1.2.0-linux-aarch64.rpm` |
+These bullets describe source changes, not a certification that every path or client
+combination was independently interoperable. Current behavior and limitations are in
+[`docs/capabilities.md`](docs/capabilities.md).
 
----
+## Verification interpretation
 
-## 🧪 Testing & Verification (自动化测试与验证)
-- **37 Automated Desktop Test Suites**: 100% passed (including 5 rounds of deep batch drag-drop stress tests and 5 rounds of concurrent HTTPS WebDAV penetration/stress tests).
-- **Android Unit Tests & Compilation**: 100% passed (`testDebugUnitTest` & `assembleDebug` clean builds).
+Repository tests executed selected desktop, WebDAV, and Android paths. Phrases such as
+“100% secure,” “fully compliant,” or “all platforms supported” are not implied by a
+passing test run. Future releases attach checksums/SBOM and state signing status in the
+release asset manifest.

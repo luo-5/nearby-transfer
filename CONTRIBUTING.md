@@ -7,7 +7,7 @@ Thank you for your interest in contributing to Nearby Transfer!
 ## 1. Core Principles & Constraints
 
 All contributions must strictly adhere to our core architectural constraints:
-1. **Zero Runtime npm Dependencies**: `@luo-5/core` and `@luo-5/cli` MUST ONLY use `node:` built-in modules. No external npm packages are permitted at runtime.
+1. **Minimal Runtime Dependencies**: `@luo-5/core` uses only `node:` built-ins. The CLI and adapters may depend on workspace packages, but adding a third-party runtime dependency requires an explicit design and security review.
 2. **TypeScript Strict Mode**: Code must compile cleanly with `strict: true` under `tsconfig.json`.
 3. **Cryptographic Integrity**: The pairing security model (Ed25519 + SAS + X25519 + AES-256-GCM) cannot be weakened.
 4. **Deterministic Protocol**: All JSON exchanged over the wire must be canonical JSON.
@@ -22,16 +22,17 @@ git clone https://github.com/luo-5/nearby-transfer.git
 cd nearby-transfer
 
 # Install dev dependencies
-npm install
+npm ci
 
-# Run all test suites
-npm test
+# Build packages, type-check, syntax-check, and run package + desktop suites
+npm run ci:verify
+```
 
-# Run core package tests
-npm run test:core
+Android or shared-vector changes also require:
 
-# Run TypeScript type check
-npm run typecheck
+```powershell
+.\gradlew.bat :android-app:testDebugUnitTest
+.\gradlew.bat :android-app:assembleDebug
 ```
 
 ---

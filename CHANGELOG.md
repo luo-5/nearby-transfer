@@ -54,9 +54,18 @@ All notable changes to Nearby Transfer will be documented in this file.
   the connection.
 
 ### Changed
-- CI matrix aligned with the real runtime: Node `22.x`/`24.x` only (`node:sqlite`
-  requires >= 22.5; `@luo-5/core` engines >= 22); release builds use Node 22.
-- npm packages publish with `--provenance`; GitHub Releases include `SHA256SUMS.txt`.
+- CI, package engines, and release builds now use the actual Node 24 runtime. A single
+  `npm run ci:verify` command builds all packages, type-checks and tests Core/CLI/
+  LocalSend, automatically syntax-checks `src/` and `test/`, and runs desktop suites.
+- Full dependency audit is clean after pinning the fixed esbuild toolchain.
+- Application and npm releases use separate namespaced tags. Package releases publish
+  only the selected workspace with provenance, license, tarball, and checksum;
+  application releases aggregate verified Windows/Linux assets with an SBOM and
+  checksums. Android debug builds are not public release assets.
+- Capability, security, support, governance, maintainer, roadmap, and release documents
+  now state the implemented boundary and real v1.2.x/v1.3.0 asset manifests.
+- CLI send/sync now fail closed unless the discovered signing key matches an existing
+  trust record; the preview-only pair command no longer reports a successful pairing.
 - Repository layout: one-off development scripts moved to `scripts/dev/` (private VM
   addresses parameterized via env vars), working notes moved to `docs/internal/`,
   committed `__pycache__` artifacts removed; README/`docs/audit.md` use the real package
@@ -90,43 +99,29 @@ All notable changes to Nearby Transfer will be documented in this file.
 - Timing-safe comparison utility for preventing side-channel attacks
 - Verified: `crypto.verify` for signatures (constant-time), `crypto.randomBytes(12)` for nonces (96-bit), DoS limits (16 MB / 1 MB / 4 MB), path traversal prevention in receive-planner
 
-## 1.3.0 - 2026-08-29
+## 1.3.0 - 2026-08-23
 
-### Ecosystem Interoperability & WebDAV Engine
-- **RFC 4918 WebDAV Full Specification Compliance**:
-  - Implemented `OPTIONS`, `PROPFIND` (Depth: 0/1/infinity with XML response formatting), `GET`, `PUT`, `MKCOL`, `MOVE`, and `DELETE`.
-  - Added URL normalization and prefix preservation in XML hrefs for seamless third-party client integration (Finder, Windows Explorer, Cyberduck, rclone).
-  - Implemented HTTP 206 Partial Content and `Range: bytes=start-end` requests with `Content-Range` and `Accept-Ranges: bytes` headers for video/audio seeking and resumable media streaming.
-- **rclone Deep Stress Testing**:
-  - Validated with `rclone copy`, `sync`, and `check` across 10 concurrent streams, nested directory trees, and large binary payloads (30 MB+) with 100% bit-for-bit SHA-256 match.
-- **Web Browser Zero-Install Portal**:
-  - Modern web portal with RESTful shares discovery, directory tree browsing, chunked drag-and-drop uploading, and real-time Server-Sent Events (SSE) for instant filesystem synchronization.
-- **LocalSend v2 Adapter**:
-  - Full TypeScript typechecking under `exactOptionalPropertyTypes: true` and 100% test pass rate across all adapter suites.
+### Added
+- WebDAV shared-library operations exercised by repository smoke tests: OPTIONS,
+  PROPFIND, GET, PUT, MKCOL, MOVE, DELETE, byte ranges, Unicode paths, and SSE events.
+- Browser portal and LocalSend interoperability components.
+- Protocol-v2 core, pairing, persistence, transfer, and recovery foundations under
+  active application integration.
+- Device-first desktop selection and compact protocol-roadmap UI.
 
-### High-Performance Crypto & Transfer Core
-- **AES-256-GCM + AAD Throughput**:
-  - Benchmarked at **769.14 MB/s** decryption throughput and **712.88 MB/s** encryption throughput on 1MB chunk streams.
-- **Canonical JSON Serialization**:
-  - **596,700 ops/sec** for control messages and **18,864 ops/sec** for 50-entry manifests.
-- **Wire Speed**:
-  - **217.63 MB/s** (1.74 Gbps) over TCP loopback with complete session cryptographic encapsulation.
+### Release assets
+- Published `nearby-transfer-1.3.0-win-x64.exe` (unsigned),
+  `nearby-transfer-1.3.0-linux-x64.tar.gz`, and
+  `nearby-transfer-1.3.0-linux-x64.zip`.
+- No Android, deb, rpm, AppImage, macOS, SBOM, checksum catalog, or detached signature
+  was attached to the public v1.3.0 release.
 
-### Multi-Platform Release Packaging
-- **Windows**: Built NSIS installer (`nearby-transfer-1.3.0-win-x64.exe`) and portable package (`nearby-transfer-1.3.0-win-x64.zip`).
-- **Linux**: Built Debian package (`nearby-transfer-1.3.0-linux-amd64.deb` - verified via `dpkg -i` on Ubuntu 24.04), RPM package (`nearby-transfer-1.3.0-linux-x86_64.rpm` - verified via `rpm -Uvh` on CentOS 7/9), AppImage (`nearby-transfer-1.3.0-linux-x86_64.AppImage`), and Tar/Zip archives.
-- **Android**: Built signed release APK (`nearby-transfer-1.3.0-android.apk`) with ProGuard/R8 code shrinking and Android 14+ compatibility.
-- Generated `SHA256SUMS.txt` cryptographic catalog for all release packages.
-
-### UX & Security Improvements
-- **Pairing simplified to 2 steps**: both devices confirm the 6-digit SAS code, then trust is saved automatically.
-- **Device-first selection flow**: device panel renders above file panel with persistent selection.
-- **Compact protocol selector**: compact single-column list with collapsible accordion details.
-- **Android hardening**: removed all hardcoded fallback device IDs; fixed SharedPreferences sync across multi-process SAF provider; resolved discovery broadcast log spam.
-
-### Cross-Platform Testing & Quality Assurance
-- **256 / 256 tests passing (100% green)** across monorepo packages, desktop smoke suites, browser portal E2E, WebDAV interop, 3-VM matrix, and physical Android hardware (Redmi K50 and Samsung S10+).
-- Heap memory audit confirmed zero memory/handle leaks across a **5.7-hour / 17,050-round / 96.2 GB** continuous soak cycle (272,818 files transferred, 100% SHA-256 integrity, V8 heap stable at 17.60 MB).
+### Clarified
+- The desktop data path remained `v1-classic`; the other six selector entries were
+  experimental/integration scaffolds rather than complete interchangeable drivers.
+- Repository tests and development benchmarks are evidence for the executed paths,
+  not formal RFC compliance, universal interoperability, or a production-readiness
+  certification. See `RELEASE_NOTES_v1.3.0.md` and `docs/capabilities.md`.
 
 ## 1.2.1
 

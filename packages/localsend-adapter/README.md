@@ -4,6 +4,10 @@ LocalSend protocol interop adapter for Nearby Transfer.
 
 Enables file exchange between Nearby Transfer and [LocalSend](https://localsend.org/) apps on the LAN.
 
+The current adapter advertises LocalSend's HTTP transport. It provides interoperability,
+not Nearby Transfer protocol-v2 end-to-end encryption. Use it only on networks whose
+confidentiality boundary you understand.
+
 ## Install
 
 ```bash

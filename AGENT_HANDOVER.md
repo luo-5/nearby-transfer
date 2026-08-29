@@ -2,9 +2,12 @@
 
 > **文档性质**：面向下一位接手 AI Agent / 核心开发者的权威项目交接与开发指南。  
 > **交接日期**：2026-08-29  
-> **当前 HEAD 提交**：`22f9b72` (基于 `main` 分支)  
+> **交接基线提交**：`5ec1d93` (`main`；后续工作请以实际 `git status` 为准)
 > **远程仓库**：`https://github.com/luo-5/nearby-transfer.git`  
-> **仓库状态**：Working tree clean，所有全平台单元测试、集成测试、类型检查、构建与 CI 门禁 100% 通过。
+> **仓库状态**：交接时工作区干净。本地 Node 24、Python 与 Android JVM 测试曾通过；GitHub Actions 和发布资产必须查看当前公开运行结果，不得根据本文件声称“100% 全平台通过”。
+
+功能和安全状态以 [`docs/capabilities.md`](docs/capabilities.md) 为准。桌面端
+当前只允许 `v1-classic` 传输；其他驱动不得仅因存在注册表或测试而称为已交付。
 
 ---
 
@@ -62,13 +65,14 @@ nearby-transfer-next-version/
 │   └── *.md                          # 压测报告、发布说明、就绪报告
 │
 └── .github/workflows/                # GitHub Actions 自动化 CI/CD
-    ├── ci.yml                        # 跨系统 (Ubuntu/Win/macOS) Node 22/24 + Python 向量门禁
+    ├── ci.yml                        # 跨系统 (Ubuntu/Win/macOS) Node 24 + Python 向量门禁
     ├── check.yml                     # 语法与 AST 检查门禁
     ├── codeql.yml                    # CodeQL 安全扫描 (每周一)
     ├── build-windows.yml             # Windows 安装包自动构建
     ├── build-linux.yml               # Linux (deb/rpm/AppImage) 构建
     ├── build-android.yml             # Android APK 自动构建
-    ├── release.yml                   # Tag 触发：全包构建、OIDC 签名发布 npm 与 GitHub Release
+    ├── release.yml                   # 命名空间 package tag：只发布对应 npm 包
+    ├── release-app.yml               # app-v* tag：验证后聚合 Windows/Linux Release
     └── docker.yml                    # CLI Docker 镜像自动构建发布至 ghcr.io
 ```
 
@@ -130,8 +134,9 @@ nearby-transfer-next-version/
 | **类型检查** | `npm run typecheck` | 执行 `@luo-5/core` 严格 TypeScript 类型检查 |
 | **AST 语法检查** | `npm run lint` 或 `npm run check` | 对全部桌面与测试 JS 脚本进行 Node 语法检查 |
 | **运行核心库测试** | `npm run test:core` | 执行 Core 124 个单元/属性/模糊测试 |
-| **运行 CLI 测试** | `npm run test:cli` | 执行 CLI 21 个命令与同步测试 |
-| **运行 LocalSend 测试**| `npm --prefix packages/localsend-adapter run test` | 执行适配层 11 个互通测试 |
+| **运行 CLI 测试** | `npm run test:cli` | 执行 CLI 命令、信任边界与同步测试 |
+| **运行 LocalSend 测试**| `npm run test:localsend` | 执行适配层互通、路径与资源边界测试 |
+| **运行统一 CI 门禁** | `npm run ci:verify` | 构建、三包类型检查/测试、JS 语法与桌面集成测试 |
 | **运行桌面端冒烟套件** | `npm test` | 执行 41 个冒烟套件（包含 39 个 WebDAV RFC 4918 互通用例） |
 | **马拉松浸泡压测** | `npm run test:soak` | 20 轮深度内存泄漏与大数据量吞吐压测 |
 | **Python 跨语言验证**| `python packages/python-ref/verify_vectors.py` | 验证 10 组跨语言确定性测试向量 |
@@ -152,12 +157,9 @@ nearby-transfer-next-version/
 3. **LocalSend 多设备批量群发优化 (Phase 3)**
    - 增强 `@luo-5/localsend-adapter` 的多目标广播与并发排队能力。
 4. **版本发布与 Tag 触发 (Phase 4)**
-   - 当准备向开源社区发布时，在本地打 Tag 并推送：
-     ```bash
-     git tag v1.3.0
-     git push origin v1.3.0
-     ```
-     GitHub Actions 将全自动触发发布。
+   - 应用与 npm 包使用独立版本和命名空间 tag；禁止继续使用一个 `v*` tag
+     同时发布全部内容。具体 tag、验证、签名边界和恢复流程见
+     [`docs/releasing.md`](docs/releasing.md)。
 
 ---
 

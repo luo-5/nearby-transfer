@@ -21,7 +21,7 @@ Protocol core for [Nearby Transfer](https://github.com/luo-5/nearby-transfer) â€
 npm install @luo-5/core
 ```
 
-Requires Node.js >= 22. Ships dual ESM/CJS builds with TypeScript declarations.
+Requires Node.js >= 24. Ships dual ESM/CJS builds with TypeScript declarations.
 
 ## Example
 
@@ -56,7 +56,7 @@ const { nonce, ciphertext, authTag } = encryptChunk({
 ```
 
 Cross-language test vectors (TypeScript / Java / Python) live in the repository
-under `test/fixtures/`.
+under `packages/core/test/vectors/` and are mirrored for the reference implementations.
 
 ## License
 
