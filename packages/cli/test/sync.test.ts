@@ -253,16 +253,22 @@ test('e2e: sync 10 small files with correct SHA-256 for each', async () => {
       [sender.deviceId, { signingPublicKey: sender.signingPublicKey, deviceName: 'sender' }],
     ]);
 
+    const receiverTasks: Promise<void>[] = [];
     const server = net.createServer((socket) => {
       socket.setNoDelay(true);
-      createTransferReceiver({
+      const receiverTask = createTransferReceiver({
         socket,
         receiveDir: recvDir,
         localDeviceId: receiver.deviceId,
         localSigningPrivateKey: receiver.signingPrivateKey,
         localEncryptionPrivateKey: receiver.encryptionPrivateKey,
         lookupPeer: (id: string) => trustedPeers.get(id) ?? null,
-      }).then(r => r.done).then(() => socket.destroy()).catch(() => socket.destroy());
+      }).then((receiverSession) => receiverSession.done).catch((error) => {
+        socket.destroy();
+        throw error;
+      });
+      receiverTask.catch(() => {});
+      receiverTasks.push(receiverTask);
     });
 
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -321,6 +327,7 @@ test('e2e: sync 10 small files with correct SHA-256 for each', async () => {
       });
 
       await executor.done;
+      await Promise.all(receiverTasks);
     } finally {
       server.close();
     }
