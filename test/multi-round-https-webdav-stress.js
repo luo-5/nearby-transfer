@@ -43,6 +43,17 @@ function httpsRequest(options, body = null) {
   });
 }
 
+function signedHandshakeBody(deviceId, privateKeyPem) {
+  const timestamp = Date.now();
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const signature = crypto.sign(
+    null,
+    Buffer.from(`nearby-transfer:library-auth:${deviceId}:${timestamp}:${nonce}`, 'utf8'),
+    crypto.createPrivateKey(privateKeyPem)
+  ).toString('base64');
+  return JSON.stringify({ deviceId, timestamp, nonce, signature });
+}
+
 async function runHttpsWebDavStressTests() {
   console.log('======================================================');
   console.log('   MULTI-ROUND HTTPS WEBDAV CONCURRENCY & STRESS TEST ');
@@ -54,15 +65,22 @@ async function runHttpsWebDavStressTests() {
   fs.mkdirSync(testShareDir, { recursive: true });
   fs.mkdirSync(readOnlyShareDir, { recursive: true });
 
+  const clientFullKeys = crypto.generateKeyPairSync('ed25519');
+  const clientReadonlyKeys = crypto.generateKeyPairSync('ed25519');
+  const clientFullPrivateKeyPem = clientFullKeys.privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const clientReadonlyPrivateKeyPem = clientReadonlyKeys.privateKey.export({ type: 'pkcs8', format: 'pem' });
+
   const peerStore = new MockTrustedPeerStore({
     'trusted-client-full': {
       deviceId: 'trusted-client-full',
       isTrusted: () => true,
+      signingPublicKey: clientFullKeys.publicKey.export({ type: 'spki', format: 'pem' }),
       permissions: { libraryRead: true, libraryUpload: true, transfer: true }
     },
     'trusted-client-readonly': {
       deviceId: 'trusted-client-readonly',
       isTrusted: () => true,
+      signingPublicKey: clientReadonlyKeys.publicKey.export({ type: 'spki', format: 'pem' }),
       permissions: { libraryRead: true, libraryUpload: false, transfer: true }
     }
   });
@@ -93,7 +111,7 @@ async function runHttpsWebDavStressTests() {
       path: '/api/session',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
-    }, JSON.stringify({ deviceId: 'trusted-client-full' }));
+    }, signedHandshakeBody('trusted-client-full', clientFullPrivateKeyPem));
 
     assert.strictEqual(authRes.statusCode, 200);
     const authData = JSON.parse(authRes.body);
@@ -242,7 +260,7 @@ async function runHttpsWebDavStressTests() {
       path: '/api/session',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
-    }, JSON.stringify({ deviceId: 'trusted-client-readonly' }));
+    }, signedHandshakeBody('trusted-client-readonly', clientReadonlyPrivateKeyPem));
     const roToken = JSON.parse(roAuthRes.body).token;
 
     const roPutRes = await httpsRequest({

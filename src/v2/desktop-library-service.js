@@ -5,6 +5,13 @@ const fs = require('fs');
 const path = require('path');
 const certManager = require('./cert-manager');
 
+const HANDSHAKE_RATE_LIMIT = 10;
+const HANDSHAKE_RATE_WINDOW_MS = 60 * 1000;
+const HANDSHAKE_TIMESTAMP_TOLERANCE_MS = 60 * 1000;
+const HANDSHAKE_NONCE_TTL_MS = 120 * 1000;
+const HANDSHAKE_MAX_BODY_BYTES = 64 * 1024;
+const HANDSHAKE_NONCE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
+
 class DesktopLibraryService {
   constructor({
     trustedPeerStore,
@@ -19,6 +26,8 @@ class DesktopLibraryService {
     this.server = null;
     this.port = null;
     this.sessionTokens = new Map(); // token -> { deviceId, permissions, expiresAt }
+    this.usedAuthNonces = new Map(); // deviceId -> Map<nonce, expiresAt>
+    this.handshakeWindows = new Map(); // remoteAddress -> { startedAt, count }
     this.sseClients = new Set();
     this.watchers = new Map();
     this.debounceTimers = new Map();
@@ -123,6 +132,47 @@ class DesktopLibraryService {
     return session;
   }
 
+  _consumeHandshakeRequest(remoteAddress) {
+    const now = Date.now();
+    let window = this.handshakeWindows.get(remoteAddress);
+    if (!window || now - window.startedAt >= HANDSHAKE_RATE_WINDOW_MS) {
+      window = { startedAt: now, count: 0 };
+      this.handshakeWindows.set(remoteAddress, window);
+    }
+    if (window.count >= HANDSHAKE_RATE_LIMIT) {
+      const remainingMs = Math.max(1, HANDSHAKE_RATE_WINDOW_MS - (now - window.startedAt));
+      return { allowed: false, retryAfterSeconds: Math.ceil(remainingMs / 1000) };
+    }
+    window.count += 1;
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
+  _hasUsedAuthNonce(deviceId, nonce) {
+    const nonces = this.usedAuthNonces.get(deviceId);
+    if (!nonces) return false;
+    const expiresAt = nonces.get(nonce);
+    if (expiresAt === undefined) return false;
+    if (Date.now() > expiresAt) {
+      nonces.delete(nonce);
+      return false;
+    }
+    return true;
+  }
+
+  _rememberAuthNonce(deviceId, nonce) {
+    let nonces = this.usedAuthNonces.get(deviceId);
+    if (!nonces) {
+      nonces = new Map();
+      this.usedAuthNonces.set(deviceId, nonces);
+    }
+    // Lazy eviction keeps the replay cache bounded without a timer.
+    const now = Date.now();
+    for (const [key, expiresAt] of nonces) {
+      if (now > expiresAt) nonces.delete(key);
+    }
+    nonces.set(nonce, now + HANDSHAKE_NONCE_TTL_MS);
+  }
+
   async start(port = 0) {
     if (this.server) return this.port;
 
@@ -147,6 +197,8 @@ class DesktopLibraryService {
     this.server = null;
     this.port = null;
     this.sessionTokens.clear();
+    this.usedAuthNonces.clear();
+    this.handshakeWindows.clear();
 
     await new Promise((resolve) => server.close(resolve));
     this._stopWatchers();
@@ -257,7 +309,14 @@ class DesktopLibraryService {
   _handleRequest(req, res) {
     const method = req.method.toUpperCase();
     const url = new URL(req.url, 'http://127.0.0.1');
-    let pathname = decodeURIComponent(url.pathname || '/');
+    let pathname;
+    try {
+      pathname = decodeURIComponent(url.pathname || '/');
+    } catch (_err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Bad request path' }));
+      return;
+    }
 
     if (req.url.includes('..') || req.url.includes('%2e%2e') || req.url.includes('%2E%2E')) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -265,18 +324,37 @@ class DesktopLibraryService {
       return;
     }
 
-    // Unauthenticated handshake for trusted peers to exchange session tokens
+    // Signed handshake for trusted peers to exchange session tokens. Every
+    // request must prove possession of the device's Ed25519 signing key; the
+    // timestamp bounds replay and the nonce makes each handshake single-use.
     if (pathname === '/api/session' || pathname === '/api/auth') {
       if (method === 'POST') {
+        const rate = this._consumeHandshakeRequest(req.socket.remoteAddress || 'unknown');
+        if (!rate.allowed) {
+          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(rate.retryAfterSeconds) });
+          res.end(JSON.stringify({ ok: false, error: 'Too many handshake requests' }));
+          return;
+        }
         let body = '';
-        req.on('data', (chunk) => { body += chunk; });
+        let oversized = false;
+        req.on('data', (chunk) => {
+          body += chunk;
+          if (body.length > HANDSHAKE_MAX_BODY_BYTES) {
+            oversized = true;
+            req.destroy();
+          }
+        });
         req.on('end', () => {
+          if (oversized) return;
           try {
             const data = JSON.parse(body || '{}');
-            const deviceId = data.deviceId;
-            if (!deviceId) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: 'deviceId is required' }));
+            const deviceId = typeof data.deviceId === 'string' ? data.deviceId : '';
+            const timestamp = data.timestamp;
+            const nonce = typeof data.nonce === 'string' ? data.nonce : '';
+            const signature = typeof data.signature === 'string' ? data.signature : '';
+            if (!deviceId || !Number.isSafeInteger(timestamp) || !HANDSHAKE_NONCE_PATTERN.test(nonce) || !signature) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'deviceId, timestamp, nonce, and signature are required' }));
               return;
             }
             if (!this.trustedPeerStore) {
@@ -294,26 +372,39 @@ class DesktopLibraryService {
               return;
             }
             const signingKeyPem = (peer.identity && peer.identity.signingPublicKey) || peer.signingPublicKey || peer.signing_public_key;
-            if (data.signature && signingKeyPem) {
-              try {
-                const authPayload = `nearby-transfer:library-auth:${deviceId}:${data.timestamp || ''}:${data.nonce || ''}`;
-                const isValid = require('crypto').verify(
-                  null,
-                  Buffer.from(authPayload, 'utf8'),
-                  require('crypto').createPublicKey(signingKeyPem),
-                  Buffer.from(data.signature, 'base64')
-                );
-                if (!isValid) {
-                  res.writeHead(401, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({ ok: false, error: 'Invalid digital signature for device authentication' }));
-                  return;
-                }
-              } catch (_sigErr) {
-                res.writeHead(401, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ ok: false, error: 'Failed to verify authentication signature' }));
-                return;
-              }
+            if (!signingKeyPem) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'Trusted peer has no signing public key' }));
+              return;
             }
+            if (Math.abs(Date.now() - timestamp) > HANDSHAKE_TIMESTAMP_TOLERANCE_MS) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'Handshake timestamp is outside the accepted window' }));
+              return;
+            }
+            if (this._hasUsedAuthNonce(deviceId, nonce)) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'Handshake nonce has already been used' }));
+              return;
+            }
+            const authPayload = `nearby-transfer:library-auth:${deviceId}:${timestamp}:${nonce}`;
+            let isValid = false;
+            try {
+              isValid = require('crypto').verify(
+                null,
+                Buffer.from(authPayload, 'utf8'),
+                require('crypto').createPublicKey(signingKeyPem),
+                Buffer.from(signature, 'base64')
+              );
+            } catch (_sigErr) {
+              isValid = false;
+            }
+            if (!isValid) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'Invalid digital signature for device authentication' }));
+              return;
+            }
+            this._rememberAuthNonce(deviceId, nonce);
             const token = this.createSessionToken(deviceId);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({

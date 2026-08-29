@@ -1553,7 +1553,17 @@ public class MainActivity extends Activity {
 
         executor.execute(() -> {
             try {
-                WebDavClient.SessionResult authResult = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId);
+                DeviceConfig localDevice = device;
+                if (localDevice == null || localDevice.signingPrivateKey == null) {
+                    runOnUiThreadIfAlive(() -> {
+                        libraryLoading = false;
+                        if (librariesStatusText != null) {
+                            librariesStatusText.setText("设备身份未就绪，无法连接文件库。");
+                        }
+                    });
+                    return;
+                }
+                WebDavClient.SessionResult authResult = WebDavClient.authenticate(serverIp, libraryServerPort, myDeviceId, localDevice.signingPrivateKey);
                 if (!authResult.ok) {
                     runOnUiThreadIfAlive(() -> {
                         libraryLoading = false;

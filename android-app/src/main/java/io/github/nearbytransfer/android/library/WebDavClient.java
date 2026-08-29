@@ -12,10 +12,12 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -77,7 +79,10 @@ public class WebDavClient {
         }
     }
 
-    public static SessionResult authenticate(String serverIp, int port, String deviceId) {
+    public static SessionResult authenticate(String serverIp, int port, String deviceId, String signingPrivateKeyPem) {
+        if (signingPrivateKeyPem == null || signingPrivateKeyPem.isEmpty()) {
+            return new SessionResult(false, null, null, "缺少本机签名私钥，无法完成库认证");
+        }
         HttpURLConnection conn = null;
         try {
             URL url = new URL("https://" + serverIp + ":" + port + "/api/session");
@@ -89,8 +94,18 @@ public class WebDavClient {
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
 
+            long timestamp = System.currentTimeMillis();
+            String nonce = newAuthNonce();
+            // Must stay byte-for-byte identical to the desktop handshake payload.
+            String signature = CryptoUtil.sign(
+                "nearby-transfer:library-auth:" + deviceId + ":" + timestamp + ":" + nonce,
+                signingPrivateKeyPem);
+
             JSONObject requestJson = new JSONObject();
             requestJson.put("deviceId", deviceId);
+            requestJson.put("timestamp", timestamp);
+            requestJson.put("nonce", nonce);
+            requestJson.put("signature", signature);
             byte[] bodyBytes = requestJson.toString().getBytes(StandardCharsets.UTF_8);
 
             try (OutputStream out = conn.getOutputStream()) {
@@ -428,6 +443,16 @@ public class WebDavClient {
         } finally {
             if (conn != null) conn.disconnect();
         }
+    }
+
+    private static String newAuthNonce() {
+        byte[] bytes = new byte[16];
+        new SecureRandom().nextBytes(bytes);
+        StringBuilder builder = new StringBuilder(32);
+        for (byte b : bytes) {
+            builder.append(String.format(Locale.ROOT, "%02x", b));
+        }
+        return builder.toString();
     }
 
     private static String readString(InputStream in) {

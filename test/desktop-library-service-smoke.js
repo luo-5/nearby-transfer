@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const https = require('https');
+const crypto = require('crypto');
 const { DesktopLibraryService } = require('../src/v2/desktop-library-service');
 
 class MockTrustedPeerStore {
@@ -183,10 +184,153 @@ async function main() {
     });
     assert.strictEqual(traversal.statusCode, 403);
 
+    // 10. Malformed percent-encoding must be rejected with 400 instead of hanging
+    const badEncoding = await httpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/docs/%zz',
+      method: 'GET',
+      headers: { Authorization: `Bearer ${readToken}` }
+    });
+    assert.strictEqual(badEncoding.statusCode, 400);
+
+    await assertHandshake(port);
+    await assertHandshakeRateLimit();
+
     console.log('desktop library service smoke tests passed');
   } finally {
     await service.stop();
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function handshakeSignature(deviceId, timestamp, nonce, privateKeyPem) {
+  return crypto.sign(
+    null,
+    Buffer.from(`nearby-transfer:library-auth:${deviceId}:${timestamp}:${nonce}`, 'utf8'),
+    crypto.createPrivateKey(privateKeyPem)
+  ).toString('base64');
+}
+
+function handshakePayload(deviceId, timestamp, nonce, privateKeyPem) {
+  return JSON.stringify({
+    deviceId,
+    timestamp,
+    nonce,
+    signature: handshakeSignature(deviceId, timestamp, nonce, privateKeyPem)
+  });
+}
+
+function handshakeRequest(port, body) {
+  return httpRequest({
+    hostname: '127.0.0.1',
+    port,
+    path: '/api/session',
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' }
+  }, body);
+}
+
+async function assertHandshake(port) {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
+  const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const store = new MockTrustedPeerStore({
+    'peer-signing': {
+      deviceId: 'peer-signing',
+      isTrusted: () => true,
+      signingPublicKey: publicKeyPem,
+      permissions: { libraryRead: true, libraryUpload: false, transfer: true }
+    }
+  });
+  const signingService = new DesktopLibraryService({
+    trustedPeerStore: store,
+    shares: [{ id: 'docs', name: 'Documents', localPath: fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-handshake-')), readOnly: true }]
+  });
+  const signingPort = await signingService.start(0);
+
+  try {
+    // Missing fields are rejected before any trust lookup happens
+    const missing = await handshakeRequest(signingPort, JSON.stringify({ deviceId: 'peer-signing', timestamp: Date.now(), nonce: 'a'.repeat(32) }));
+    assert.strictEqual(missing.statusCode, 401);
+
+    // A signature computed over a different nonce does not validate
+    const bodyNonce = 'b'.repeat(32);
+    const signedNonce = 'c'.repeat(32);
+    const mismatched = await handshakeRequest(signingPort, JSON.stringify({
+      deviceId: 'peer-signing',
+      timestamp: Date.now(),
+      nonce: bodyNonce,
+      signature: handshakeSignature('peer-signing', Date.now(), signedNonce, privateKeyPem)
+    }));
+    assert.strictEqual(mismatched.statusCode, 401);
+
+    // Stale timestamps are outside the accepted window
+    const stale = await handshakeRequest(signingPort, handshakePayload('peer-signing', Date.now() - 61 * 1000, 'd'.repeat(32), privateKeyPem));
+    assert.strictEqual(stale.statusCode, 401);
+
+    // A valid signed handshake yields a working bearer token
+    const nonce = 'e'.repeat(32);
+    const valid = await handshakeRequest(signingPort, handshakePayload('peer-signing', Date.now(), nonce, privateKeyPem));
+    assert.strictEqual(valid.statusCode, 200);
+    const token = JSON.parse(valid.body).token;
+    assert.ok(token, 'handshake must return a token');
+    const listed = await httpRequest({
+      hostname: '127.0.0.1',
+      port: signingPort,
+      path: '/docs/',
+      method: 'PROPFIND',
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    assert.strictEqual(listed.statusCode, 207);
+
+    // Replaying the same nonce fails even with a valid signature
+    const replay = await handshakeRequest(signingPort, handshakePayload('peer-signing', Date.now(), nonce, privateKeyPem));
+    assert.strictEqual(replay.statusCode, 401);
+
+    // A garbage signature is rejected
+    const forged = await handshakeRequest(signingPort, JSON.stringify({
+      deviceId: 'peer-signing',
+      timestamp: Date.now(),
+      nonce: 'f'.repeat(32),
+      signature: Buffer.from('not-a-signature').toString('base64')
+    }));
+    assert.strictEqual(forged.statusCode, 401);
+  } finally {
+    await signingService.stop();
+  }
+}
+
+async function assertHandshakeRateLimit() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const store = new MockTrustedPeerStore({
+    'peer-rate': {
+      deviceId: 'peer-rate',
+      isTrusted: () => true,
+      signingPublicKey: publicKey.export({ type: 'spki', format: 'pem' }),
+      permissions: { libraryRead: true, libraryUpload: false, transfer: true }
+    }
+  });
+  const service = new DesktopLibraryService({
+    trustedPeerStore: store,
+    shares: [{ id: 'docs', name: 'Documents', localPath: fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-rate-')), readOnly: true }]
+  });
+  const port = await service.start(0);
+  try {
+    let sawThrottled = false;
+    for (let attempt = 1; attempt <= 12; attempt += 1) {
+      const nonce = String(attempt).padStart(32, '0');
+      const res = await handshakeRequest(port, handshakePayload('peer-rate', Date.now(), nonce, privateKeyPem));
+      if (res.statusCode === 429) {
+        assert.ok(attempt > 10, `rate limit must allow the first 10 requests (throttled at ${attempt})`);
+        assert.ok(res.headers['retry-after'], '429 must carry Retry-After');
+        sawThrottled = true;
+      }
+    }
+    assert.ok(sawThrottled, 'rate limiter must eventually return 429');
+  } finally {
+    await service.stop();
   }
 }
 
