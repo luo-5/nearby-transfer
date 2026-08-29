@@ -6,8 +6,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createPublicKey } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
-import { loadOrCreateDevice, parseCommonOptions, getDataDir } from '../src/device.js';
+import { loadOrCreateDevice, parseCommonOptions, getDataDir, requireTrustedPeerIdentity } from '../src/device.js';
 import { JsonTrustStore, createEd25519KeyPair, deriveDeviceId, fingerprintFor } from '@luo-5/core';
 
 test('device: loadOrCreateDevice generates a new identity on first run', () => {
@@ -111,4 +113,37 @@ test('device: getDataDir returns ~/.nearby-transfer by default', () => {
 test('device: getDataDir respects override', () => {
   const dir = getDataDir('/custom/path');
   assert.equal(dir, '/custom/path');
+});
+
+test('trust: discovered peer must have a persisted matching signing key', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt-cli-peer-trust-'));
+  try {
+    const signing = createEd25519KeyPair();
+    const deviceId = deriveDeviceId(signing.publicKey);
+    const der = createPublicKey(signing.publicKey).export({ type: 'spki', format: 'der' });
+    const rawKey = new Uint8Array(Buffer.from(der).subarray(-32));
+    const peer = { deviceId, signingPublicKey: signing.publicKey };
+
+    await assert.rejects(
+      requireTrustedPeerIdentity(peer, dir),
+      /is not trusted/,
+    );
+
+    const store = new JsonTrustStore(dir);
+    await store.save({
+      deviceId,
+      name: 'trusted-peer',
+      signingPublicKey: rawKey,
+      trustedAt: Date.now(),
+    });
+    await requireTrustedPeerIdentity(peer, dir);
+
+    const impostor = createEd25519KeyPair();
+    await assert.rejects(
+      requireTrustedPeerIdentity({ deviceId, signingPublicKey: impostor.publicKey }, dir),
+      /does not match the trusted record/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

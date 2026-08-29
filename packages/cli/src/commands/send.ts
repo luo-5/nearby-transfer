@@ -18,7 +18,7 @@ import {
   JOB_STATUS,
   type DiscoveredPeerEntry,
 } from '@luo-5/core';
-import { loadOrCreateDevice, parseCommonOptions } from '../device.js';
+import { loadOrCreateDevice, parseCommonOptions, requireTrustedPeerIdentity } from '../device.js';
 
 export async function sendCommand(args: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
@@ -92,6 +92,7 @@ export async function sendCommand(args: string[]): Promise<void> {
   }
 
   const peer = targetPeer as DiscoveredPeerEntry;
+  await requireTrustedPeerIdentity(peer, opts.dataDir);
   process.stdout.write(`Connected to: ${peer.deviceName} (${peer.deviceId})\n`);
   process.stdout.write(`  Address: ${peer.host}:${peer.port}\n\n`);
 

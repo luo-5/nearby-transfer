@@ -2,6 +2,13 @@
 
 Command-line encrypted file transfer for nearby devices on the LAN.
 
+> **Developer preview:** the package contains working discovery and transfer
+> components, but the `pair` command does not yet complete and persist a mutual
+> pairing. `send` and `sync` fail closed unless a matching trusted signing key is
+> already provisioned. Do not treat the CLI as a production pairing workflow.
+> Follow the repository [capability matrix](../../docs/capabilities.md) for the
+> current boundary.
+
 ## Install
 
 ```bash
@@ -20,7 +27,7 @@ nearby-transfer send ./report.pdf --to 192.168.1.50
 # Receive files
 nearby-transfer receive --dir ~/Downloads
 
-# Pair with a device
+# Inspect a pairing candidate (does not persist mutual trust yet)
 nearby-transfer pair --to a1b2c3d4e5f60718
 
 # Manage trusted devices

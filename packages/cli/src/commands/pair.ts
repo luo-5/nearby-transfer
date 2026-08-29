@@ -1,5 +1,6 @@
 /**
- * `nearby-transfer pair --to <device-id|ip>` — initiate pairing, display 6-digit SAS code.
+ * `nearby-transfer pair --to <device-id|ip>` — inspect a discovered pairing
+ * candidate. Mutual pairing and trust persistence are not implemented by the CLI.
  */
 
 import { parseArgs } from 'node:util';
@@ -56,10 +57,9 @@ export async function pairCommand(args: string[]): Promise<void> {
   const peer = targetPeer as DiscoveredPeerEntry;
   process.stdout.write(`\nFound device: ${peer.deviceName} (${peer.deviceId})\n`);
   process.stdout.write(`Fingerprint: ${peer.fingerprint}\n\n`);
-  process.stdout.write(`To complete pairing, verify the 6-digit code matches on both devices.
-`);
-  process.stdout.write(`(In the CLI, use "nearby-transfer send" to start a transfer - pairing is automatic.)
-`);
+  process.stdout.write('The CLI can inspect this candidate but cannot complete mutual pairing yet.\n');
+  process.stdout.write('No trust record was created. Complete pairing with a supported client.\n');
+  throw new Error('CLI mutual pairing is not implemented');
 }
 
 function commonParseOptions() {
