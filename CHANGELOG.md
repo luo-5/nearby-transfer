@@ -35,6 +35,9 @@ All notable changes to Nearby Transfer will be documented in this file.
   unless explicitly requested).
 - Removed the wildcard `Access-Control-Allow-Origin` from the SSE stream.
 - Removed the global BouncyCastle provider re-ordering on Android (`CryptoUtil`).
+- Removed embedded VM passwords from manual cross-machine helpers. They now require
+  environment or SSH key/agent authentication, and the firewall helper creates only
+  narrow test-port rules instead of disabling Windows Firewall.
 
 ### Fixed
 - Desktop protocol selection now fails closed for adapters that are not connected to the
@@ -62,6 +65,11 @@ All notable changes to Nearby Transfer will be documented in this file.
   only the selected workspace with provenance, license, tarball, and checksum;
   application releases aggregate verified Windows/Linux assets with an SBOM and
   checksums. Android debug builds are not public release assets.
+- Linux application releases now produce and install-smoke-test an x64 Debian package
+  with Electron sandbox and AppArmor setup. Raw archives are no longer advertised as
+  release artifacts because they cannot safely perform those installation steps.
+- Desktop packages use the project icon and stable Linux desktop identity; unsigned
+  Windows executables retain application metadata while code signing remains disabled.
 - Capability, security, support, governance, maintainer, roadmap, and release documents
   now state the implemented boundary and real v1.2.x/v1.3.0 asset manifests.
 - CLI send/sync now fail closed unless the discovered signing key matches an existing

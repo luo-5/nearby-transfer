@@ -1,7 +1,7 @@
 # Nearby Transfer 全量项目交接文档 (Agent Handover)
 
 > **文档性质**：面向下一位接手 AI Agent / 核心开发者的权威项目交接与开发指南。  
-> **交接日期**：2026-08-29  
+> **交接日期**：2026-08-30
 > **交接基线提交**：`5ec1d93` (`main`；后续工作请以实际 `git status` 为准)
 > **远程仓库**：`https://github.com/luo-5/nearby-transfer.git`  
 > **仓库状态**：交接时工作区干净。本地 Node 24、Python 与 Android JVM 测试曾通过；GitHub Actions 和发布资产必须查看当前公开运行结果，不得根据本文件声称“100% 全平台通过”。
@@ -68,8 +68,8 @@ nearby-transfer-next-version/
     ├── ci.yml                        # 跨系统 (Ubuntu/Win/macOS) Node 24 + Python 向量门禁
     ├── check.yml                     # 语法与 AST 检查门禁
     ├── codeql.yml                    # CodeQL 安全扫描 (每周一)
-    ├── build-windows.yml             # Windows 安装包自动构建
-    ├── build-linux.yml               # Linux (deb/rpm/AppImage) 构建
+    ├── build-windows.yml             # Windows x64 portable exe/zip 自动构建
+    ├── build-linux.yml               # Linux x64 Debian 包构建与安装启动测试
     ├── build-android.yml             # Android APK 自动构建
     ├── release.yml                   # 命名空间 package tag：只发布对应 npm 包
     ├── release-app.yml               # app-v* tag：验证后聚合 Windows/Linux Release
@@ -137,13 +137,13 @@ nearby-transfer-next-version/
 | **运行 CLI 测试** | `npm run test:cli` | 执行 CLI 命令、信任边界与同步测试 |
 | **运行 LocalSend 测试**| `npm run test:localsend` | 执行适配层互通、路径与资源边界测试 |
 | **运行统一 CI 门禁** | `npm run ci:verify` | 构建、三包类型检查/测试、JS 语法与桌面集成测试 |
-| **运行桌面端冒烟套件** | `npm test` | 执行 41 个冒烟套件（包含 39 个 WebDAV RFC 4918 互通用例） |
+| **运行桌面端冒烟套件** | `npm test` | 执行桌面冒烟套件（包含 39 个 WebDAV 断言） |
 | **马拉松浸泡压测** | `npm run test:soak` | 20 轮深度内存泄漏与大数据量吞吐压测 |
 | **Python 跨语言验证**| `python packages/python-ref/verify_vectors.py` | 验证 10 组跨语言确定性测试向量 |
 | **Android 单元测试** | `.\gradlew.bat :android-app:testDebugUnitTest` | 执行 Android 306 个单元与状态机测试 |
-| **Android APK 构建** | `.\gradlew.bat :android-app:assembleDebug :android-app:assembleRelease` | 生成 Debug 和 Release 两种 APK 产物 |
-| **Windows 桌面打包** | `npm run dist:windows` | 生成 Windows `.exe` 安装包、便携版和 `.zip` |
-| **Linux 桌面打包** | `npm run dist:linux` | 生成 `.tar.gz` 和 `.zip` (需 Linux/WSL 环境) |
+| **Android APK 构建** | `.\gradlew.bat :android-app:assembleDebug` | 生成 CI 验证用 Debug APK；正式签名发布尚未自动化 |
+| **Windows 桌面打包** | `npm run dist:windows` | 生成未签名的 Windows x64 portable `.exe` 和 `.zip` |
+| **Linux 桌面打包** | `npm run dist:linux` | 生成 x64 `.deb`（必须在 Linux 环境安装并验证） |
 
 ---
 
@@ -169,3 +169,28 @@ nearby-transfer-next-version/
 2. ❌ **切勿手改 `src/vendor/luo5-core/index.cjs`**：该文件是构建生成产物，修改源码请在 `packages/core/src/` 中进行，然后执行 `npm run build:vendor`。
 3. ❌ **GitHub Actions Action 版本保持 `@v4`**：不要随意将 official action 升级到不存在的标签（如 `@v7`）。
 4. ✅ **提交遵循 Conventional Commits**：格式如 `feat(core): ...`、`fix(android): ...`、`chore: ...`。
+
+---
+
+## 七、2026-08-30 跨平台实机验证补充
+
+本节记录 PR 分支的实测结果，不应被解读为尚未运行平台的保证：
+
+- Windows 与 Ubuntu 26.04 LTS 均完成 `npm run ci:verify`。Ubuntu 结果包括 Core
+  124 项、CLI 22 项、LocalSend 16 项、97 个 JavaScript 文件语法检查和桌面/
+  WebDAV 39 个断言。Linux 对 staging 符号链接的安全拒绝文案与 Windows 不同，
+  对应测试已改为接受两端等价的 fail-closed 结果。
+- Linux 原始 `tar.gz`/`zip` 解压后不能安全配置 Electron `chrome-sandbox` 的
+  root 所有权与 AppArmor 策略，因此不再作为官方产物。x64 `.deb` 已在全新测试
+  系统安装，确认 sandbox helper 权限、桌面文件、256×256 项目图标和 AppArmor
+  profile，并在不使用 `--no-sandbox` 的情况下通过 20 秒启动存活测试。
+- Windows x64 portable exe/zip 已重新构建；exe 保留项目图标、产品名、描述和
+  `1.3.0` 版本资源，同时按当前发布边界保持 `NotSigned`。
+- Windows→Ubuntu 与 Ubuntu→Windows 各完成一次 5 MiB、含中文文件名的加密
+  传输，发送端与接收端 SHA-256 完全一致。
+- 该 VMware/Wi-Fi 桥接环境中，Ubuntu 能收到 Windows 组播公告，Windows 未收到
+  Ubuntu 组播；相同方向的 UDP 单播和双向加密 TCP 传输均成功。因此把它记录为
+  测试网络的组播不对称限制，没有通过改 VPN、宿主网卡、路由、DNS、代理或防火墙
+  来绕过。后续若要验证自动发现，应换用可双向转发组播的独立桥接网络。
+- Ubuntu 测试机未安装 Java，因此本轮没有在该机重复 Android Gradle 测试；此前
+  Windows 本地 Android 测试通过，但最终合并仍应以公开 CI 的 Android job 为准。
