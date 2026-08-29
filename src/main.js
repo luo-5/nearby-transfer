@@ -519,12 +519,15 @@ async function startCore() {
   }
 
   let activeShareDir = defaultShareDir;
+  let activeShareWritable = false;
   try {
     const configFile = path.join(userDataDir, 'library_config.json');
     if (fs.existsSync(configFile)) {
       const parsed = JSON.parse(fs.readFileSync(configFile, 'utf8'));
       if (parsed && typeof parsed.activeSharePath === 'string' && fs.existsSync(parsed.activeSharePath)) {
         activeShareDir = parsed.activeSharePath;
+        // Write access survives restarts only when the user explicitly chose it.
+        activeShareWritable = parsed.writable === true;
       }
     }
   } catch (_e) { }
@@ -535,7 +538,10 @@ async function startCore() {
       id: 'default-share',
       name: '电脑共享文件库',
       localPath: activeShareDir,
-      readOnly: false
+      // Least privilege: the default library is read-only; uploading applies
+      // only after the user explicitly picked a share directory (persisted as
+      // writable in library_config.json).
+      readOnly: !activeShareWritable
     }]
   });
   registerLibraryServiceIpcHandlers(ipcMain, desktopLibraryService, { dialog, shell, userDataDir });

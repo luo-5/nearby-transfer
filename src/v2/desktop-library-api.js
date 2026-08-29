@@ -27,12 +27,14 @@ function registerLibraryServiceIpcHandlers(ipcMain, libraryService, { dialog, sh
     return libraryService.listShares();
   });
 
-  function persistLibraryConfig(localPath) {
+  function persistLibraryConfig(localPath, writable) {
     if (!userDataDir) return;
     try {
       const configFile = path.join(userDataDir, 'library_config.json');
       fs.writeFileSync(configFile, JSON.stringify({
         activeSharePath: localPath,
+        // Write access is an explicit user opt-in, never a default.
+        writable: writable === true,
         updatedAt: Date.now()
       }, null, 2), 'utf8');
     } catch (_e) {}
@@ -59,9 +61,10 @@ function registerLibraryServiceIpcHandlers(ipcMain, libraryService, { dialog, sh
       id: 'default-share',
       name: '电脑共享文件库',
       localPath: chosenPath,
+      // Actively choosing a share directory is the explicit opt-in to uploads.
       readOnly: false
     });
-    persistLibraryConfig(chosenPath);
+    persistLibraryConfig(chosenPath, true);
 
     return {
       ok: true,
@@ -96,9 +99,9 @@ function registerLibraryServiceIpcHandlers(ipcMain, libraryService, { dialog, sh
       id: 'default-share',
       name: '电脑共享文件库',
       localPath: defaultDir,
-      readOnly: false
+      readOnly: true
     });
-    persistLibraryConfig(defaultDir);
+    persistLibraryConfig(defaultDir, false);
     return {
       ok: true,
       localPath: defaultDir,
