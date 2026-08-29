@@ -1,11 +1,16 @@
 'use strict';
 
 const assert = require('assert');
-const path = require('path');
-const fs = require('fs');
+const {
+  DEFAULT_TRANSFER_PROTOCOL,
+  getProtocolAvailability,
+  listProtocolAvailability,
+  normalizeTransferProtocol,
+  validateTransferProtocol
+} = require('../src/protocols/availability');
 
 console.log('======================================================');
-console.log('      TESTING 7-PROTOCOL MATRIX & PERSISTENCE         ');
+console.log('       TESTING PROTOCOL AVAILABILITY MATRIX           ');
 console.log('======================================================');
 
 const ALLOWED_PROTOCOLS = [
@@ -46,36 +51,32 @@ for (const key of requiredKeys) {
 }
 console.log('[PASS] 1. All 7 protocol translations and categories verified in i18n dictionary!');
 
-// 2. Test Configuration Persistence (Mock User Data Dir)
-const tmpDir = path.join(__dirname, '..', '.tmp', 'proto_test_' + Date.now());
-fs.mkdirSync(tmpDir, { recursive: true });
+// 2. The selector must fail closed until a driver is connected to the real
+// desktop send/receive path. Stale settings normalize to the wired default.
+assert.strictEqual(DEFAULT_TRANSFER_PROTOCOL, 'v1-classic');
+assert.strictEqual(listProtocolAvailability().length, ALLOWED_PROTOCOLS.length);
 
-const configFile = path.join(tmpDir, 'protocol_config.json');
-
-function saveProto(proto) {
-  assert(ALLOWED_PROTOCOLS.includes(proto), `Invalid protocol: ${proto}`);
-  fs.writeFileSync(configFile, JSON.stringify({ protocol: proto, updatedAt: Date.now() }, null, 2), 'utf8');
-}
-
-function loadProto() {
-  if (!fs.existsSync(configFile)) return 'v2-stream';
-  const data = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-  return (data && data.protocol) || 'v2-stream';
-}
-
-// Test default
-assert.strictEqual(loadProto(), 'v2-stream');
-
-// Test saving and loading each of the 7 protocols
 for (const p of ALLOWED_PROTOCOLS) {
-  saveProto(p);
-  assert.strictEqual(loadProto(), p, `Failed to persist protocol: ${p}`);
+  const availability = getProtocolAvailability(p);
+  assert(availability, `Missing availability metadata for ${p}`);
+  if (p === DEFAULT_TRANSFER_PROTOCOL) {
+    assert.strictEqual(availability.available, true);
+    assert.deepStrictEqual(validateTransferProtocol(p), { ok: true, protocol: p });
+  } else {
+    assert.strictEqual(availability.available, false);
+    assert.strictEqual(validateTransferProtocol(p).code, 'PROTOCOL_EXPERIMENTAL');
+    assert.strictEqual(normalizeTransferProtocol(p), DEFAULT_TRANSFER_PROTOCOL);
+  }
 }
-console.log('[PASS] 2. Configuration persistence lifecycle verified across all 7 protocols!');
+assert.strictEqual(normalizeTransferProtocol('not-a-protocol'), DEFAULT_TRANSFER_PROTOCOL);
+assert.strictEqual(validateTransferProtocol('not-a-protocol').code, 'PROTOCOL_UNKNOWN');
 
-// Cleanup
-fs.rmSync(tmpDir, { recursive: true, force: true });
+const mutableEntry = getProtocolAvailability(DEFAULT_TRANSFER_PROTOCOL);
+mutableEntry.available = false;
+assert.strictEqual(getProtocolAvailability(DEFAULT_TRANSFER_PROTOCOL).available, true);
+
+console.log('[PASS] 2. Experimental protocols are rejected and stale settings fail closed.');
 
 console.log('======================================================');
-console.log('   ALL 7-PROTOCOL MATRIX SMOKE TESTS PASSED (100%)    ');
+console.log('    PROTOCOL AVAILABILITY SMOKE TESTS PASSED          ');
 console.log('======================================================');
