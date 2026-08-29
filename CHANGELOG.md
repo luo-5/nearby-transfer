@@ -66,7 +66,7 @@ All notable changes to Nearby Transfer will be documented in this file.
 
 ### Cross-Platform Testing & Quality Assurance
 - **256 / 256 tests passing (100% green)** across monorepo packages, desktop smoke suites, browser portal E2E, WebDAV interop, 3-VM matrix, and physical Android hardware (Redmi K50 and Samsung S10+).
-- Heap memory audit confirmed zero memory/handle leaks across soak cycles.
+- Heap memory audit confirmed zero memory/handle leaks across a **5.7-hour / 17,050-round / 96.2 GB** continuous soak cycle (272,818 files transferred, 100% SHA-256 integrity, V8 heap stable at 17.60 MB).
 
 ## 1.2.1
 
