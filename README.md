@@ -5,6 +5,7 @@
 [![License](https://img.shields.io/github/license/luo-5/nearby-transfer?style=for-the-badge&color=00d9a3&labelColor=1a1a2e)](./LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/luo-5/nearby-transfer?style=for-the-badge&color=ff6b6b&labelColor=1a1a2e)](https://github.com/luo-5/nearby-transfer/commits)
 [![Downloads](https://img.shields.io/github/downloads/luo-5/nearby-transfer/total?style=for-the-badge&color=4ecdc4&labelColor=1a1a2e)](https://github.com/luo-5/nearby-transfer/releases)
+[![npm packages](https://img.shields.io/badge/npm-3%20public%20packages-CB3837?style=for-the-badge&logo=npm&logoColor=white&labelColor=1a1a2e)](#npm-packages--npm-包)
 [![Node](https://img.shields.io/badge/Node.js-24-339933?style=for-the-badge&logo=nodedotjs&logoColor=white&labelColor=1a1a2e)](https://nodejs.org)
 [![Android](https://img.shields.io/badge/Android-8%2B-3DDC84?style=for-the-badge&logo=android&logoColor=black&labelColor=1a1a2e)](https://developer.android.com)
 [![Electron](https://img.shields.io/badge/Electron-43-47848F?style=for-the-badge&logo=electron&logoColor=white&labelColor=1a1a2e)](https://www.electronjs.org)
