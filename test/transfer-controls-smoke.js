@@ -115,7 +115,7 @@ async function runTransferControlsTest() {
   try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
 
   console.log('\n======================================================');
-  console.log('  ALL TRANSFER CONTROLS SMOKE TESTS PASSED (100%)     ');
+  console.log('       TRANSFER CONTROLS SMOKE TESTS PASSED           ');
   console.log('======================================================');
 }
 

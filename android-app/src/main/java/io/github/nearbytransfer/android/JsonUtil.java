@@ -61,6 +61,23 @@ final class JsonUtil {
         return builder.toString();
     }
 
+    static String canonicalDiscoveryAnnouncementPayload(JSONObject payload) {
+        StringBuilder builder = new StringBuilder();
+        builder.append('{');
+        String[] keys = {
+            "app", "protocolVersion", "type", "deviceId", "deviceName", "port",
+            "signingPublicKey", "encryptionPublicKey", "fingerprint", "timestamp"
+        };
+        for (int index = 0; index < keys.length; index += 1) {
+            if (index > 0) builder.append(',');
+            appendString(builder, keys[index]);
+            builder.append(':');
+            appendValue(builder, payload.opt(keys[index]));
+        }
+        builder.append('}');
+        return builder.toString();
+    }
+
     static String stringify(JSONObject object) {
         StringBuilder builder = new StringBuilder();
         appendObject(builder, object);

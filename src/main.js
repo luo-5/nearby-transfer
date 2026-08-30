@@ -21,6 +21,7 @@ const { TransferJobStore } = require('./v2/transfer-job-store');
 const { createDesktopTransferJobApi, registerTransferJobIpcHandlers } = require('./v2/desktop-transfer-job-api');
 const { DesktopLibraryService } = require('./v2/desktop-library-service');
 const { registerLibraryServiceIpcHandlers } = require('./v2/desktop-library-api');
+const { multicastInterfaces } = require('./core/multicast-interfaces');
 
 let mainWindow = null;
 let device = null;
@@ -541,7 +542,13 @@ async function startCore() {
       readOnly: !activeShareWritable
     }]
   });
-  registerLibraryServiceIpcHandlers(ipcMain, desktopLibraryService, { dialog, shell, userDataDir });
+  registerLibraryServiceIpcHandlers(ipcMain, desktopLibraryService, {
+    dialog,
+    shell,
+    userDataDir,
+    // Do not advertise a loopback-only URL as if another device could use it.
+    getLanIp: () => multicastInterfaces()[0] || null
+  });
   let libraryPort = 56578;
   try {
     libraryPort = await desktopLibraryService.start(56578);

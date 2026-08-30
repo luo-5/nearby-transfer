@@ -27,7 +27,6 @@ android {
             buildConfigField 'boolean', 'ENABLE_COMPOSE_SHELL', 'true'
         }
         release {
-            signingConfig signingConfigs.debug
             buildConfigField 'boolean', 'ENABLE_COMPOSE_SHELL', 'false'
         }
     }

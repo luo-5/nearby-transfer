@@ -102,7 +102,7 @@ async function main() {
     assert.strictEqual(typeof listener, 'function');
   }
 
-  const port = await service.start(0);
+  let port = await service.start(0);
   assert.ok(port > 0, 'Service must bind to a dynamic port');
   assert.strictEqual(service.getStatus().running, true);
   assert.strictEqual(service.getStatus().shareCount, 2);
@@ -110,6 +110,15 @@ async function main() {
   try {
     const fullToken = service.createSessionToken('peer-full-access');
     const readToken = service.createSessionToken('peer-read-only');
+
+    const sharesResponse = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/api/shares', method: 'GET',
+      headers: { Authorization: `Bearer ${fullToken}` }
+    });
+    assert.strictEqual(sharesResponse.statusCode, 200);
+    const remoteShares = JSON.parse(sharesResponse.body).shares;
+    assert.strictEqual(remoteShares.length, 2);
+    assert.strictEqual(Object.hasOwn(remoteShares[0], 'localPath'), false);
 
     // 1. Unauthorized request
     const unauth = await httpRequest({
@@ -197,7 +206,204 @@ async function main() {
     }, 'Upload into readonly share');
     assert.strictEqual(putIntoReadOnlyShare.statusCode, 403);
 
-    // 9. Path traversal attempt must be blocked with 403
+    // 9. Mutating methods must never remove, move, copy, or replace a share root.
+    const rootDelete = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs', method: 'DELETE',
+      headers: { Authorization: `Bearer ${fullToken}` }
+    });
+    assert.strictEqual(rootDelete.statusCode, 403);
+
+    const rootCopy = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs', method: 'COPY',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/root-copy' }
+    });
+    assert.strictEqual(rootCopy.statusCode, 403);
+
+    const rootMove = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs', method: 'MOVE',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/root-move' }
+    });
+    assert.strictEqual(rootMove.statusCode, 403);
+
+    const copyOntoRoot = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/newfile.txt', method: 'COPY',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs', Overwrite: 'T' }
+    });
+    assert.strictEqual(copyOntoRoot.statusCode, 403);
+
+    const moveOntoRoot = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/newfile.txt', method: 'MOVE',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs', Overwrite: 'T' }
+    });
+    assert.strictEqual(moveOntoRoot.statusCode, 403);
+    assert.strictEqual(fs.existsSync(shareADir), true);
+    assert.strictEqual(fs.readFileSync(path.join(shareADir, 'hello.txt'), 'utf8'), 'Hello WebDAV World');
+    assert.strictEqual(fs.readFileSync(path.join(shareADir, 'newfile.txt'), 'utf8'), 'Brand new uploaded file');
+
+    // Existing tokens must observe permission updates immediately.
+    const fullPeer = peerStore.peers.get('peer-full-access');
+    fullPeer.permissions.libraryUpload = false;
+    const putAfterPermissionRemoval = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/permission-denied.txt', method: 'PUT',
+      headers: { Authorization: `Bearer ${fullToken}` }
+    }, 'must not be written');
+    assert.strictEqual(putAfterPermissionRemoval.statusCode, 403);
+    assert.strictEqual(fs.existsSync(path.join(shareADir, 'permission-denied.txt')), false);
+    fullPeer.permissions.libraryUpload = true;
+
+    // Write destinations use one portable-name policy across all mutating methods.
+    const trailingSpacePut = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/trailing%20', method: 'PUT',
+      headers: { Authorization: `Bearer ${fullToken}` }
+    }, 'invalid');
+    assert.strictEqual(trailingSpacePut.statusCode, 400);
+    const superscriptReservedMkcol = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/COM%C2%B9', method: 'MKCOL',
+      headers: { Authorization: `Bearer ${fullToken}` }
+    });
+    assert.strictEqual(superscriptReservedMkcol.statusCode, 400);
+    const invalidCopyDestination = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/newfile.txt', method: 'COPY',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/copy-target.' }
+    });
+    assert.strictEqual(invalidCopyDestination.statusCode, 400);
+    const invalidMoveDestination = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/newfile.txt', method: 'MOVE',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/LPT%C2%B2.log' }
+    });
+    assert.strictEqual(invalidMoveDestination.statusCode, 400);
+    const malformedCopyDestination = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/newfile.txt', method: 'COPY',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/%zz' }
+    });
+    assert.strictEqual(malformedCopyDestination.statusCode, 400);
+    assert.strictEqual(fs.readFileSync(path.join(shareADir, 'newfile.txt'), 'utf8'), 'Brand new uploaded file');
+
+    // COPY/MOVE must obey the same new-file-only policy even with Overwrite: T.
+    fs.writeFileSync(path.join(shareADir, 'copy-source.txt'), 'source');
+    fs.writeFileSync(path.join(shareADir, 'copy-victim.txt'), 'victim');
+    const copyOverwrite = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/copy-source.txt', method: 'COPY',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/copy-victim.txt', Overwrite: 'T' }
+    });
+    assert.strictEqual(copyOverwrite.statusCode, 412);
+    assert.strictEqual(fs.readFileSync(path.join(shareADir, 'copy-victim.txt'), 'utf8'), 'victim');
+
+    fs.writeFileSync(path.join(shareADir, 'move-source.txt'), 'move-source');
+    fs.writeFileSync(path.join(shareADir, 'move-victim.txt'), 'move-victim');
+    const moveOverwrite = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/move-source.txt', method: 'MOVE',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/move-victim.txt', Overwrite: 'T' }
+    });
+    assert.strictEqual(moveOverwrite.statusCode, 412);
+    assert.strictEqual(fs.readFileSync(path.join(shareADir, 'move-source.txt'), 'utf8'), 'move-source');
+    assert.strictEqual(fs.readFileSync(path.join(shareADir, 'move-victim.txt'), 'utf8'), 'move-victim');
+
+    // Directory COPY/MOVE fail closed until a crash-recoverable publication protocol exists.
+    const directorySource = path.join(shareADir, 'directory-source');
+    fs.mkdirSync(path.join(directorySource, 'nested', 'empty'), { recursive: true });
+    fs.writeFileSync(path.join(directorySource, 'nested', 'payload.txt'), 'directory-payload');
+    const copyDirectory = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/directory-source', method: 'COPY',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/directory-copy' }
+    });
+    assert.strictEqual(copyDirectory.statusCode, 409);
+    assert.strictEqual(fs.existsSync(path.join(shareADir, 'directory-copy')), false);
+    const moveDirectory = await httpRequest({
+      hostname: '127.0.0.1', port, path: '/docs/directory-source', method: 'MOVE',
+      headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/directory-moved' }
+    });
+    assert.strictEqual(moveDirectory.statusCode, 409);
+    assert.strictEqual(fs.existsSync(directorySource), true);
+    assert.strictEqual(fs.existsSync(path.join(shareADir, 'directory-moved')), false);
+
+    // Filesystems without hard-link support fail closed instead of exposing a partial final.
+    const originalLinkSync = fs.linkSync;
+    try {
+      fs.linkSync = () => {
+        const error = new Error('hard links unavailable in fixture');
+        error.code = 'ENOTSUP';
+        throw error;
+      };
+      const fallbackPut = await httpRequest({
+        hostname: '127.0.0.1', port, path: '/docs/fallback-put.txt', method: 'PUT',
+        headers: { Authorization: `Bearer ${fullToken}` }
+      }, 'fallback-put');
+      assert.strictEqual(fallbackPut.statusCode, 500);
+      assert.strictEqual(fs.existsSync(path.join(shareADir, 'fallback-put.txt')), false);
+      fs.writeFileSync(path.join(shareADir, 'fallback-copy-source.txt'), 'fallback-copy');
+      const fallbackCopy = await httpRequest({
+        hostname: '127.0.0.1', port, path: '/docs/fallback-copy-source.txt', method: 'COPY',
+        headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/fallback-copy.txt' }
+      });
+      assert.strictEqual(fallbackCopy.statusCode, 500);
+      assert.strictEqual(fs.existsSync(path.join(shareADir, 'fallback-copy.txt')), false);
+      fs.writeFileSync(path.join(shareADir, 'fallback-move-source.txt'), 'fallback-move');
+      const fallbackMove = await httpRequest({
+        hostname: '127.0.0.1', port, path: '/docs/fallback-move-source.txt', method: 'MOVE',
+        headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/fallback-move.txt' }
+      });
+      assert.strictEqual(fallbackMove.statusCode, 500);
+      assert.strictEqual(fs.readFileSync(path.join(shareADir, 'fallback-move-source.txt'), 'utf8'), 'fallback-move');
+      assert.strictEqual(fs.existsSync(path.join(shareADir, 'fallback-move.txt')), false);
+    } finally {
+      fs.linkSync = originalLinkSync;
+    }
+
+    // Failed COPY writes only to owned staging and never exposes a partial final file.
+    fs.writeFileSync(path.join(shareADir, 'copy-failure-source.txt'), 'complete-source');
+    const originalCopyFileSync = fs.copyFileSync;
+    try {
+      fs.copyFileSync = (_source, staging) => {
+        fs.writeFileSync(staging, 'PARTIAL', { flag: 'wx' });
+        const error = new Error('injected copy failure');
+        error.code = 'EIO';
+        throw error;
+      };
+      const failedCopy = await httpRequest({
+        hostname: '127.0.0.1', port, path: '/docs/copy-failure-source.txt', method: 'COPY',
+        headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/copy-failure-final.txt' }
+      });
+      assert.strictEqual(failedCopy.statusCode, 500);
+    } finally {
+      fs.copyFileSync = originalCopyFileSync;
+    }
+    assert.strictEqual(fs.existsSync(path.join(shareADir, 'copy-failure-final.txt')), false);
+    assert.deepStrictEqual(fs.readdirSync(shareADir).filter((name) => name.startsWith('.nearby-copy-')), []);
+
+    // Failed source removal retains both complete names instead of risking data loss.
+    const moveRollbackSource = path.join(shareADir, 'move-rollback-source.txt');
+    const moveRollbackDest = path.join(shareADir, 'move-rollback-final.txt');
+    fs.writeFileSync(moveRollbackSource, 'rollback-source');
+    const originalRenameSync = fs.renameSync;
+    try {
+      fs.renameSync = (source, destination) => {
+        if (path.resolve(String(source)) === path.resolve(moveRollbackSource)) {
+          const error = new Error('injected source removal failure');
+          error.code = 'EPERM';
+          throw error;
+        }
+        return originalRenameSync(source, destination);
+      };
+      const failedMove = await httpRequest({
+        hostname: '127.0.0.1', port, path: '/docs/move-rollback-source.txt', method: 'MOVE',
+        headers: { Authorization: `Bearer ${fullToken}`, Destination: '/webdav/docs/move-rollback-final.txt' }
+      });
+      assert.strictEqual(failedMove.statusCode, 500);
+      assert.strictEqual(JSON.parse(failedMove.body).state, 'destination-published-source-retained');
+    } finally {
+      fs.renameSync = originalRenameSync;
+    }
+    assert.strictEqual(fs.existsSync(moveRollbackSource), true);
+    assert.strictEqual(fs.readFileSync(moveRollbackDest, 'utf8'), 'rollback-source');
+    assert.deepStrictEqual(fs.readdirSync(shareADir).filter((name) => name.startsWith('.nearby-move-cleanup-')), []);
+
+    await interruptUpload(port, fullToken, '/docs/interrupted.bin', Buffer.from('partial'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.strictEqual(fs.existsSync(path.join(shareADir, 'interrupted.bin')), false);
+    assert.deepStrictEqual(fs.readdirSync(shareADir).filter((name) => name.startsWith('.nearby-upload-')), []);
+
+    // 10. Path traversal attempt must be blocked with 403
     const traversal = await httpRequest({
       hostname: '127.0.0.1',
       port,
@@ -207,7 +413,7 @@ async function main() {
     });
     assert.strictEqual(traversal.statusCode, 403);
 
-    // 10. Malformed percent-encoding must be rejected with 400 instead of hanging
+    // 11. Malformed percent-encoding must be rejected with 400 instead of hanging
     const badEncoding = await httpRequest({
       hostname: '127.0.0.1',
       port,
@@ -219,6 +425,17 @@ async function main() {
 
     await assertHandshake(port);
     await assertHandshakeRateLimit();
+
+    // Stopping is a resource barrier even while an SSE stream is open.
+    const sse = await openSse(port, fullToken);
+    const stopped = await Promise.race([
+      service.stop().then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 1000))
+    ]);
+    assert.strictEqual(stopped, true, 'stop must not wait indefinitely for SSE clients');
+    sse.destroy();
+    port = await service.start(0);
+    assert.ok(port > 0, 'service must restart after a bounded stop');
 
     console.log('desktop library service smoke tests passed');
   } finally {
@@ -233,6 +450,37 @@ function handshakeSignature(deviceId, timestamp, nonce, privateKeyPem) {
     Buffer.from(`nearby-transfer:library-auth:${deviceId}:${timestamp}:${nonce}`, 'utf8'),
     crypto.createPrivateKey(privateKeyPem)
   ).toString('base64');
+}
+
+function interruptUpload(port, token, requestPath, chunk) {
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: '127.0.0.1',
+      port,
+      path: requestPath,
+      method: 'PUT',
+      rejectUnauthorized: false,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Length': String(chunk.length + 1024) }
+    });
+    req.on('error', () => resolve());
+    req.write(chunk, () => req.destroy());
+  });
+}
+
+function openSse(port, token) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/events',
+      method: 'GET',
+      rejectUnauthorized: false,
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    req.once('response', (res) => resolve(res));
+    req.once('error', reject);
+    req.end();
+  });
 }
 
 function handshakePayload(deviceId, timestamp, nonce, privateKeyPem) {

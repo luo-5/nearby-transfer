@@ -37,6 +37,8 @@ async function main() {
   await testCancellationWhilePaused();
   await testCancellationAndCleanup();
   await testPendingHooksAndCleanupSettleBoundedly();
+  await testInvalidTransportDataSettlesAndCleansUp();
+  await testResumeBeforeStartIsRejected();
   await testHandshakeTimeoutAndCleanup();
   await testTruncatedEof();
   await testWriterAuthenticationFailure();
@@ -420,10 +422,41 @@ async function testPendingHooksAndCleanupSettleBoundedly() {
   assert.match(result.reason.message, /control decoding timed out/i);
   assert.strictEqual(session.getState().state, 'failed');
   assert.strictEqual(writer.cancelled, 1);
-  await waitFor(() => cancelEncodeCalled);
-  assert.strictEqual(pair.left.destroyed, false, 'pending cleanup must continue after done settles');
+  assert.strictEqual(cancelEncodeCalled, true);
+  assert.strictEqual(pair.left.destroyed, true, 'done must not settle before bounded cleanup and transport destruction');
   assertNoSessionListeners(pair.left);
-  await waitFor(() => pair.left.destroyed, 500);
+}
+
+async function testInvalidTransportDataSettlesAndCleansUp() {
+  const taskId = createTaskId();
+  const pair = createMemoryPair();
+  pair.right.resume();
+  const writer = createRecordingWriter();
+  const session = createTransferStreamSession({
+    ...baseConfig('receiver', pair.left, taskId, PEER_B, PEER_A),
+    chunkWriter: writer,
+    operationTimeoutMs: 80
+  });
+  const done = session.start();
+  pair.left.emit('data', 'not-binary-data');
+  const result = await settle(done);
+  assert.strictEqual(result.status, 'rejected');
+  assert.match(result.reason.message, /Buffer or Uint8Array/i);
+  assert.strictEqual(writer.cancelled, 1);
+  assert.strictEqual(pair.left.destroyed, true);
+  assertNoSessionListeners(pair.left);
+}
+
+async function testResumeBeforeStartIsRejected() {
+  const taskId = createTaskId();
+  const pair = createMemoryPair();
+  const session = createTransferStreamSession({
+    ...baseConfig('sender', pair.left, taskId, PEER_A, PEER_B),
+    chunkReader: makeReader([], { returned: 0 })
+  });
+  assert.throws(() => session.resume(), /started before it can be resumed/i);
+  pair.left.destroy();
+  pair.right.destroy();
 }
 
 async function testHandshakeTimeoutAndCleanup() {

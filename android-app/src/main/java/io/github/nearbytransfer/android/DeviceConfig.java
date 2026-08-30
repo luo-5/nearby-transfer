@@ -80,7 +80,7 @@ public final class DeviceConfig {
     JSONObject toAnnouncement(int port) throws Exception {
         JSONObject json = new JSONObject();
         json.put("app", "nearby-transfer");
-        json.put("protocolVersion", 1);
+        json.put("protocolVersion", 2);
         json.put("type", "announce");
         json.put("deviceId", deviceId);
         json.put("deviceName", deviceName);
@@ -89,6 +89,7 @@ public final class DeviceConfig {
         json.put("encryptionPublicKey", encryptionPublicKey);
         json.put("fingerprint", fingerprint);
         json.put("timestamp", System.currentTimeMillis());
+        json.put("signature", CryptoUtil.sign(JsonUtil.canonicalDiscoveryAnnouncementPayload(json), signingPrivateKey));
         return json;
     }
 

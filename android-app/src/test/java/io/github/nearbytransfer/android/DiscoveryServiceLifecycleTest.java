@@ -4,9 +4,9 @@ import org.junit.After;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.net.DatagramPacket;
+import java.security.KeyPair;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
@@ -208,24 +208,17 @@ public class DiscoveryServiceLifecycleTest {
     }
 
     private static DeviceConfig newTestDevice() throws Exception {
-        Constructor<DeviceConfig> constructor = DeviceConfig.class.getDeclaredConstructor(
-            String.class,
-            String.class,
-            String.class,
-            String.class,
-            String.class,
-            String.class,
-            String.class
-        );
-        constructor.setAccessible(true);
-        return constructor.newInstance(
-            "aaaaaaaaaaaaaaaa",
+        KeyPair signing = CryptoUtil.generateEd25519KeyPair();
+        KeyPair encryption = CryptoUtil.generateX25519KeyPair();
+        String signingPublicKey = CryptoUtil.toPublicPem(signing.getPublic());
+        return new DeviceConfig(
+            CryptoUtil.deviceIdFor(signingPublicKey),
             "Local Device",
-            "fingerprint",
-            "signing-public-key",
-            "signing-private-key",
-            "encryption-public-key",
-            "encryption-private-key"
+            CryptoUtil.fingerprintFor(signingPublicKey),
+            signingPublicKey,
+            CryptoUtil.toPrivatePem(signing.getPrivate()),
+            CryptoUtil.toPublicPem(encryption.getPublic()),
+            CryptoUtil.toPrivatePem(encryption.getPrivate())
         );
     }
 

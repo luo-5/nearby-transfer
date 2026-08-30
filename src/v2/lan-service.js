@@ -46,6 +46,8 @@ class LanService extends EventEmitter {
     this.router = new PairingRouter({ pairingApi });
     this.server = null;
     this.port = null;
+    this.startPromise = null;
+    this.stopPromise = null;
     this.discovery = null;
     this.connections = new Set();
     this.connectionsByPairingId = new Map();
@@ -53,39 +55,61 @@ class LanService extends EventEmitter {
   }
 
   async start(port = 0) {
-    if (this.server) return this.port;
-    const server = net.createServer((socket) => this._acceptSocket(socket));
-    server.maxConnections = this.maxConnections;
-    this.server = server;
-    await new Promise((resolve, reject) => {
-      const onError = (error) => { server.off('listening', onListening); reject(error); };
-      const onListening = () => { server.off('error', onError); resolve(); };
-      server.once('error', onError);
-      server.once('listening', onListening);
-      server.listen(port, '0.0.0.0');
-    });
-    this.port = server.address().port;
-    if (this.enableDiscovery) {
-      this.discovery = new V2Discovery({ device: this.device, port: this.port, capabilities: this.capabilities });
-      this.discovery.on('peer', (peer) => this.emit('peer', peer));
-      this.discovery.on('peers', (peers) => this.emit('peers', peers));
-      this.discovery.on('error', (error) => this.emit('error', error));
-      this.discovery.start();
-    }
-    return this.port;
+    if (this.stopPromise) await this.stopPromise;
+    if (this.server && this.server.listening && this.port !== null) return this.port;
+    if (this.startPromise) return this.startPromise;
+    const operation = (async () => {
+      const server = net.createServer((socket) => this._acceptSocket(socket));
+      server.maxConnections = this.maxConnections;
+      this.server = server;
+      try {
+        await new Promise((resolve, reject) => {
+          const onError = (error) => { server.off('listening', onListening); reject(error); };
+          const onListening = () => { server.off('error', onError); resolve(); };
+          server.once('error', onError);
+          server.once('listening', onListening);
+          server.listen(port, '0.0.0.0');
+        });
+        this.port = server.address().port;
+        if (this.enableDiscovery) {
+          this.discovery = new V2Discovery({ device: this.device, port: this.port, capabilities: this.capabilities });
+          this.discovery.on('peer', (peer) => this.emit('peer', peer));
+          this.discovery.on('peers', (peers) => this.emit('peers', peers));
+          this.discovery.on('error', (error) => this.emit('error', error));
+          this.discovery.start();
+        }
+        return this.port;
+      } catch (error) {
+        if (this.discovery) this.discovery.stop();
+        this.discovery = null;
+        if (this.server === server) this.server = null;
+        this.port = null;
+        await new Promise((resolve) => server.close(() => resolve()));
+        server.unref();
+        throw error;
+      }
+    })();
+    this.startPromise = operation;
+    try { return await operation; } finally { if (this.startPromise === operation) this.startPromise = null; }
   }
 
   async stop() {
-    if (this.discovery) this.discovery.stop();
-    this.discovery = null;
-    for (const connection of Array.from(this.connections)) connection.socket.destroy();
-    this.connections.clear();
-    this.connectionsByPairingId.clear();
-    this.connectionsPerIp.clear();
-    const server = this.server;
-    this.server = null;
-    this.port = null;
-    if (server) await new Promise((resolve) => server.close(() => resolve()));
+    if (this.stopPromise) return this.stopPromise;
+    const operation = (async () => {
+      if (this.startPromise) { try { await this.startPromise; } catch (_error) {} }
+      if (this.discovery) this.discovery.stop();
+      this.discovery = null;
+      for (const connection of Array.from(this.connections)) connection.socket.destroy();
+      this.connections.clear();
+      this.connectionsByPairingId.clear();
+      this.connectionsPerIp.clear();
+      const server = this.server;
+      this.server = null;
+      this.port = null;
+      if (server) await new Promise((resolve) => server.close(() => resolve()));
+    })();
+    this.stopPromise = operation;
+    try { await operation; } finally { if (this.stopPromise === operation) this.stopPromise = null; }
   }
 
   listPeers() {

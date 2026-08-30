@@ -16,6 +16,7 @@ const FILE_STREAM_CHUNK_BYTES = 1024 * 1024;
 const PROGRESS_MIN_BYTES = 1024 * 1024;
 const PROGRESS_MIN_MS = 250;
 const UPLOAD_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 async function sendFile(options) {
   const peer = options.peer;
@@ -135,7 +136,13 @@ async function sendFile(options) {
     };
     requestPayload.signature = signTransferRequest(requestPayload, device.signingPrivateKey);
 
-    const decision = await postJson(peer, '/transfer/request', requestPayload, 120000);
+    const decision = await postJson(
+      peer,
+      '/transfer/request',
+      requestPayload,
+      120000,
+      (req) => { clientRequest = req; }
+    );
 
     if (isCancelled) {
       throw new Error('用户已主动取消传输');
@@ -261,7 +268,7 @@ function createTransferId() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function postJson(peer, requestPath, payload, timeoutMs) {
+function postJson(peer, requestPath, payload, timeoutMs, onRequestInit) {
   const body = Buffer.from(JSON.stringify(payload));
   return new Promise((resolve, reject) => {
     const request = http.request({
@@ -275,6 +282,8 @@ function postJson(peer, requestPath, payload, timeoutMs) {
       }
     }, (response) => collectJsonResponse(response, resolve, reject));
 
+    if (typeof onRequestInit === 'function') onRequestInit(request);
+
     request.on('error', reject);
     if (timeoutMs) {
       request.setTimeout(timeoutMs, () => request.destroy(new Error('Request timed out')));
@@ -284,8 +293,9 @@ function postJson(peer, requestPath, payload, timeoutMs) {
 }
 
 function postStreamPipeline(peer, requestPath, streams, headers, timeoutMs, onRequestInit) {
-  return new Promise((resolve, reject) => {
-    const request = http.request({
+  let request;
+  const responsePromise = new Promise((resolve, reject) => {
+    request = http.request({
       hostname: peer.host,
       port: peer.port,
       path: requestPath,
@@ -302,13 +312,32 @@ function postStreamPipeline(peer, requestPath, streams, headers, timeoutMs, onRe
       request.setTimeout(timeoutMs, () => request.destroy(new Error('Upload timed out')));
     }
 
-    pipeline(...streams, request).catch(reject);
   });
+  const bodyPromise = pipeline(...streams, request);
+  return Promise.all([bodyPromise, responsePromise])
+    .then(([, result]) => result)
+    .catch((error) => {
+      try { request.destroy(error); } catch (_) {}
+      for (const stream of streams) {
+        if (stream && typeof stream.destroy === 'function' && !stream.destroyed) {
+          try { stream.destroy(error); } catch (_) {}
+        }
+      }
+      throw error;
+    });
 }
 
 function collectJsonResponse(response, resolve, reject) {
   const chunks = [];
-  response.on('data', (chunk) => chunks.push(chunk));
+  let total = 0;
+  response.on('data', (chunk) => {
+    total += chunk.length;
+    if (total > MAX_RESPONSE_BYTES) {
+      response.destroy(new Error('Peer response exceeds size limit'));
+      return;
+    }
+    chunks.push(chunk);
+  });
   response.on('error', reject);
   response.on('end', () => {
     let payload = {};

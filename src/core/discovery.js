@@ -1,11 +1,14 @@
 const dgram = require('dgram');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-const { fingerprintFor } = require('./crypto');
+const { fingerprintFor, signDiscoveryAnnouncement, verifyDiscoveryAnnouncement } = require('./crypto');
 const { multicastInterfaces } = require('./multicast-interfaces');
 
 const APP_ID = 'nearby-transfer';
-const PROTOCOL_VERSION = 1;
+// Signed classic discovery is a wire-incompatible successor to the original
+// unsigned announcement. Keep its version distinct so mixed installations do
+// not silently interpret two different envelopes as the same protocol.
+const PROTOCOL_VERSION = 2;
 const MULTICAST_ADDRESS = '239.255.77.77';
 const DISCOVERY_PORT = 47777;
 const ANNOUNCE_INTERVAL_MS = 2000;
@@ -13,6 +16,7 @@ const PEER_TTL_MS = 10000;
 const MAX_ANNOUNCEMENT_BYTES = 16 * 1024;
 const MAX_DEVICE_NAME_LENGTH = 128;
 const MAX_PUBLIC_KEY_LENGTH = 4096;
+const MAX_CLOCK_SKEW_MS = 30 * 1000;
 
 class Discovery extends EventEmitter {
   constructor(options) {
@@ -31,10 +35,22 @@ class Discovery extends EventEmitter {
       return;
     }
 
-    this.socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    this.socket.on('message', (message, remote) => this._handleMessage(message, remote));
-    this.socket.on('error', (error) => this.emit('error', error));
-    this.socket.bind(DISCOVERY_PORT, () => {
+    const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    this.socket = socket;
+    socket.on('message', (message, remote) => this._handleMessage(message, remote));
+    socket.on('error', (error) => {
+      if (this.socket === socket) {
+        this._clearTimers();
+        this.socket = null;
+        this.multicastInterfaces = [];
+      }
+      this.emit('error', error);
+    });
+    socket.bind(DISCOVERY_PORT, () => {
+      if (this.socket !== socket) {
+        try { socket.close(); } catch (_) {}
+        return;
+      }
       this._configureMulticast();
 
       this.announce();
@@ -44,6 +60,16 @@ class Discovery extends EventEmitter {
   }
 
   stop() {
+    this._clearTimers();
+    const socket = this.socket;
+    if (socket) {
+      this.socket = null;
+      this.multicastInterfaces = [];
+      try { socket.close(); } catch (_) {}
+    }
+  }
+
+  _clearTimers() {
     if (this.announceTimer) {
       clearInterval(this.announceTimer);
       this.announceTimer = null;
@@ -51,11 +77,6 @@ class Discovery extends EventEmitter {
     if (this.pruneTimer) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = null;
-    }
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-      this.multicastInterfaces = [];
     }
   }
 
@@ -74,7 +95,7 @@ class Discovery extends EventEmitter {
     }
     this._checkAndReconfigureInterfaces();
 
-    const payload = Buffer.from(JSON.stringify({
+    const announcement = {
       app: APP_ID,
       protocolVersion: PROTOCOL_VERSION,
       type: 'announce',
@@ -85,7 +106,10 @@ class Discovery extends EventEmitter {
       encryptionPublicKey: this.device.encryptionPublicKey,
       fingerprint: this.device.fingerprint,
       timestamp: Date.now()
-    }));
+    };
+    const payload = Buffer.from(JSON.stringify(Object.assign({}, announcement, {
+      signature: signDiscoveryAnnouncement(announcement, this.device.signingPrivateKey)
+    })));
 
     const interfaces = this.multicastInterfaces;
     if (interfaces.length === 0) {
@@ -198,7 +222,12 @@ function isValidAnnouncement(payload, localDeviceId) {
     !isNonEmptyBoundedString(payload.fingerprint, 64)) {
     return false;
   }
-  return isIdentityConsistent(payload) && hasExpectedKeyTypes(payload);
+  if (!Number.isSafeInteger(payload.timestamp) || Math.abs(Date.now() - payload.timestamp) > MAX_CLOCK_SKEW_MS) {
+    return false;
+  }
+  return isIdentityConsistent(payload) &&
+    hasExpectedKeyTypes(payload) &&
+    verifyDiscoveryAnnouncement(payload, payload.signature, payload.signingPublicKey);
 }
 
 function isNonEmptyBoundedString(value, maxLength) {

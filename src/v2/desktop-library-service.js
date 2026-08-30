@@ -3,6 +3,9 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { Transform } = require('stream');
+const { pipeline } = require('stream/promises');
 const certManager = require('./cert-manager');
 
 const HANDSHAKE_RATE_LIMIT = 10;
@@ -25,6 +28,9 @@ class DesktopLibraryService {
     this.authHeader = authHeader.toLowerCase();
     this.server = null;
     this.port = null;
+    this.startPromise = null;
+    this.stopPromise = null;
+    this.sockets = new Set();
     this.sessionTokens = new Map(); // token -> { deviceId, permissions, expiresAt }
     this.usedAuthNonces = new Map(); // deviceId -> Map<nonce, expiresAt>
     this.handshakeWindows = new Map(); // remoteAddress -> { startedAt, count }
@@ -59,7 +65,7 @@ class DesktopLibraryService {
       readOnly: readOnly === true
     });
     this._watchShare(id, resolvedPath);
-    this._broadcastEvent({ type: 'share-updated', shareId: id, localPath: resolvedPath });
+    this._broadcastEvent('share-updated', { type: 'share-updated', shareId: id });
   }
 
   removeShare(id) {
@@ -73,6 +79,14 @@ class DesktopLibraryService {
       name: s.name,
       localPath: s.localPath,
       readOnly: s.readOnly
+    }));
+  }
+
+  _listRemoteShares() {
+    return Array.from(this.shares.values()).map((share) => ({
+      id: share.id,
+      name: share.name,
+      readOnly: share.readOnly
     }));
   }
 
@@ -127,6 +141,7 @@ class DesktopLibraryService {
         this.sessionTokens.delete(token);
         return null;
       }
+      return Object.assign({}, session, { permissions: Object.assign({}, peer.permissions) });
     }
 
     return session;
@@ -174,38 +189,83 @@ class DesktopLibraryService {
   }
 
   async start(port = 0) {
-    if (this.server) return this.port;
+    if (this.stopPromise) await this.stopPromise;
+    if (this.server && this.port !== null) return this.port;
+    if (this.startPromise) return this.startPromise;
 
-    const { cert, key } = certManager.getOrCreateCert();
-    const server = https.createServer({ cert, key, minVersion: 'TLSv1.2' }, (req, res) => this._handleRequest(req, res));
-    this.server = server;
-
-    await new Promise((resolve, reject) => {
-      server.listen(port, '0.0.0.0', () => {
-        this.port = server.address().port;
-        resolve();
+    this.startPromise = (async () => {
+      const { cert, key } = certManager.getOrCreateCert();
+      const server = https.createServer({ cert, key, minVersion: 'TLSv1.2' }, (req, res) => this._handleRequest(req, res));
+      server.on('connection', (socket) => {
+        this.sockets.add(socket);
+        socket.once('close', () => this.sockets.delete(socket));
       });
-      server.once('error', reject);
-    });
-
-    return this.port;
+      this.server = server;
+      try {
+        await new Promise((resolve, reject) => {
+          const onError = (error) => {
+            server.removeListener('listening', onListening);
+            reject(error);
+          };
+          const onListening = () => {
+            server.removeListener('error', onError);
+            resolve();
+          };
+          server.once('error', onError);
+          server.once('listening', onListening);
+          server.listen(port, '0.0.0.0');
+        });
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Library service did not expose a TCP port');
+        this.port = address.port;
+        for (const share of this.shares.values()) this._watchShare(share.id, share.localPath);
+        return this.port;
+      } catch (error) {
+        if (this.server === server) {
+          this.server = null;
+          this.port = null;
+        }
+        try { server.close(); } catch (_) {}
+        throw error;
+      }
+    })();
+    try {
+      return await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
   }
 
   async stop() {
-    if (!this.server) return;
-    const server = this.server;
-    this.server = null;
-    this.port = null;
-    this.sessionTokens.clear();
-    this.usedAuthNonces.clear();
-    this.handshakeWindows.clear();
-
-    await new Promise((resolve) => server.close(resolve));
-    this._stopWatchers();
-    for (const res of this.sseClients) {
-      try { res.end(); } catch (_) {}
+    if (this.stopPromise) return this.stopPromise;
+    this.stopPromise = (async () => {
+      if (this.startPromise) {
+        try { await this.startPromise; } catch (_) {}
+      }
+      const server = this.server;
+      this.server = null;
+      this.port = null;
+      this.sessionTokens.clear();
+      this.usedAuthNonces.clear();
+      this.handshakeWindows.clear();
+      this._stopWatchers();
+      for (const res of this.sseClients) {
+        try { res.end(); } catch (_) {}
+      }
+      this.sseClients.clear();
+      for (const socket of this.sockets) {
+        try { socket.destroy(); } catch (_) {}
+      }
+      this.sockets.clear();
+      if (server) {
+        await new Promise((resolve) => server.close(() => resolve()));
+      }
+    })();
+    try {
+      await this.stopPromise;
+    } finally {
+      this.stopPromise = null;
     }
-    this.sseClients.clear();
   }
 
   _watchShare(shareId, localPath) {
@@ -422,7 +482,7 @@ class DesktopLibraryService {
               ok: true,
               token,
               expiresIn: 3600,
-              shares: this.listShares()
+              shares: peer.permissions && peer.permissions.libraryRead ? this._listRemoteShares() : []
             }));
           } catch (err) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -451,10 +511,8 @@ class DesktopLibraryService {
 
     if (method === 'OPTIONS') {
       res.writeHead(200, {
-        'DAV': '1',
         'Allow': 'OPTIONS, GET, HEAD, PROPFIND, PUT, DELETE, MKCOL, COPY, MOVE',
-        'MS-Author-Via': 'DAV',
-        'DAV-compliance': '1'
+        'MS-Author-Via': 'DAV'
       });
       res.end();
       return;
@@ -467,7 +525,7 @@ class DesktopLibraryService {
 
     if (pathname === '/api/shares' && method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, shares: this.listShares() }));
+      res.end(JSON.stringify({ ok: true, shares: this._listRemoteShares() }));
       return;
     }
 
@@ -535,7 +593,7 @@ class DesktopLibraryService {
         return this._handleRootPropfind(req, res, urlPrefix);
       } else if (method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ shares: this.listShares() }));
+        res.end(JSON.stringify({ shares: this._listRemoteShares() }));
         return;
       } else {
         res.writeHead(405, { 'Allow': 'PROPFIND, GET, OPTIONS' });
@@ -737,6 +795,15 @@ class DesktopLibraryService {
     }
   }
 
+  _isShareRoot(targetPath, shareLocalPath) {
+    return path.resolve(targetPath) === path.resolve(shareLocalPath);
+  }
+
+  _isStrictDescendant(candidatePath, parentPath) {
+    const relative = path.relative(path.resolve(parentPath), path.resolve(candidatePath));
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  }
+
   _handleGet(req, targetPath, isHeadOnly, res) {
     if (!fs.existsSync(targetPath)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -774,7 +841,9 @@ class DesktopLibraryService {
         }
 
         const stream = fs.createReadStream(targetPath, { start, end });
-        stream.pipe(res);
+        void pipeline(stream, res).catch((error) => {
+          if (!res.destroyed) res.destroy(error);
+        });
         return;
       } else {
         res.writeHead(416, {
@@ -800,7 +869,9 @@ class DesktopLibraryService {
     }
 
     const stream = fs.createReadStream(targetPath);
-    stream.pipe(res);
+    void pipeline(stream, res).catch((error) => {
+      if (!res.destroyed) res.destroy(error);
+    });
   }
 
   _handlePut(targetPath, share, session, req, res) {
@@ -818,15 +889,20 @@ class DesktopLibraryService {
 
     // Enforce maximum upload size (50 GiB)
     const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024;
-    const contentLength = parseInt(req.headers['content-length'], 10);
-    if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
+    const contentLengthHeader = req.headers['content-length'];
+    if (contentLengthHeader !== undefined && !/^(0|[1-9][0-9]*)$/.test(String(contentLengthHeader))) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid Content-Length' }));
+      return;
+    }
+    const contentLength = contentLengthHeader === undefined ? null : Number(contentLengthHeader);
+    if (contentLength !== null && (!Number.isSafeInteger(contentLength) || contentLength > MAX_UPLOAD_BYTES)) {
       res.writeHead(413, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Payload Too Large: Upload exceeds maximum size limit' }));
       return;
     }
 
-    const baseName = path.basename(targetPath);
-    if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i.test(baseName) || /[<>:"|?*\x00-\x1F]/.test(baseName)) {
+    if (portableLibraryPathError(share.localPath, targetPath)) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Invalid or reserved filename' }));
       return;
@@ -850,45 +926,54 @@ class DesktopLibraryService {
       }
     }
 
-    let totalBytes = 0;
-    let oversized = false;
-    const writeStream = fs.createWriteStream(targetPath, { flags: 'wx' });
-
-    req.on('data', (chunk) => {
-      totalBytes += chunk.length;
-      if (totalBytes > MAX_UPLOAD_BYTES) {
-        oversized = true;
-        req.destroy();
-        writeStream.destroy();
-        try { fs.unlinkSync(targetPath); } catch (_) {}
-      }
-    });
-
-    req.pipe(writeStream);
-
-    writeStream.on('finish', () => {
-      if (oversized) return; // already responded 413 while draining
-      res.writeHead(201, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'created', path: targetPath }));
-    });
-
-    writeStream.on('error', (err) => {
-      if (res.headersSent) return;
-      if (oversized) {
-        res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Payload Too Large: Upload exceeds maximum size limit' }));
-        return;
-      }
+    let stagingDir;
+    try {
+      stagingDir = fs.mkdtempSync(path.join(dir, '.nearby-upload-'));
+    } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `Failed to write file: ${err.message}` }));
-    });
-
-    req.on('error', () => {
-      if (res.headersSent) return;
-      if (oversized) {
-        res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Payload Too Large: Upload exceeds maximum size limit' }));
+      res.end(JSON.stringify({ error: `Failed to create upload staging directory: ${err.message}` }));
+      return;
+    }
+    const stagingPath = path.join(stagingDir, 'payload.part');
+    let totalBytes = 0;
+    const limiter = new Transform({
+      transform(chunk, _encoding, callback) {
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_UPLOAD_BYTES) {
+          const error = new Error('Payload Too Large: Upload exceeds maximum size limit');
+          error.code = 'UPLOAD_TOO_LARGE';
+          callback(error);
+          return;
+        }
+        callback(null, chunk);
       }
+    });
+    const writeStream = fs.createWriteStream(stagingPath, { flags: 'wx', mode: 0o600 });
+
+    void pipeline(req, limiter, writeStream).then(() => {
+      try {
+        publishFileNoOverwrite(stagingPath, targetPath);
+        this._cleanupPublishedStaging(stagingDir);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'created' }));
+      } catch (err) {
+        this._removeOwnedStaging(stagingDir);
+        if (err && err.code === 'EEXIST') {
+          res.writeHead(412, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Precondition Failed: Overwriting existing files is not permitted' }));
+          return;
+        }
+        if (!res.destroyed && !res.writableEnded) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `Failed to publish file: ${err.message}` }));
+        }
+      }
+    }).catch((err) => {
+      this._removeOwnedStaging(stagingDir);
+      if (res.destroyed || res.writableEnded) return;
+      const status = err && err.code === 'UPLOAD_TOO_LARGE' ? 413 : 400;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: status === 413 ? err.message : 'Upload was interrupted' }));
     });
   }
 
@@ -903,8 +988,7 @@ class DesktopLibraryService {
       res.end(JSON.stringify({ error: 'Forbidden: Peer lacks libraryUpload permission' }));
       return;
     }
-    const baseName = path.basename(targetPath);
-    if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i.test(baseName) || /[<>:"|?*\x00-\x1F]/.test(baseName)) {
+    if (portableLibraryPathError(share.localPath, targetPath)) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Invalid or reserved directory name' }));
       return;
@@ -917,7 +1001,7 @@ class DesktopLibraryService {
     try {
       fs.mkdirSync(targetPath, { recursive: true });
       res.writeHead(201, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, status: 'created', path: targetPath }));
+      res.end(JSON.stringify({ ok: true, status: 'created' }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: `Failed to create directory: ${err.message}` }));
@@ -933,6 +1017,11 @@ class DesktopLibraryService {
     if (!session.permissions || !session.permissions.libraryUpload) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Forbidden: Peer lacks libraryUpload permission' }));
+      return;
+    }
+    if (this._isShareRoot(targetPath, share.localPath)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: The share root cannot be deleted' }));
       return;
     }
     if (!fs.existsSync(targetPath)) {
@@ -955,7 +1044,12 @@ class DesktopLibraryService {
     if (!destination) return null;
     let destUrl;
     try { destUrl = new URL(destination, 'http://127.0.0.1'); } catch { return null; }
-    let destPathname = decodeURIComponent(destUrl.pathname || '/');
+    let destPathname;
+    try {
+      destPathname = decodeURIComponent(destUrl.pathname || '/');
+    } catch {
+      return { error: 'Destination path has invalid percent-encoding', status: 400 };
+    }
     if (destPathname.startsWith('/webdav/')) destPathname = destPathname.slice(7);
     else if (destPathname === '/webdav') destPathname = '/';
     const parts = destPathname.slice(1).split('/');
@@ -968,6 +1062,8 @@ class DesktopLibraryService {
     const relative = path.relative(destShare.localPath, destPath);
     if (relative.startsWith('..') || path.isAbsolute(relative)) return { error: 'Path traversal forbidden', status: 403 };
     if (!this._isPathWithinShare(destPath, destShare.localPath)) return { error: 'Path traversal forbidden: symlink escape detected', status: 403 };
+    if (this._isShareRoot(destPath, destShare.localPath)) return { error: 'The share root cannot be replaced', status: 403 };
+    if (portableLibraryPathError(destShare.localPath, destPath)) return { error: 'Destination contains an invalid or non-portable name', status: 400 };
     return { destPath, destShare };
   }
 
@@ -980,6 +1076,11 @@ class DesktopLibraryService {
     if (!session.permissions || !session.permissions.libraryUpload) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Forbidden: Peer lacks libraryUpload permission' }));
+      return;
+    }
+    if (this._isShareRoot(targetPath, share.localPath)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: The share root cannot be copied' }));
       return;
     }
     if (!fs.existsSync(targetPath)) {
@@ -999,21 +1100,56 @@ class DesktopLibraryService {
       return;
     }
     const { destPath } = dest;
-    // Keep the no-overwrite policy consistent with PUT: an explicit
-    // `Overwrite: T` header is required to replace an existing destination.
-    const overwrite = (req.headers['overwrite'] || 'F').toUpperCase();
-    if (overwrite === 'F' && fs.existsSync(destPath)) {
-      res.writeHead(412, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Precondition Failed: Destination exists and Overwrite is F' }));
+    if (this._isStrictDescendant(destPath, targetPath)) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'A resource cannot be copied into itself' }));
       return;
     }
+    if (fs.existsSync(destPath)) {
+      res.writeHead(412, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Precondition Failed: Overwriting existing resources is not permitted' }));
+      return;
+    }
+    let sourceStat;
     try {
-      fs.cpSync(targetPath, destPath, { recursive: true, force: true });
-      res.writeHead(fs.existsSync(destPath) && overwrite === 'T' ? 204 : 201, { 'Content-Type': 'application/json' });
-      res.end();
+      sourceStat = fs.lstatSync(targetPath);
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `Failed to copy resource: ${err.message}` }));
+      res.end(JSON.stringify({ error: `Failed to inspect copy source: ${err.message}` }));
+      return;
+    }
+    if (sourceStat.isDirectory()) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Directory COPY is not supported; create the destination directory and copy files individually' }));
+      return;
+    }
+    if (!sourceStat.isFile()) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Only regular files can be copied' }));
+      return;
+    }
+    if (!fs.existsSync(path.dirname(destPath))) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Destination parent directory does not exist' }));
+      return;
+    }
+
+    let stagingDir;
+    try {
+      stagingDir = fs.mkdtempSync(path.join(path.dirname(destPath), '.nearby-copy-'));
+      const stagingPath = path.join(stagingDir, 'payload.part');
+      fs.copyFileSync(targetPath, stagingPath, fs.constants.COPYFILE_EXCL);
+      publishFileNoOverwrite(stagingPath, destPath);
+      this._cleanupPublishedStaging(stagingDir);
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end();
+    } catch (err) {
+      if (stagingDir) this._removeOwnedStaging(stagingDir);
+      const status = err && err.code === 'EEXIST' ? 412 : 500;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: status === 412
+        ? 'Precondition Failed: Overwriting existing resources is not permitted'
+        : `Failed to copy resource: ${err.message}` }));
     }
   }
 
@@ -1026,6 +1162,11 @@ class DesktopLibraryService {
     if (!session.permissions || !session.permissions.libraryUpload) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Forbidden: Peer lacks libraryUpload permission' }));
+      return;
+    }
+    if (this._isShareRoot(targetPath, share.localPath)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: The share root cannot be moved' }));
       return;
     }
     if (!fs.existsSync(targetPath)) {
@@ -1050,45 +1191,145 @@ class DesktopLibraryService {
       res.end(JSON.stringify({ error: 'Source and destination are identical' }));
       return;
     }
-    // Keep the no-overwrite policy consistent with PUT: an explicit
-    // `Overwrite: T` header is required to replace an existing destination.
-    const overwrite = (req.headers['overwrite'] || 'F').toUpperCase();
-    const destExisted = fs.existsSync(destPath);
-    if (overwrite === 'F' && destExisted) {
-      res.writeHead(412, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Precondition Failed: Destination exists and Overwrite is F' }));
+    if (this._isStrictDescendant(destPath, targetPath)) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'A resource cannot be moved into itself' }));
       return;
     }
+    if (fs.existsSync(destPath)) {
+      res.writeHead(412, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Precondition Failed: Overwriting existing resources is not permitted' }));
+      return;
+    }
+    let sourceStat;
     try {
-      fs.renameSync(targetPath, destPath);
-      res.writeHead(destExisted ? 204 : 201);
-      res.end();
+      sourceStat = fs.lstatSync(targetPath);
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `Failed to move resource: ${err.message}` }));
+      res.end(JSON.stringify({ error: `Failed to inspect move source: ${err.message}` }));
+      return;
+    }
+    if (sourceStat.isDirectory()) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Directory MOVE is not supported; move files individually and remove the source directory after verification' }));
+      return;
+    }
+    if (!sourceStat.isFile()) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Only regular files can be moved' }));
+      return;
+    }
+    if (!fs.existsSync(path.dirname(destPath))) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Destination parent directory does not exist' }));
+      return;
+    }
+
+    let published = false;
+    let tombstoneDir = null;
+    let tombstonePath = null;
+    let sourceRenamed = false;
+    try {
+      tombstoneDir = fs.mkdtempSync(path.join(path.dirname(targetPath), '.nearby-move-cleanup-'));
+      tombstonePath = path.join(tombstoneDir, 'source');
+      publishFileNoOverwrite(targetPath, destPath);
+      published = true;
+      fs.renameSync(targetPath, tombstonePath);
+      sourceRenamed = true;
+      const destinationStat = fs.lstatSync(destPath);
+      const movedSourceStat = fs.lstatSync(tombstonePath);
+      if (!sameFileIdentity(destinationStat, movedSourceStat)) {
+        const error = new Error('Move source changed while the destination was being published');
+        error.code = 'MOVE_SOURCE_CHANGED';
+        throw error;
+      }
+      this._cleanupPublishedStaging(tombstoneDir);
+      sourceRenamed = false;
+      res.writeHead(201);
+      res.end();
+    } catch (err) {
+      if (sourceRenamed && tombstonePath && fs.existsSync(tombstonePath)) {
+        try {
+          fs.linkSync(tombstonePath, targetPath);
+          fs.unlinkSync(tombstonePath);
+          sourceRenamed = false;
+        } catch (_) {
+          // Keep the owned recovery directory when the original path cannot be restored.
+        }
+      }
+      if (tombstoneDir && !sourceRenamed) this._removeOwnedStaging(tombstoneDir);
+      const status = !published && err && err.code === 'EEXIST'
+        ? 412
+        : err && err.code === 'MOVE_SOURCE_CHANGED' ? 409 : 500;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: status === 412
+          ? 'Precondition Failed: Overwriting existing resources is not permitted'
+          : `Failed to move resource: ${err.message}`,
+        state: published
+          ? sourceRenamed
+            ? 'destination-published-source-recovery-pending'
+            : fs.existsSync(targetPath)
+              ? 'destination-published-source-retained'
+              : 'destination-published-source-changed'
+          : 'source-retained-destination-absent'
+      }));
+    }
+  }
+
+  _removeOwnedStaging(stagingPath) {
+    try { fs.rmSync(stagingPath, { recursive: true, force: true }); } catch (_) {}
+  }
+
+  _cleanupPublishedStaging(stagingPath) {
+    try {
+      fs.rmSync(stagingPath, { recursive: true, force: true });
+    } catch (error) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn(`Published copy left cleanup-pending staging file ${path.basename(stagingPath)}`, error);
+      }
     }
   }
 
   close() {
-    return new Promise((resolve) => {
-      for (const timer of this.debounceTimers.values()) clearTimeout(timer);
-      this.debounceTimers.clear();
-      for (const id of Array.from(this.shares.keys())) this._unwatchShare(id);
-      for (const client of this.sseClients) {
-        try { client.end(); } catch (_) {}
-      }
-      this.sseClients.clear();
-      if (this.server) {
-        this.server.close(() => {
-          this.server = null;
-          this.port = null;
-          resolve();
-        });
-      } else {
-        resolve();
-      }
-    });
+    return this.stop();
   }
+}
+
+function isPublicationFallbackError(error) {
+  return Boolean(error && ['ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EACCES', 'EXDEV'].includes(error.code));
+}
+
+function publishFileNoOverwrite(sourcePath, destinationPath) {
+  try {
+    fs.linkSync(sourcePath, destinationPath);
+  } catch (error) {
+    if (!isPublicationFallbackError(error)) throw error;
+    const unsupported = new Error('Atomic publication requires hard-link support on the destination filesystem');
+    unsupported.code = 'ATOMIC_PUBLICATION_UNSUPPORTED';
+    unsupported.cause = error;
+    throw unsupported;
+  }
+}
+
+function sameFileIdentity(left, right) {
+  return left.isFile() && right.isFile()
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.birthtimeMs === right.birthtimeMs;
+}
+
+function portableLibraryPathError(shareRoot, targetPath) {
+  const relative = path.relative(shareRoot, targetPath);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return 'outside-share';
+  for (const segment of relative.split(path.sep)) {
+    if (!segment || !segment.isWellFormed() || segment !== segment.normalize('NFC')) return 'unicode';
+    if (Buffer.byteLength(segment, 'utf8') > 255 || /[<>:"|?*\x00-\x1F]/u.test(segment) || /[. ]$/u.test(segment)) return 'characters';
+    const base = segment.split('.')[0];
+    if (/^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$/iu.test(base)) return 'reserved';
+  }
+  return null;
 }
 
 function escapeXml(str) {

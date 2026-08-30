@@ -1,3 +1,36 @@
 plugins {
     id 'com.android.application' version '8.6.1' apply false
 }
+
+// Gradle's Windows test-worker classpath file is decoded incorrectly when build
+// outputs live below a non-ASCII repository path. Keep generated outputs in a stable
+// ASCII-only temporary directory for that environment; source files remain in place.
+def repositoryPath = rootDir.absolutePath
+def windowsWithNonAsciiPath = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows') &&
+        !java.nio.charset.StandardCharsets.US_ASCII.newEncoder().canEncode(repositoryPath)
+if (windowsWithNonAsciiPath) {
+    // Keep the alternate directory on the same drive because Android Gradle Plugin
+    // computes relative paths between source and build roots on Windows.
+    def configuredBuildRoot = providers.gradleProperty('nearbyTransferBuildRoot')
+            .orElse(providers.environmentVariable('NEARBY_TRANSFER_BUILD_ROOT'))
+            .getOrNull()
+    def safeBuildRoot = configuredBuildRoot
+            ? file(configuredBuildRoot)
+            : new File(rootDir.toPath().root.toFile(), ".nearby-transfer-gradle/${Integer.toHexString(repositoryPath.hashCode())}")
+    def safeBuildPath = safeBuildRoot.canonicalFile.toPath()
+    def repositoryRoot = rootDir.canonicalFile.toPath().root
+    def safeRoot = safeBuildPath.root
+    if (!java.nio.charset.StandardCharsets.US_ASCII.newEncoder().canEncode(safeBuildPath.toString()) ||
+            repositoryRoot == null || safeRoot == null ||
+            !repositoryRoot.toString().equalsIgnoreCase(safeRoot.toString())) {
+        throw new GradleException('nearbyTransferBuildRoot must be an ASCII-only path on the same drive as the repository')
+    }
+    if ((!safeBuildRoot.exists() && !safeBuildRoot.mkdirs()) || !safeBuildRoot.isDirectory() || !safeBuildRoot.canWrite()) {
+        throw new GradleException("Cannot create the alternate Android build directory: ${safeBuildRoot}. " +
+                'Set -PnearbyTransferBuildRoot=<same-drive ASCII writable path>.')
+    }
+    logger.lifecycle("Using alternate Android build output root: ${safeBuildRoot}")
+    subprojects {
+        layout.buildDirectory.set(new File(safeBuildRoot, project.name))
+    }
+}

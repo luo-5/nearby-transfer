@@ -229,10 +229,10 @@ async function runHttpsWebDavStressTests() {
     });
     const checkListData = JSON.parse(checkList.body);
     assert.strictEqual(checkListData.items.length, 10, 'All 10 parallel files must be present');
-    console.log('[PASS] Round 3: Handled 10 parallel HTTPS WebDAV uploads with zero race conditions.');
+    console.log('[PASS] Round 3: Completed 10 parallel HTTPS WebDAV uploads with expected contents.');
 
-    // --- ROUND 4: Security & Penetration Testing ---
-    console.log('\n--- ROUND 4: Security & Penetration Testing ---');
+    // --- ROUND 4: Authorization Boundary Checks ---
+    console.log('\n--- ROUND 4: Authorization Boundary Checks ---');
     // Unauthorized token
     const unauthRes = await httpsRequest({
       hostname: '127.0.0.1',

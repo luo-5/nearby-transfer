@@ -194,8 +194,8 @@ test('20-Round Marathon Soak, Memory Integrity & Chaos Suite', { timeout: 300000
   const finalDelta = (finalHeap - baselineHeap) / 1024 / 1024;
 
   console.log(`\n================================================================`);
-  console.log(`[+] 20 Continuous Soak Rounds Passed 100%!`);
-  console.log(`[+] Total Files: 100 | Total Payload: 27.5 MB | Checksums: 100% Match`);
+  console.log(`[+] 20 continuous soak rounds completed successfully.`);
+  console.log(`[+] Total files: 100 | Total payload: 27.5 MB | All computed checksums matched.`);
   console.log(`[+] Final Heap Delta: ${finalDelta.toFixed(2)} MB (Strictly below threshold)`);
   console.log(`================================================================\n`);
 
