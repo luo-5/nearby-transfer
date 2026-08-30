@@ -58,9 +58,9 @@ async function testAllDrivers() {
 }
 
 testAllDrivers().then(() => {
-  console.log('[PASS] 5. Hot protocol switching and dispatch execution verified for all 7 protocols!');
+  console.log('[PASS] 5. Registry selection and driver interface dispatch verified for all 7 definitions.');
   console.log('======================================================');
-  console.log('  ALL PROTOCOL ENGINE SMOKE TESTS PASSED (100%)       ');
+  console.log('       PROTOCOL ENGINE SMOKE TESTS PASSED             ');
   console.log('======================================================');
 }).catch(err => {
   console.error('Test failed:', err);

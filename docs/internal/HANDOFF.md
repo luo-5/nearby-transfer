@@ -1,11 +1,14 @@
 # Nearby Transfer 项目交接文档
 
+> 历史、非权威记录。本文的提交号、测试数量和完成度不代表当前版本；当前状态以
+> `docs/capabilities.md`、`CHANGELOG.md` 与目标提交的自动化测试输出为准。
+
 **交接日期：** 2026-08-29
 **当前 HEAD：** 22f9b72 (main)
-**权威交接文档：** 根目录 [AGENT_HANDOVER.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/AGENT_HANDOVER.md)
+**历史交接文档：** 根目录 `AGENT_HANDOVER.md`
 **GitHub：** https://github.com/luo-5/nearby-transfer.git
 **分支：** main
-**git 身份：** luo-5 / lluo77250@gmail.com
+**维护者：** 见仓库公开维护者文档
 
 ---
 
@@ -66,7 +69,7 @@ Nearby Transfer 是一个局域网加密文件传输 + NAS WebDAV 应用，包�
   - Phase 5: WebDAV HTTPS 39-assertion suite, rclone 10-stream interop, 7-protocol matrix switcher (3/3 Passed).
   - Phase 6: Android 9-matrix hardware verification on Redmi K50 (HyperOS) and Samsung S10+ (9/9 Passed).
 - **Release Packages**: Windows (`.exe`/`.zip`), Linux (`.deb`/`.rpm`/`.AppImage`/`.tar.gz`/`.zip`), Android (`.apk`). Real installation verified on Ubuntu & CentOS.
-- **Reports**: [RELEASE_NOTES_v1.3.0.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/RELEASE_NOTES_v1.3.0.md), [RELEASE_READINESS_REPORT.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/RELEASE_READINESS_REPORT.md), [LONG_RUN_SOAK_REPORT.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/LONG_RUN_SOAK_REPORT.md), [EXTREME_3VM_CHAOS_TEST_REPORT.md](file:///D:/github项目/pr/pr/nearby-transfer-next-version/EXTREME_3VM_CHAOS_TEST_REPORT.md).
+- **Reports**: `RELEASE_NOTES_v1.3.0.md`, `RELEASE_READINESS_REPORT.md`, `LONG_RUN_SOAK_REPORT.md`, `EXTREME_3VM_CHAOS_TEST_REPORT.md`（均为历史记录）。
 
 ---
 

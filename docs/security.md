@@ -1,39 +1,100 @@
-# Nearby Transfer Security Architecture & Threat Model
+# Security architecture and threat model
 
-## 1. Security Principles
+This document describes security boundaries by protocol path. It does not claim that
+one path's guarantees automatically apply to every client or adapter. Current
+integration status is tracked in [`capabilities.md`](capabilities.md).
 
-Nearby Transfer is engineered around a **Zero-Trust LAN Model**:
-* **Untrusted Network**: We assume the local Wi-Fi / Ethernet is hostile, unencrypted, and subject to packet eavesdropping, ARP spoofing, and malicious broadcast injection.
-* **Mutual Authentication**: Both peers authenticate each other using persistent Ed25519 identity keypairs.
-* **Forward Secrecy**: Every transfer session derives an ephemeral session key using freshly generated X25519 keypairs.
-* **Authenticated Encryption**: All chunk payloads use AES-256-GCM with position-bound Additional Authenticated Data (AAD).
+## Threat assumptions
 
----
+Nearby Transfer assumes that the local Wi-Fi or Ethernet network can contain passive
+observers and active malicious peers. Network announcements, metadata, frame lengths,
+identifiers, filenames, persisted records, and client-provided hashes are untrusted.
 
-## 2. Threat Model & Mitigations
+The project does not protect a device after its operating-system account, process,
+private identity keys, or release-signing credentials have been compromised.
 
-| Threat | Attack Scenario | Mitigation |
-| :--- | :--- | :--- |
-| **Eavesdropping** | Attacker sniffs Wi-Fi packets to read files | AES-256-GCM payload encryption with 256-bit ECDH session keys |
-| **Man-in-the-Middle (MitM)** | Attacker intercepts initial pairing exchange | 6-digit Short Authentication String (SAS) out-of-band visual verification |
-| **Replay Attacks** | Attacker replays previous control messages or chunks | Monotonic sequence counters, 30s TTL limits, and task/session/offset AAD binding |
-| **Chunk Swapping / Truncation** | Attacker reorders or truncates file chunks | AAD binds `(taskId, path, offset, sequence, plainLength)` to each chunk authentication tag |
-| **Path Traversal / Escape** | Malicious sender sends `../../etc/shadow` | Mandatory POSIX relative path validation, prohibition of `..`, `\`, and absolute root escapes |
-| **Resource Exhaustion DoS** | Flood of fake discovery datagrams or TCP connections | Connection limits (max 16 global, 4 per IP) and sliding-window rate limiters |
+## Security boundaries
 
----
+### Classic desktop transfer
 
-## 3. Cryptographic Key Lifecycle
+- File contents are encrypted before the classic HTTP upload body is sent.
+- Discovery announcements are signed and verified before a peer is accepted.
+- Transfer requests are signed with the sender's persistent device identity.
+- The receiver asks the user before accepting an incoming transfer.
+- Discovery and transfer metadata are visible on the LAN.
+- The classic path must not be described as providing all protocol-v2 SAS, replay,
+  checkpoint, or forward-secrecy properties.
 
-1. **Ed25519 Identity Keypair**:
-   * *Purpose*: Device identity, announcement signatures, pairing verification, control message authentication.
-   * *Storage*: Stored in user data directory (`device.json` with 0600 permissions).
-2. **X25519 Identity Keypair**:
-   * *Purpose*: Persistent device identity encryption capability.
-3. **Ephemeral X25519 Keypair**:
-   * *Purpose*: Generated per transfer task. Used in ECDH exchange to guarantee forward secrecy.
-4. **AES-256-GCM Session Key**:
-   * *Derivation*: `HKDF-SHA256(sharedSecret, salt=manifestSha256, info=contextBinding)`.
-   * *Lifecycle*: Erased via `sessionKey.fill(0)` immediately upon transfer completion or cancellation.
-5. **Chunk Nonce**:
-   * 96-bit (12-byte) cryptographically secure random nonce per chunk.
+### Protocol-v2 components
+
+The v2 implementation contains and tests:
+
+- Ed25519 device identities and signed discovery/pairing/control messages;
+- X25519 key agreement and HKDF-SHA256 session-key derivation;
+- AES-256-GCM chunk encryption with task, path, offset, sequence, and length bound as
+  additional authenticated data;
+- expiry windows and monotonic sequences for control messages;
+- bounded wire, message, and chunk frames;
+- manifest path validation, final plaintext hashes, checkpoints, and recovery state.
+
+These properties depend on callers preserving verified identity-to-key binding,
+checking trust and permissions, rejecting stale state, and cleaning up secrets and
+temporary files. The complete v2 data plane is not yet connected to the default
+desktop transfer flow.
+
+### WebDAV shared library
+
+- The service uses HTTPS with a self-signed certificate.
+- Session acquisition verifies a signed request, timestamp, and one-time nonce.
+- The Bearer session flow is application-specific; generic WebDAV clients cannot
+  directly authenticate with a normal username/password prompt.
+- Trusted-peer permissions restrict read and upload operations.
+- The default share is read-only. Write access starts only after the user explicitly
+  selects a shared folder and the peer has the required permission.
+- Android remembers the first observed certificate fingerprint and fails closed on a
+  later mismatch.
+- Share-root path checks, request limits, connection limits, and cleanup remain
+  required even after authentication.
+
+WebDAV transport security is a separate boundary from v2 encrypted file transfer.
+
+### LocalSend interoperability
+
+The adapter currently announces and serves LocalSend's HTTP mode. Session/file tokens,
+bounded request bodies, generated staging paths, filename validation, size checks,
+session expiry, concurrency limits, and non-overwrite publication protect the receiver.
+The adapter does not claim Nearby Transfer v2 end-to-end confidentiality.
+
+## Threats and mitigations
+
+| Threat | Required mitigation | Applies to |
+| --- | --- | --- |
+| Passive file-content capture | Authenticated encryption or TLS on the selected path | Classic payload, v2 chunks, WebDAV TLS; not LocalSend HTTP |
+| Identity substitution | Derive and verify device IDs, verify signatures, bind persisted trust to the observed key | V2 and trusted WebDAV sessions |
+| Replay or rollback | Expiry windows, one-time nonces, monotonic sequences, task/session binding, monotonic checkpoints | V2 controls/transfers and WebDAV session acquisition as documented |
+| Chunk swapping/truncation | AAD binding and final plaintext SHA-256 | V2 chunks |
+| Path escape/overwrite | Canonical relative names, validated roots, generated staging paths, symlink/reparse checks, non-overwrite publication | All receive and library paths |
+| Resource exhaustion | Frame/body/file/session limits, global/per-IP concurrency, timeouts, backpressure, cleanup | All network services |
+| Permission confusion | Default-deny grants, explicit user approval, revocation checks | Pairing, transfer, and WebDAV authorization |
+| Supply-chain substitution | Locked dependencies, full CI, npm provenance, checksums/SBOM/signing status when published | Packages and release assets |
+
+## Key lifecycle
+
+- Persistent Ed25519 and X25519 identity keys belong in application-private storage
+  with restrictive file permissions where the platform supports them.
+- Ephemeral X25519 keys and derived AES session keys should be scoped to one transfer
+  and cleared after success, cancellation, or failure.
+- Private keys, session keys, file contents, bearer tokens, signing credentials, and
+  real pairing secrets must never be logged or committed.
+- Deterministic test-vector keys are non-production material and must be clearly
+  labelled as such.
+
+## Residual risks
+
+- Six-digit SAS verification requires users to compare the code correctly.
+- First-contact TOFU cannot detect an attacker who controls the very first WebDAV
+  connection; later fingerprint changes fail closed.
+- Unsigned desktop builds can trigger platform warnings and provide weaker publisher
+  identity than code-signed artifacts.
+- Debug Android APKs are development artifacts, not public production releases.
+- Automated tests are not a formal security proof or independent audit.

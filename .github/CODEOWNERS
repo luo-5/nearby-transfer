@@ -1,0 +1,11 @@
+# Default review owner
+* @luo-5
+
+# Security, protocol, release, and governance boundaries
+/SECURITY.md @luo-5
+/docs/security.md @luo-5
+/docs/protocol/ @luo-5
+/packages/core/ @luo-5
+/.github/workflows/ @luo-5
+/GOVERNANCE.md @luo-5
+/MAINTAINERS.md @luo-5

@@ -37,7 +37,7 @@ Goal 文件：`GOAL-nearby-transfer-安全与发布修复.md`（T0–T11 全部�
 
 ## 遗留问题（需人工决策 / 后续任务）
 
-1. `NearbyDocumentsProvider.getTargetServerIp()` 硬编码 `192.168.9.151`（**本次审核后新发现**，生产代码中的开发残留）——需要改为发现机制或用户配置。
+1. `NearbyDocumentsProvider.getTargetServerIp()` 曾包含硬编码测试地址（**本次审核后新发现**，生产代码中的开发残留）——需要改为发现机制或用户配置。
 2. npm trusted publishing（OIDC）需在 npmjs 后台配置；当前仍使用 `NPM_TOKEN` secret。
 3. Windows 安装包代码签名（`signAndEditExecutable: false` 维持不变）。
 4. 三平台二进制自动归集到 GitHub Release（当前 release 只附 npm tarball 校验和；平台产物仍由 build-* workflow 以 artifact 形式产出）。

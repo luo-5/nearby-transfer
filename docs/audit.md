@@ -1,5 +1,9 @@
 # Nearby Transfer — 代码审计与 M1 迁移映射 (M0)
 
+> **历史、非权威文档：** 本页记录旧提交 `732b29b` 的 M0/M1 迁移分析，
+> 其中模块数量、测试数量与待办状态不能代表当前工作树。当前能力与限制请以
+> [`capabilities.md`](capabilities.md)、包清单和当前 CI 结果为准。
+
 > 审计范围：`src/v2/*.js`（31 模块）、`src/core/*.js`（7 模块）、`src/protocols/*.js`（2 模块）+ 7 个协议驱动。
 > 目的：为 M1（抽取 `@luo-5/core` TypeScript 包）提供逐模块的职责、依赖、平台耦合分级，以及「旧路径 → core 目标路径」映射表。
 >

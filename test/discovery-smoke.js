@@ -1,7 +1,7 @@
 const assert = require('assert');
 const crypto = require('crypto');
 const { Discovery } = require('../src/core/discovery');
-const { fingerprintFor } = require('../src/core/crypto');
+const { fingerprintFor, signDiscoveryAnnouncement } = require('../src/core/crypto');
 
 function createKeyPair(type) {
   return crypto.generateKeyPairSync(type, {
@@ -17,9 +17,9 @@ function deviceIdFor(signingPublicKey) {
 function createAnnouncement() {
   const signing = createKeyPair('ed25519');
   const encryption = createKeyPair('x25519');
-  return {
+  const announcement = {
     app: 'nearby-transfer',
-    protocolVersion: 1,
+    protocolVersion: 2,
     type: 'announce',
     deviceId: deviceIdFor(signing.publicKey),
     deviceName: 'Test sender',
@@ -29,6 +29,9 @@ function createAnnouncement() {
     fingerprint: fingerprintFor(signing.publicKey),
     timestamp: Date.now()
   };
+  return Object.assign({}, announcement, {
+    signature: signDiscoveryAnnouncement(announcement, signing.privateKey)
+  });
 }
 
 function createDiscovery() {
@@ -51,6 +54,13 @@ function main() {
   deliver(discovery, accepted);
   assert.strictEqual(peerEvents, 1);
   assert.deepStrictEqual(discovery.getPeer(accepted.deviceId).port, accepted.port);
+
+  deliver(discovery, Object.assign({}, accepted, { port: accepted.port + 1 }));
+  assert.strictEqual(peerEvents, 1);
+  deliver(discovery, Object.assign({}, accepted, { signature: undefined }));
+  assert.strictEqual(peerEvents, 1);
+  deliver(discovery, Object.assign({}, accepted, { timestamp: Date.now() - 60000 }));
+  assert.strictEqual(peerEvents, 1);
 
   const x25519SigningKey = accepted.encryptionPublicKey;
   const wrongSigningKeyType = Object.assign({}, accepted, {

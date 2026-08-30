@@ -10,7 +10,8 @@ final class DiscoveryAnnouncement {
     static final int MAX_BYTES = 16 * 1024;
 
     private static final String APP_ID = "nearby-transfer";
-    private static final int PROTOCOL_VERSION = 1;
+    private static final int PROTOCOL_VERSION = 2;
+    private static final long MAX_CLOCK_SKEW_MS = 30_000L;
     private static final int MAX_DEVICE_NAME_LENGTH = 128;
     private static final int MAX_PUBLIC_KEY_LENGTH = 4096;
     private static final int MAX_FINGERPRINT_LENGTH = 64;
@@ -46,6 +47,7 @@ final class DiscoveryAnnouncement {
         String signingPublicKey = strictString(payload, "signingPublicKey", MAX_PUBLIC_KEY_LENGTH);
         String encryptionPublicKey = strictString(payload, "encryptionPublicKey", MAX_PUBLIC_KEY_LENGTH);
         String fingerprint = strictString(payload, "fingerprint", MAX_FINGERPRINT_LENGTH);
+        String signature = strictString(payload, "signature", 512);
         int port = strictInteger(payload, "port");
         if (port < 1 || port > 65535) {
             return null;
@@ -53,6 +55,12 @@ final class DiscoveryAnnouncement {
 
         if (!deviceId.equals(CryptoUtil.deviceIdFor(signingPublicKey)) ||
             !fingerprint.equals(CryptoUtil.fingerprintFor(signingPublicKey))) {
+            return null;
+        }
+
+        long issuedAt = strictLong(payload, "timestamp");
+        if (issuedAt <= 0L || issuedAt < lastSeen - MAX_CLOCK_SKEW_MS || issuedAt > lastSeen + MAX_CLOCK_SKEW_MS ||
+            !CryptoUtil.verify(JsonUtil.canonicalDiscoveryAnnouncementPayload(payload), signature, signingPublicKey)) {
             return null;
         }
 
@@ -94,6 +102,18 @@ final class DiscoveryAnnouncement {
         }
         try {
             return new BigDecimal(value.toString()).intValueExact();
+        } catch (NumberFormatException | ArithmeticException error) {
+            throw new IllegalArgumentException("Expected integer field: " + key, error);
+        }
+    }
+
+    private static long strictLong(JSONObject payload, String key) throws Exception {
+        Object value = payload.get(key);
+        if (!(value instanceof Number)) {
+            throw new IllegalArgumentException("Expected numeric field: " + key);
+        }
+        try {
+            return new BigDecimal(value.toString()).longValueExact();
         } catch (NumberFormatException | ArithmeticException error) {
             throw new IllegalArgumentException("Expected integer field: " + key, error);
         }

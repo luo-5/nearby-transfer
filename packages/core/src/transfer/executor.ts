@@ -138,7 +138,7 @@ interface NormalizedExecutorConfig {
 export async function createDesktopTransferExecutor(input: ExecutorInput): Promise<DesktopTransferExecutor> {
   const config = normalizeInput(input);
   const job = normalizeOutgoingJob(config.job);
-  const transferredBytes = (config.job as any).progress?.transferredBytes ?? 0;
+  const transferredBytes = config.job.progress.transferredBytes;
   if (!config.checkpoint || typeof config.checkpoint !== 'object' ||
       config.checkpoint.totalTransferred !== transferredBytes) {
     throw diagnosticError(
@@ -326,17 +326,16 @@ function normalizeOutgoingJob(value: TransferJob): { taskId: string; peerDeviceI
   if (value.taskId !== manifest.taskId || typeof value.peerDeviceId !== 'string') {
     throw diagnosticError('Desktop transfer job does not match its manifest', ERROR_CODE.JOB_INVALID, DIAGNOSTIC_CODE.PROTOCOL_ERROR);
   }
-  const raw = value as any;
-  if (raw.sourceMappingStatus !== 'available' || !Array.isArray(raw.sources)) {
+  if (value.sourceMappingStatus !== 'available' || !Array.isArray(value.sources)) {
     throw diagnosticError('Outgoing transfer source file mappings are unavailable', ERROR_CODE.JOB_INVALID, DIAGNOSTIC_CODE.IO_ERROR);
   }
   const files = (manifest.entries as ManifestFileEntry[]).filter((entry) => entry.kind === 'file');
-  if (raw.sources.length !== files.length) {
+  if (value.sources.length !== files.length) {
     throw diagnosticError('Outgoing transfer sources must map every manifest file exactly once', ERROR_CODE.JOB_INVALID, DIAGNOSTIC_CODE.IO_ERROR);
   }
   const expected = new Map(files.map((file) => [file.path, file]));
   const seen = new Set<string>();
-  const sources = raw.sources.map((source: any) => {
+  const sources = value.sources.map((source) => {
     if (!source || typeof source !== 'object' || Array.isArray(source) || seen.has(source.path)) {
       throw diagnosticError('Outgoing transfer source mappings are invalid', ERROR_CODE.JOB_INVALID, DIAGNOSTIC_CODE.IO_ERROR);
     }
@@ -348,7 +347,7 @@ function normalizeOutgoingJob(value: TransferJob): { taskId: string; peerDeviceI
     seen.add(source.path);
     return { path: source.path, sourcePath: source.sourcePath, size: source.size, sha256: source.sha256 };
   });
-  if (!raw.progress || !Number.isSafeInteger(raw.progress.transferredBytes) || raw.progress.transferredBytes < 0) {
+  if (!value.progress || !Number.isSafeInteger(value.progress.transferredBytes) || value.progress.transferredBytes < 0) {
     throw diagnosticError('Outgoing transfer progress is invalid', ERROR_CODE.JOB_INVALID, DIAGNOSTIC_CODE.PROTOCOL_ERROR);
   }
   return { taskId: value.taskId, peerDeviceId: value.peerDeviceId, manifest, sources };

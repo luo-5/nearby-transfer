@@ -1,5 +1,9 @@
 # P1 修复代码审查报告 (F1)
 
+> **历史分析 / 非权威资料：** 本文件保留早期审查思路，可能包含未复现的
+> 假设、旧版本基线或过时结论。当前能力以 docs/capabilities.md、现行规范
+> 和可重复运行的测试为准；其中的数值或完成度不得作为发布承诺。
+
 **审查目标：** P1 阶段端到端传输修复方案（`bootstrap` → `stream-session` 的 `leftoverData` 交接方案）  
 **涉及文件：**
 * `packages/core/src/transfer/bootstrap.ts`

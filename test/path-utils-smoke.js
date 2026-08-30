@@ -5,6 +5,7 @@ const path = require('path');
 const { ensureSafeDirectory, safeFilename, uniqueDestinationPath } = require('../src/core/path-utils');
 
 function main() {
+  const tempRoot = fs.realpathSync.native(os.tmpdir());
   assert.strictEqual(safeFilename('../../secret.txt'), 'secret.txt');
   assert.strictEqual(safeFilename('report<>:"|?*.txt'), 'report_______.txt');
   assert.strictEqual(safeFilename('report.txt...   '), 'report.txt');
@@ -32,7 +33,7 @@ function main() {
   assert.strictEqual(safeFilename('LPT0.txt'), 'LPT0.txt');
   assert.strictEqual(safeFilename('console.txt'), 'console.txt');
 
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-transfer-path-'));
+  const directory = fs.mkdtempSync(path.join(tempRoot, 'nearby-transfer-path-'));
   try {
     assert.strictEqual(ensureSafeDirectory(directory), path.resolve(directory));
     fs.writeFileSync(path.join(directory, 'photo.jpg'), 'existing');
@@ -52,7 +53,7 @@ function main() {
 
   assert.throws(() => ensureSafeDirectory('relative/path'), /absolute/i);
 
-  const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-transfer-path-file-'));
+  const tempParent = fs.mkdtempSync(path.join(tempRoot, 'nearby-transfer-path-file-'));
   try {
     const file = path.join(tempParent, 'not-a-directory');
     fs.writeFileSync(file, 'content');

@@ -17,7 +17,8 @@ const SESSION_KEY = Buffer.alloc(32, 0x5a);
 let taskCounter = 40;
 
 async function main() {
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'nearby-transfer-chunk-writer-'));
+  const tempRoot = fs.realpathSync.native(os.tmpdir());
+  const sandbox = fs.mkdtempSync(path.join(tempRoot, 'nearby-transfer-chunk-writer-'));
   try {
     await testMultiFileEmptyAndAtomicPublish(sandbox);
     await testStrictOrderingAndBounds(sandbox);
@@ -258,7 +259,7 @@ async function testSymlinkJunctionAndUnexpectedEntryDefense(sandbox) {
   if (linked) {
     await assert.rejects(
       send(symlinkWriter, symlinkFixture.manifest.taskId, 'folder/file.bin', 0, 0, Buffer.from('safe')),
-      /already exists|symbolic link/i
+      /already exists|symbolic link|regular file/i
     );
     assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
     fs.rmSync(stagingFile, { force: true });

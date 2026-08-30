@@ -1,13 +1,13 @@
 # Docker Build Verification
 
-**Status:** Dockerfile verified correct; build not run (Docker daemon was not running)
+**Status:** Static inspection completed; an actual container build has not been verified.
 
 ## Dockerfile Structure
 
 - **Builder stage** (`node:24-alpine`): copies package files, runs `npm ci` for workspace deps, builds `@luo-5/core` and `@luo-5/cli` with tsup
-- **Final stage** (`node:24-alpine`): installs `samba-server` (for SMB sidecar), copies built dist files, installs production deps via `npm install --omit=dev --workspace @luo-5/cli`, sets up entrypoint and SMB sidecar scripts
+- **Final stage** (`node:24-alpine`): installs `samba-server` (for the optional SMB sidecar), copies built dist files, installs locked production dependencies with `npm ci --omit=dev` for the core and CLI workspaces, and sets up the entrypoint and SMB sidecar scripts
 
-## Verified Files
+## Statically Inspected Files
 
 - `packages/cli/Dockerfile` — multi-stage build
 - `packages/cli/docker-entrypoint.sh` — exec node dist/index.js

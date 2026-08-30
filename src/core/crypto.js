@@ -61,6 +61,43 @@ function verifyTransferRequest(payload, signature, publicKeyPem) {
   }
 }
 
+function discoveryAnnouncementSigningPayload(payload) {
+  return JSON.stringify({
+    app: payload.app,
+    protocolVersion: payload.protocolVersion,
+    type: payload.type,
+    deviceId: payload.deviceId,
+    deviceName: payload.deviceName,
+    port: payload.port,
+    signingPublicKey: payload.signingPublicKey,
+    encryptionPublicKey: payload.encryptionPublicKey,
+    fingerprint: payload.fingerprint,
+    timestamp: payload.timestamp
+  });
+}
+
+function signDiscoveryAnnouncement(payload, privateKeyPem) {
+  const message = Buffer.from(discoveryAnnouncementSigningPayload(payload), 'utf8');
+  return crypto.sign(null, message, crypto.createPrivateKey(privateKeyPem)).toString('base64');
+}
+
+function verifyDiscoveryAnnouncement(payload, signature, publicKeyPem) {
+  if (typeof signature !== 'string' || signature.length === 0 || signature.length > 512) {
+    return false;
+  }
+  try {
+    const message = Buffer.from(discoveryAnnouncementSigningPayload(payload), 'utf8');
+    return crypto.verify(
+      null,
+      message,
+      crypto.createPublicKey(publicKeyPem),
+      Buffer.from(signature, 'base64')
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
 function transferRequestSigningPayload(payload) {
   return JSON.stringify({
     protocolVersion: payload.protocolVersion,
@@ -252,6 +289,8 @@ module.exports = {
   fingerprintFor,
   signTransferRequest,
   verifyTransferRequest,
+  signDiscoveryAnnouncement,
+  verifyDiscoveryAnnouncement,
   sha256File,
   EncryptFrameStream,
   DecryptFrameStream

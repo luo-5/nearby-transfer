@@ -5,8 +5,9 @@
  *
  * The writer is async-created and returns a frozen object with writeChunk,
  * complete, cancel, and getCommittedProgress. It manages staging file safety
- * (no symlinks, identity checks), publication via link/rename, and rollback
- * on failure.
+ * (no symlinks, identity checks), per-root publication via link/rename, and
+ * in-process rollback on failure. Durable multi-root crash recovery remains a
+ * caller-visible limitation documented in the package README.
  */
 
 import crypto from 'node:crypto';
@@ -69,7 +70,15 @@ interface FileRecord {
   target: { path: string; kind: string; stagingPath: string; finalPath: string };
   committedOffset: number;
   completed: boolean;
-  identity: { dev: number; ino: number } | null;
+  identity: FileIdentity | null;
+}
+
+interface FileIdentity {
+  dev: number;
+  ino: number;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
 }
 
 interface WriterConfig {
@@ -96,6 +105,7 @@ export async function createEncryptedChunkWriter(input: ChunkWriterInput): Promi
 
   let state = 'receiving';
   let busy = false;
+  let activeOperation: Promise<unknown> | null = null;
   let abortRequested = Boolean(config.signal && config.signal.aborted);
   const onAbort = () => { abortRequested = true; if (!busy && state === 'receiving') { state = 'cancelled'; releaseKey(); } };
   if (config.signal) config.signal.addEventListener('abort', onAbort, { once: true });
@@ -113,14 +123,19 @@ export async function createEncryptedChunkWriter(input: ChunkWriterInput): Promi
   async function runExclusive<T>(operation: () => Promise<T>, terminalOnError = true): Promise<T> {
     if (busy) throw new Error('Concurrent encrypted chunk writer operations are not supported');
     busy = true;
-    try {
+    const pending = (async () => {
       assertReceiving();
       return await operation();
+    })();
+    activeOperation = pending;
+    try {
+      return await pending;
     } catch (error) {
       if (terminalOnError && state === 'receiving') { state = abortRequested ? 'cancelled' : 'failed'; releaseKey(); }
       throw error;
     } finally {
       busy = false;
+      if (activeOperation === pending) activeOperation = null;
     }
   }
 
@@ -168,17 +183,27 @@ export async function createEncryptedChunkWriter(input: ChunkWriterInput): Promi
       if (config.currentFileIndex !== config.files.length) throw new Error('Cannot publish an incomplete transfer task');
       throwIfAborted(abortRequested, config.signal);
       await verifyReadyToPublish(config, () => abortRequested);
-      const cleanupPending = await publishAllRoots(config, () => abortRequested);
-      state = 'published';
-      releaseKey();
+      const cleanupPending = await publishAllRoots(config, () => abortRequested, () => {
+        // This synchronous transition is the publication commit point. Before
+        // it, cancellation is observed by publishAllRoots and every created
+        // final target is rolled back. After it, cleanup is best-effort and a
+        // concurrent cancel must not turn an already published task into an
+        // error.
+        state = 'published';
+        releaseKey();
+      });
       return Object.freeze({ files: config.files.length, published: true as const, cleanupPending, progress: snapshotProgress(config) });
     });
   }
 
   async function cancel(): Promise<WriterProgress> {
-    if (busy) { abortRequested = true; throw new Error('Cannot cancel while an encrypted chunk writer operation is in progress'); }
-    if (state === 'published') throw new Error('Cannot cancel a published transfer task');
-    if (state === 'cancelled') return snapshotProgress(config);
+    if (state === 'published' || state === 'cancelled') return snapshotProgress(config);
+    const operation = activeOperation;
+    if (busy && operation) {
+      abortRequested = true;
+      try { await operation; } catch (_) { /* cancellation remains the terminal result */ }
+    }
+    if (state === 'published' || state === 'cancelled') return snapshotProgress(config);
     if (state !== 'receiving') throw new Error(`Encrypted chunk writer is ${state}`);
     state = 'cancelled';
     releaseKey();
@@ -229,17 +254,39 @@ function normalizePlan(value: ReceivePlan, manifest: TransferManifest): WriterCo
     if (targetByPath.has(target.path)) throw new TypeError('Receive target paths must be unique');
     const entry = manifest.entries.find((candidate) => candidate.path === target.path);
     if (!entry || entry.kind !== target.kind) throw new TypeError('Receive target does not match manifest');
+    if (typeof target.stagingPath !== 'string' || typeof target.finalPath !== 'string' ||
+        !path.isAbsolute(target.stagingPath) || !path.isAbsolute(target.finalPath)) {
+      throw new TypeError('Receive target paths must be absolute');
+    }
     targetByPath.set(target.path, target);
   }
 
   const roots = manifest.entries.length > 0
-    ? Array.from(new Set(manifest.entries.map((e) => e.path.split('/')[0]!))).map((sourceRoot) => ({
-        sourceRoot,
-        stagingPath: path.join(value.stagingDirectory, sourceRoot),
-        finalPath: path.join(value.receiveRoot, sourceRoot),
-        kind: manifest.entries.find((e) => e.path === sourceRoot)?.kind ?? 'directory',
-      }))
+    ? Array.from(new Set(manifest.entries.map((e) => e.path.split('/')[0]!))).map((sourceRoot) => {
+        const rootTarget = targetByPath.get(sourceRoot);
+        if (!rootTarget) throw new TypeError(`Receive target plan is missing declared root: ${sourceRoot}`);
+        return {
+          sourceRoot,
+          stagingPath: rootTarget.stagingPath,
+          finalPath: rootTarget.finalPath,
+          kind: rootTarget.kind,
+        };
+      })
     : [];
+
+  for (const entry of manifest.entries) {
+    const target = targetByPath.get(entry.path)!;
+    const [sourceRoot, ...descendants] = entry.path.split('/');
+    const root = roots.find((candidate) => candidate.sourceRoot === sourceRoot)!;
+    const expectedStaging = path.join(value.stagingDirectory, ...entry.path.split('/'));
+    const expectedFinal = path.join(root.finalPath, ...descendants);
+    if (path.resolve(target.stagingPath) !== path.resolve(expectedStaging) ||
+        path.resolve(target.finalPath) !== path.resolve(expectedFinal)) {
+      throw new TypeError('Receive target plan mapping is inconsistent');
+    }
+    assertContainedPath(receiveRoot, target.finalPath, 'Receive final target');
+    assertContainedPath(value.stagingDirectory, target.stagingPath, 'Receive staging target');
+  }
 
   return { ...value, targetByPath, roots };
 }
@@ -340,7 +387,8 @@ async function commitPlaintext(record: FileRecord, plaintext: Buffer, config: Wr
     await writeExactly(handle, plaintext, record.committedOffset, isAborted, config.signal);
     throwIfAborted(isAborted(), config.signal);
     await handle.sync();
-    record.identity = { dev: before.dev, ino: before.ino };
+    const after = await handle.stat();
+    record.identity = identityFromStat(after);
   } catch (error) {
     if (handle) { await handle.truncate(record.committedOffset).catch(() => {}); await handle.sync().catch(() => {}); }
     throw error;
@@ -379,18 +427,27 @@ async function resetUnverifiedFile(record: FileRecord, config: WriterConfig): Pr
 async function verifyCompletedFile(record: FileRecord, config: WriterConfig): Promise<void> {
   const handle = await config.fsPromises.open(record.target.stagingPath, fs.constants.O_RDONLY);
   try {
-    const stat = await handle.stat();
+    const before = await handle.stat();
     const hash = crypto.createHash('sha256');
     const buffer = Buffer.allocUnsafe(256 * 1024);
     let offset = 0;
-    while (offset < stat.size) {
-      const result = await handle.read(buffer, 0, Math.min(buffer.length, stat.size - offset), offset);
+    while (offset < before.size) {
+      const result = await handle.read(buffer, 0, Math.min(buffer.length, before.size - offset), offset);
       if (result.bytesRead <= 0) throw new Error('Receive staging hash read ended unexpectedly');
       hash.update(buffer.subarray(0, result.bytesRead));
       offset += result.bytesRead;
     }
     const digest = hash.digest('hex');
-    if (stat.size !== record.entry.size || digest !== record.entry.sha256) throw new Error(`Completed receive file does not match manifest: ${record.entry.path}`);
+    const after = await handle.stat();
+    if (!sameFileSnapshot(identityFromStat(before), identityFromStat(after)) ||
+        after.size !== record.entry.size || digest !== record.entry.sha256) {
+      throw new Error(`Completed receive file does not match manifest: ${record.entry.path}`);
+    }
+    const pathStat = await config.fsPromises.lstat(record.target.stagingPath);
+    if (pathStat.isSymbolicLink() || !pathStat.isFile() || !sameFileIdentity(identityFromStat(after), identityFromStat(pathStat))) {
+      throw new Error(`Completed receive file path changed during verification: ${record.entry.path}`);
+    }
+    record.identity = identityFromStat(after);
   } finally {
     await handle.close();
   }
@@ -435,9 +492,14 @@ interface PublishedRoot {
   finalPath: string;
   kind: string;
   method: 'link' | 'rename';
+  stagingRemoved: boolean;
 }
 
-async function publishAllRoots(config: WriterConfig, isAborted: () => boolean): Promise<boolean> {
+async function publishAllRoots(
+  config: WriterConfig,
+  isAborted: () => boolean,
+  commitPublication: () => void,
+): Promise<boolean> {
   const published: PublishedRoot[] = [];
   try {
     for (const root of config.plan.roots) {
@@ -451,20 +513,58 @@ async function publishAllRoots(config: WriterConfig, isAborted: () => boolean): 
         throw new TypeError('Receive publication source changed type before publication');
       }
       if (root.kind === 'file') {
-        await config.fsPromises.link(root.stagingPath, root.finalPath);
-        published.push({ ...root, method: 'link' });
+        const record = config.files.find((candidate) => candidate.entry.path === root.sourceRoot);
+        if (!record || !record.identity || !sameFileIdentity(record.identity, identityFromStat(sourceStat))) {
+          throw new Error('Receive publication source changed after integrity verification');
+        }
         try {
-          await config.fsPromises.unlink(root.stagingPath);
+          await config.fsPromises.link(root.stagingPath, root.finalPath);
         } catch (error) {
-          await config.fsPromises.unlink(root.finalPath).catch(() => {});
-          published.pop();
+          if (!isPublicationFallbackError(error)) throw error;
+          const unsupported = new Error('Atomic receive publication requires hard-link support on the destination filesystem');
+          (unsupported as NodeJS.ErrnoException).code = 'ATOMIC_PUBLICATION_UNSUPPORTED';
+          (unsupported as Error & { cause?: unknown }).cause = error;
+          throw unsupported;
+        }
+        try {
+          await verifyPublishedRoot(root, config);
+        } catch (error) {
+          try {
+            await config.fsPromises.unlink(root.finalPath);
+          } catch (rollbackError) {
+            throw new AggregateError([error, rollbackError], 'Receive publication verification failed and rollback was incomplete');
+          }
           throw error;
         }
+        const publishedRoot: PublishedRoot = { ...root, method: 'link', stagingRemoved: false };
+        published.push(publishedRoot);
+        throwIfAborted(isAborted(), config.signal);
+        try {
+          await config.fsPromises.unlink(root.stagingPath);
+          publishedRoot.stagingRemoved = true;
+        } catch {
+          // The final hard link is already verified and durable. Leave the
+          // owned staging link for the cleanup pass instead of reporting a
+          // false transfer failure after publication.
+        }
+        throwIfAborted(isAborted(), config.signal);
       } else {
         await config.fsPromises.rename(root.stagingPath, root.finalPath);
-        published.push({ ...root, method: 'rename' });
+        try {
+          await verifyPublishedRoot(root, config);
+        } catch (error) {
+          try {
+            await config.fsPromises.rename(root.finalPath, root.stagingPath);
+          } catch (rollbackError) {
+            throw new AggregateError([error, rollbackError], 'Receive publication verification failed and rollback was incomplete');
+          }
+          throw error;
+        }
+        published.push({ ...root, method: 'rename', stagingRemoved: true });
+        throwIfAborted(isAborted(), config.signal);
       }
     }
+    throwIfAborted(isAborted(), config.signal);
   } catch (error) {
     const rollbackErrors = await rollbackPublished(published, config);
     if (rollbackErrors.length > 0) {
@@ -473,6 +573,7 @@ async function publishAllRoots(config: WriterConfig, isAborted: () => boolean): 
     throw error;
   }
 
+  commitPublication();
   try {
     await cleanupReceiveStaging({
       fsPromises: config.fsPromises,
@@ -492,7 +593,9 @@ async function rollbackPublished(published: PublishedRoot[], config: WriterConfi
       if (root.method === 'rename') {
         await config.fsPromises.rename(root.finalPath, root.stagingPath);
       } else {
-        await config.fsPromises.link(root.finalPath, root.stagingPath);
+        if (root.method === 'link' && root.stagingRemoved && !await lstatIfExists(root.stagingPath, config.fsPromises)) {
+          await config.fsPromises.link(root.finalPath, root.stagingPath);
+        }
         await config.fsPromises.unlink(root.finalPath);
       }
     } catch (error) {
@@ -500,6 +603,95 @@ async function rollbackPublished(published: PublishedRoot[], config: WriterConfi
     }
   }
   return errors;
+}
+
+async function verifyPublishedRoot(
+  root: WriterConfig['plan']['roots'][number],
+  config: WriterConfig,
+  requireSourceIdentity = true,
+): Promise<void> {
+  const expected = new Map<string, string>();
+  for (const entry of config.manifest.entries) {
+    if (entry.path !== root.sourceRoot && !entry.path.startsWith(`${root.sourceRoot}/`)) continue;
+    const target = config.plan.targetByPath.get(entry.path)!;
+    expected.set(target.finalPath, entry.kind);
+  }
+
+  async function visit(current: string): Promise<void> {
+    const stat = await config.fsPromises.lstat(current);
+    if (stat.isSymbolicLink()) throw new TypeError('Published receive tree contains a symbolic link or junction');
+    const expectedKind = expected.get(current);
+    if (!expectedKind) throw new Error('Published receive tree contains an unexpected entry');
+    if (expectedKind === 'directory') {
+      if (!stat.isDirectory()) throw new TypeError('Published receive tree entry must be a directory');
+      for (const name of await config.fsPromises.readdir(current)) await visit(path.join(current, name));
+    } else if (!stat.isFile()) {
+      throw new TypeError('Published receive tree entry must be a regular file');
+    }
+  }
+  await visit(root.finalPath);
+  for (const record of config.files) {
+    if (record.entry.path !== root.sourceRoot && !record.entry.path.startsWith(`${root.sourceRoot}/`)) continue;
+    await verifyFileAtPath(record.target.finalPath, record, config, requireSourceIdentity);
+  }
+}
+
+async function verifyFileAtPath(
+  targetPath: string,
+  record: FileRecord,
+  config: WriterConfig,
+  requireSourceIdentity: boolean,
+): Promise<void> {
+  const handle = await config.fsPromises.open(targetPath, fs.constants.O_RDONLY);
+  try {
+    const before = await handle.stat();
+    if (requireSourceIdentity && (!record.identity || !sameFileIdentity(record.identity, identityFromStat(before)))) {
+      throw new Error(`Published receive file identity changed: ${record.entry.path}`);
+    }
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.allocUnsafe(256 * 1024);
+    let offset = 0;
+    while (offset < before.size) {
+      const result = await handle.read(buffer, 0, Math.min(buffer.length, before.size - offset), offset);
+      if (result.bytesRead <= 0) throw new Error('Published receive hash read ended unexpectedly');
+      hash.update(buffer.subarray(0, result.bytesRead));
+      offset += result.bytesRead;
+    }
+    const after = await handle.stat();
+    if (!sameFileSnapshot(identityFromStat(before), identityFromStat(after)) ||
+        after.size !== record.entry.size || hash.digest('hex') !== record.entry.sha256) {
+      throw new Error(`Published receive file does not match manifest: ${record.entry.path}`);
+    }
+    const pathStat = await config.fsPromises.lstat(targetPath);
+    if (pathStat.isSymbolicLink() || !pathStat.isFile() || !sameFileIdentity(identityFromStat(after), identityFromStat(pathStat))) {
+      throw new Error(`Published receive file path changed during verification: ${record.entry.path}`);
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+function isPublicationFallbackError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error &&
+    ['ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EACCES', 'EXDEV'].includes(String((error as NodeJS.ErrnoException).code)));
+}
+
+function identityFromStat(stat: fs.Stats): FileIdentity {
+  return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs };
+}
+
+function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size;
+}
+
+function sameFileSnapshot(left: FileIdentity, right: FileIdentity): boolean {
+  return sameFileIdentity(left, right) && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
+}
+
+function assertContainedPath(root: string, candidate: string, subject: string): void {
+  const relative = path.relative(root, candidate);
+  if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) return;
+  throw new TypeError(`${subject} escapes its root`);
 }
 
 async function assertSafeDirectoryChain(directory: string, fsPromises: typeof fs.promises, subject: string): Promise<void> {

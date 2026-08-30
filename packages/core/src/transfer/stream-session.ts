@@ -230,7 +230,13 @@ export class TransferStreamSession {
     });
     this._done.catch(() => {});
 
-    this._onData = (chunk) => this._acceptTransportData(chunk);
+    this._onData = (chunk) => {
+      try {
+        this._acceptTransportData(chunk);
+      } catch (error) {
+        this._fail(error, 'protocol-error');
+      }
+    };
     this._onEnd = () => this._acceptTransportEnd();
     this._onClose = () => this._acceptTransportClose();
     this._onError = (error) => this._fail(error, 'transfer-error');
@@ -257,7 +263,12 @@ export class TransferStreamSession {
       }
     }
 
-    this._config.stream.resume();
+    try {
+      this._config.stream.resume();
+    } catch (error) {
+      this._fail(error, 'transfer-error');
+      return this._done;
+    }
     void this._sendControl(this._makeControl(CONTROL_TYPES.HELLO)).catch((error) => {
       this._fail(error, 'transfer-error');
     });
@@ -266,9 +277,9 @@ export class TransferStreamSession {
 
   pause(): Promise<TransferSessionState> {
     if (!this._started) throw new Error('Transfer stream must be started before it can be paused');
+    this._assertFlowCommandState('pause');
     if (this._localPauseState === 'paused') return Promise.resolve(this.getState());
     if (this._flowCommand && this._flowCommand.kind === 'pause') return this._flowCommand.promise;
-    this._assertFlowCommandState('pause');
 
     const command = createDeferredCommand<TransferSessionState>('pause');
     this._flowCommand = command;
@@ -282,13 +293,13 @@ export class TransferStreamSession {
   }
 
   resume(): Promise<TransferSessionState> {
+    if (!this._started) throw new Error('Transfer stream must be started before it can be resumed');
+    this._assertFlowCommandState('resume');
     if (this._localPauseState === 'running') return Promise.resolve(this.getState());
     if (this._flowCommand && this._flowCommand.kind === 'resume') return this._flowCommand.promise;
     if (this._localPauseState !== 'paused' || this._flowCommand) {
       throw new Error('Transfer stream cannot resume before pause acknowledgement');
     }
-    this._assertFlowCommandState('resume');
-
     const command = createDeferredCommand<TransferSessionState>('resume');
     this._flowCommand = command;
     this._localPauseState = 'resuming';
@@ -301,6 +312,7 @@ export class TransferStreamSession {
 
   cancel(reason?: unknown): Promise<TransferSessionState> {
     if (TERMINAL_STATES.has(this._state)) return this._done;
+    if (this._failureStarted) return this._done;
     if (!this._started) void this.start();
     if (this._state === 'cancelling') return this._done;
 
@@ -342,13 +354,14 @@ export class TransferStreamSession {
   }
 
   private _acceptTransportData(value: unknown): void {
-    if (this._settled) return;
+    if (this._settled || this._failureStarted) return;
     const chunk = requireBytes(value, 'Transfer stream input');
     this._config.stream.pause();
     this._incomingTail = this._incomingTail
       .then(async () => {
-        if (this._settled) return;
+        if (this._settled || this._failureStarted) return;
         await this._decoder.push(chunk, async (kind, payload) => {
+          if (this._settled || this._failureStarted) return;
           this._touchIdleTimeout();
           if (kind === FRAME_KIND_CONTROL) {
             await this._handleControlPayload(payload);
@@ -360,17 +373,18 @@ export class TransferStreamSession {
         });
       })
       .then(() => {
-        if (!this._settled && !this._readableEnded) this._config.stream.resume();
+        if (!this._settled && !this._failureStarted && !this._readableEnded) this._config.stream.resume();
       })
       .catch((error) => this._fail(error, 'protocol-error'));
   }
 
   private _acceptTransportEnd(): void {
+    if (this._settled || this._failureStarted) return;
     this._readableEnded = true;
     this._incomingTail = this._incomingTail
       .then(() => this._decoder.finish())
       .then(() => {
-        if (this._settled) return;
+        if (this._settled || this._failureStarted) return;
         if (this._state !== 'closing') {
           throw new Error(`Transfer stream ended before protocol completion while ${this._state}`);
         }
@@ -392,11 +406,13 @@ export class TransferStreamSession {
       'Transfer control decoding',
     );
     const message = inspectControlMessage(decoded);
+    if (this._settled || this._failureStarted) return;
     const verified = await this._runOperation(
       () => this._config.verifyControl(decoded, this._controlContext('verify')),
       'Transfer control verification',
     );
     if (verified !== true) throw new Error('Transfer control message signature or trust verification failed');
+    if (this._settled || this._failureStarted) return;
     this._assertControlBinding(message);
 
     if (message.type === CONTROL_TYPES.CANCEL) {
@@ -597,6 +613,7 @@ export class TransferStreamSession {
         () => this._config.chunkWriter!.complete(),
         'Encrypted chunk writer completion',
       );
+      if (this._settled || this._failureStarted || this._state !== 'receiving') return;
       assertSafeWriterCompletion(completion);
       this._writerStopped = true;
       this._enterClosing();
@@ -634,10 +651,12 @@ export class TransferStreamSession {
       })),
       'Encrypted chunk writer write',
     );
+    if (this._settled || this._failureStarted || this._state !== 'receiving') return;
     const encodedProgress = await this._runOperation(
       () => this._config.encodeProgress(progress, this._progressContext('encode', frame)),
       'Transfer progress encoding',
     );
+    if (this._settled || this._failureStarted || this._state !== 'receiving') return;
     await this._sendEnvelope(
       FRAME_KIND_PROGRESS,
       requireBytes(encodedProgress, 'Encoded transfer progress'),
@@ -658,6 +677,7 @@ export class TransferStreamSession {
       () => this._config.decodeProgress(Buffer.from(payload), this._progressContext('decode', waiter.chunk)),
       'Transfer progress decoding',
     );
+    if (this._settled || this._failureStarted || this._state !== 'sending') return;
     await this._runOperation(
       () => this._config.commitProgress(decoded, {
         path: waiter.chunk.relativePath ?? waiter.chunk.path ?? '',
@@ -667,6 +687,7 @@ export class TransferStreamSession {
       }),
       'Transfer progress persistence',
     );
+    if (this._settled || this._failureStarted || this._state !== 'sending') return;
     if (this._progressWaiter !== waiter) {
       throw new Error('Transfer progress acknowledgement changed while it was being persisted');
     }
@@ -685,6 +706,7 @@ export class TransferStreamSession {
     this._readerIterator = iterator;
     while (true) {
       const step = await this._runOperation(() => iterator.next(), 'Encrypted chunk reader next');
+      if (this._settled || this._failureStarted || this._state !== 'sending') return;
       if (!step || typeof step !== 'object' || typeof step.done !== 'boolean') {
         throw new TypeError('Encrypted chunk reader returned an invalid iterator result');
       }
@@ -780,7 +802,12 @@ export class TransferStreamSession {
   }
 
   private _sendEnvelope(kind: number, payload: Buffer): Promise<unknown> {
-    return this._enqueueSend(() => this._writeEnvelope(kind, payload));
+    return this._enqueueSend(async () => {
+      if (this._settled || this._failureStarted || this._state === 'cancelling') {
+        throw new Error('Cannot send transfer data after session termination');
+      }
+      await this._writeEnvelope(kind, payload);
+    });
   }
 
   private _enqueueSend(operation: () => Promise<void>): Promise<unknown> {
@@ -849,10 +876,10 @@ export class TransferStreamSession {
         'Transfer cancellation notification',
       ));
     }
-    this._settleFailure(error, state, false);
     void Promise.allSettled(cleanup).then(() => {
       const stream = this._config.stream as unknown as { destroyed?: boolean; destroy: () => void };
       if (!stream.destroyed) stream.destroy();
+      this._settleFailure(error, state, false);
     });
   }
 
@@ -876,7 +903,7 @@ export class TransferStreamSession {
   }
 
   private _settleSuccess(): void {
-    if (this._settled) return;
+    if (this._settled || this._failureStarted) return;
     this._settleFlowCommand(new Error('Transfer completed while a flow-control command was pending'));
     this._settleProgressWaiter(new Error('Transfer completed while progress acknowledgement was pending'));
     this._wakeFlowWaiter();

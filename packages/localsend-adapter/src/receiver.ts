@@ -11,21 +11,63 @@
 import http from 'node:http';
 import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync, existsSync, createWriteStream, renameSync, unlinkSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import {
+  constants as fsConstants,
+  copyFileSync,
+  createWriteStream,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  type WriteStream,
+} from 'node:fs';
+import { isAbsolute, join, win32 } from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { Buffer } from 'node:buffer';
 import {
   LOCALSEND_API_PREFIX,
   type LocalSendDeviceInfo,
   type LocalSendFileMetadata,
-  type LocalSendPrepareUploadRequest,
   type LocalSendPrepareUploadResponse,
 } from './types.js';
 
+const DEFAULT_REQUEST_BODY_LIMIT_BYTES = 1024 * 1024;
+const DEFAULT_MAX_FILES_PER_SESSION = 1000;
+const DEFAULT_MAX_FILE_SIZE_BYTES = 1024 ** 4;
+const DEFAULT_MAX_SESSION_SIZE_BYTES = 1024 ** 4;
+const DEFAULT_MAX_SESSIONS = 32;
+const DEFAULT_MAX_SESSIONS_PER_IP = 4;
+const DEFAULT_MAX_CONCURRENT_UPLOADS = 8;
+const DEFAULT_SESSION_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_APPROVAL_TIMEOUT_MS = 60 * 1000;
+const DEFAULT_REQUEST_BODY_TIMEOUT_MS = 30 * 1000;
+
+export interface LocalSendUploadApproval {
+  sender: LocalSendDeviceInfo;
+  files: ReadonlyArray<LocalSendFileMetadata>;
+  pin: string | null;
+  remoteAddress: string;
+}
+
+interface SessionFile {
+  meta: LocalSendFileMetadata;
+  token: string;
+  tempName: string;
+  received: boolean;
+  active: boolean;
+  request: http.IncomingMessage | null;
+  writeStream: WriteStream | null;
+}
+
 interface ActiveSession {
   sessionId: string;
-  files: Map<string, { meta: LocalSendFileMetadata; token: string; received: boolean }>;
+  files: Map<string, SessionFile>;
   tempDir: string;
+  expiresAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  remoteAddress: string;
 }
 
 export interface LocalSendReceiverOptions {
@@ -34,34 +76,186 @@ export interface LocalSendReceiverOptions {
   fingerprint: string;
   receiveDir: string;
   deviceModel?: string;
+  requestBodyLimitBytes?: number;
+  maxFilesPerSession?: number;
+  maxFileSizeBytes?: number;
+  maxSessionSizeBytes?: number;
+  maxSessions?: number;
+  maxSessionsPerIp?: number;
+  maxConcurrentUploads?: number;
+  sessionTimeoutMs?: number;
+  approvalTimeoutMs?: number;
+  requestBodyTimeoutMs?: number;
+  authorizeUpload?: (request: LocalSendUploadApproval) => boolean | Promise<boolean>;
+}
+
+class RequestError extends Error {
+  constructor(readonly statusCode: number, message: string) {
+    super(message);
+  }
 }
 
 export class LocalSendReceiver extends EventEmitter {
   private server: http.Server | null = null;
+  private startPromise: Promise<void> | null = null;
+  private stopPromise: Promise<void> | null = null;
+  private lifecycle: 'stopped' | 'starting' | 'running' | 'stopping' = 'stopped';
+  private lifecycleController = new AbortController();
+  private activeRequests = new Set<Promise<void>>();
+  private pendingApprovals = 0;
+  private pendingApprovalsPerIp = new Map<string, number>();
   private sessions = new Map<string, ActiveSession>();
+  private pendingCleanupDirs = new Map<string, string>();
+  private activeUploads = 0;
   private opts: LocalSendReceiverOptions;
+  private receiveDir: string;
+  private requestBodyLimitBytes: number;
+  private maxFilesPerSession: number;
+  private maxFileSizeBytes: number;
+  private maxSessionSizeBytes: number;
+  private maxSessions: number;
+  private maxSessionsPerIp: number;
+  private maxConcurrentUploads: number;
+  private sessionTimeoutMs: number;
+  private approvalTimeoutMs: number;
+  private requestBodyTimeoutMs: number;
+  private authorizeUpload: (request: LocalSendUploadApproval) => boolean | Promise<boolean>;
+  private boundPort: number | null = null;
 
   constructor(opts: LocalSendReceiverOptions) {
     super();
     this.opts = opts;
+    if (!Number.isSafeInteger(opts.port) || opts.port < 0 || opts.port > 65535) {
+      throw new TypeError('port must be an integer between 0 and 65535');
+    }
     mkdirSync(opts.receiveDir, { recursive: true });
+    const rootStat = lstatSync(opts.receiveDir);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+      throw new Error('LocalSend receiveDir must be a real directory');
+    }
+    this.receiveDir = realpathSync.native(opts.receiveDir);
+    this.requestBodyLimitBytes = positiveIntegerOption(
+      opts.requestBodyLimitBytes,
+      DEFAULT_REQUEST_BODY_LIMIT_BYTES,
+      'requestBodyLimitBytes',
+    );
+    this.maxFilesPerSession = positiveIntegerOption(
+      opts.maxFilesPerSession,
+      DEFAULT_MAX_FILES_PER_SESSION,
+      'maxFilesPerSession',
+    );
+    this.maxFileSizeBytes = positiveIntegerOption(
+      opts.maxFileSizeBytes,
+      DEFAULT_MAX_FILE_SIZE_BYTES,
+      'maxFileSizeBytes',
+    );
+    this.maxSessionSizeBytes = positiveIntegerOption(
+      opts.maxSessionSizeBytes,
+      DEFAULT_MAX_SESSION_SIZE_BYTES,
+      'maxSessionSizeBytes',
+    );
+    this.maxSessions = positiveIntegerOption(opts.maxSessions, DEFAULT_MAX_SESSIONS, 'maxSessions');
+    this.maxSessionsPerIp = positiveIntegerOption(
+      opts.maxSessionsPerIp,
+      DEFAULT_MAX_SESSIONS_PER_IP,
+      'maxSessionsPerIp',
+    );
+    this.maxConcurrentUploads = positiveIntegerOption(
+      opts.maxConcurrentUploads,
+      DEFAULT_MAX_CONCURRENT_UPLOADS,
+      'maxConcurrentUploads',
+    );
+    this.sessionTimeoutMs = positiveIntegerOption(
+      opts.sessionTimeoutMs,
+      DEFAULT_SESSION_TIMEOUT_MS,
+      'sessionTimeoutMs',
+    );
+    this.approvalTimeoutMs = positiveIntegerOption(
+      opts.approvalTimeoutMs,
+      DEFAULT_APPROVAL_TIMEOUT_MS,
+      'approvalTimeoutMs',
+    );
+    this.requestBodyTimeoutMs = positiveIntegerOption(
+      opts.requestBodyTimeoutMs,
+      DEFAULT_REQUEST_BODY_TIMEOUT_MS,
+      'requestBodyTimeoutMs',
+    );
+    this.authorizeUpload = opts.authorizeUpload ?? (() => false);
   }
 
   start(): Promise<void> {
-    return new Promise((resolve) => {
-      this.server = http.createServer((req, res) => this.handleRequest(req, res));
-      this.server.listen(this.opts.port, '0.0.0.0', () => resolve());
+    if (this.stopPromise) return this.stopPromise.then(() => this.start());
+    if (this.startPromise) return this.startPromise;
+    if (this.server?.listening) return Promise.resolve();
+    this.lifecycle = 'starting';
+    this.lifecycleController = new AbortController();
+    const startPromise = new Promise<void>((resolve, reject) => {
+      const server = http.createServer((req, res) => {
+        const operation = this.handleRequest(req, res)
+          .catch((error: unknown) => this.handleRequestError(res, error));
+        this.activeRequests.add(operation);
+        void operation.finally(() => this.activeRequests.delete(operation));
+      });
+      server.requestTimeout = this.requestBodyTimeoutMs;
+      server.headersTimeout = Math.min(server.headersTimeout, this.requestBodyTimeoutMs);
+      this.server = server;
+      const onListenError = (error: Error) => {
+        if (this.server === server) this.server = null;
+        this.boundPort = null;
+        this.lifecycle = 'stopped';
+        reject(error);
+      };
+      server.once('error', onListenError);
+      server.listen(this.opts.port, '0.0.0.0', () => {
+        server.removeListener('error', onListenError);
+        const address = server.address();
+        this.boundPort = address && typeof address === 'object' ? address.port : this.opts.port;
+        if (this.lifecycle === 'starting') this.lifecycle = 'running';
+        resolve();
+      });
     });
+    this.startPromise = startPromise;
+    void startPromise.then(
+      () => { if (this.startPromise === startPromise) this.startPromise = null; },
+      () => { if (this.startPromise === startPromise) this.startPromise = null; },
+    );
+    return startPromise;
   }
 
-  stop(): Promise<void> {
-    return new Promise((resolve) => {
-      if (this.server) {
-        this.server.close(() => resolve());
-      } else {
-        resolve();
+  async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.lifecycle = 'stopping';
+    this.lifecycleController.abort(new Error('LocalSend receiver is stopping'));
+    this.stopPromise = (async () => {
+      const pendingStart = this.startPromise;
+      if (pendingStart) {
+        try { await pendingStart; } catch { /* listen failure is already reflected in state */ }
       }
-    });
+      for (const sessionId of Array.from(this.sessions.keys())) this.cleanupSession(sessionId, true);
+      const server = this.server;
+      this.server = null;
+      this.boundPort = null;
+      if (server) {
+        await new Promise<void>((resolve) => {
+          server.close(() => resolve());
+          server.closeAllConnections?.();
+        });
+      }
+      if (this.activeRequests.size > 0) {
+        await Promise.allSettled(Array.from(this.activeRequests));
+      }
+      for (const [sessionId, tempDir] of this.pendingCleanupDirs) {
+        this.removeTempDirectory(sessionId, tempDir);
+      }
+      this.pendingApprovals = 0;
+      this.pendingApprovalsPerIp.clear();
+      this.lifecycle = 'stopped';
+    })();
+    try {
+      await this.stopPromise;
+    } finally {
+      this.stopPromise = null;
+    }
   }
 
   private getDeviceInfo(): LocalSendDeviceInfo {
@@ -71,162 +265,484 @@ export class LocalSendReceiver extends EventEmitter {
       deviceModel: this.opts.deviceModel ?? 'Nearby Transfer',
       deviceType: 'headless',
       fingerprint: this.opts.fingerprint,
-      port: this.opts.port,
+      port: this.boundPort ?? this.opts.port,
       protocol: 'http',
       download: false,
       announce: true,
     };
   }
 
-  private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const url = req.url ?? '';
+  private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (this.lifecycle === 'stopping' || this.lifecycle === 'stopped') {
+      throw new RequestError(503, 'LocalSend receiver is not accepting requests');
+    }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const pathname = url.pathname;
     const method = req.method ?? '';
 
-    if (url === `${LOCALSEND_API_PREFIX}/register` && method === 'POST') {
-      this.handleRegister(req, res);
-    } else if (url === `${LOCALSEND_API_PREFIX}/prepare-upload` && method === 'POST') {
-      this.handlePrepareUpload(req, res);
-    } else if (url.startsWith(`${LOCALSEND_API_PREFIX}/upload`) && method === 'POST') {
-      this.handleUpload(req, res);
-    } else if (url.startsWith(`${LOCALSEND_API_PREFIX}/cancel`) && method === 'POST') {
-      this.handleCancel(req, res);
-    } else if (url === `${LOCALSEND_API_PREFIX}/info` && method === 'GET') {
+    if (pathname === `${LOCALSEND_API_PREFIX}/register` && method === 'POST') {
+      await this.handleRegister(req, res);
+    } else if (pathname === `${LOCALSEND_API_PREFIX}/prepare-upload` && method === 'POST') {
+      await this.handlePrepareUpload(req, res, url);
+    } else if (pathname === `${LOCALSEND_API_PREFIX}/upload` && method === 'POST') {
+      await this.handleUpload(req, res, url);
+    } else if (pathname === `${LOCALSEND_API_PREFIX}/cancel` && method === 'POST') {
+      this.handleCancel(res, url);
+    } else if (pathname === `${LOCALSEND_API_PREFIX}/info` && method === 'GET') {
       this.sendJson(res, 200, this.getDeviceInfo());
     } else {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found' }));
+      this.sendJson(res, 404, { error: 'Not found' });
     }
   }
 
-  private handleRegister(req: http.IncomingMessage, res: http.ServerResponse): void {
-    this.readBody(req).then((body) => {
-      try {
-        const info = JSON.parse(body.toString()) as LocalSendDeviceInfo;
-        this.emit('register', info);
-        this.sendJson(res, 200, this.getDeviceInfo());
-      } catch {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid JSON' }));
-      }
-    });
+  private async handleRegister(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const body = await this.readBody(req);
+    let info: unknown;
+    try {
+      info = JSON.parse(body.toString());
+    } catch {
+      throw new RequestError(400, 'Invalid JSON');
+    }
+    if (!isRecord(info)) throw new RequestError(400, 'Invalid device information');
+    this.emit('register', info);
+    this.sendJson(res, 200, this.getDeviceInfo());
   }
 
-  private handlePrepareUpload(req: http.IncomingMessage, res: http.ServerResponse): void {
-    this.readBody(req).then((body) => {
+  private async handlePrepareUpload(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const remoteAddress = req.socket.remoteAddress ?? 'unknown';
+    const releaseApprovalPermit = this.reserveApprovalPermit(remoteAddress);
+    try {
+      const body = await this.readBody(req);
+      let value: unknown;
       try {
-        const request = JSON.parse(body.toString()) as LocalSendPrepareUploadRequest;
-        const sessionId = randomUUID();
-        const tempDir = join(this.opts.receiveDir, `.localsend-tmp-${sessionId}`);
-        mkdirSync(tempDir, { recursive: true });
-
-        const files = new Map<string, { meta: LocalSendFileMetadata; token: string; received: boolean }>();
-        const tokenMap: Record<string, string> = {};
-        for (const [fileId, meta] of Object.entries(request.files)) {
-          const token = randomUUID();
-          files.set(fileId, { meta, token, received: false });
-          tokenMap[fileId] = token;
-        }
-
-        const session: ActiveSession = { sessionId, files, tempDir };
-        this.sessions.set(sessionId, session);
-
-        const response: LocalSendPrepareUploadResponse = { sessionId, files: tokenMap };
-        this.emit('prepare-upload', { sessionId, fileCount: files.size });
-        this.sendJson(res, 200, response);
+        value = JSON.parse(body.toString());
       } catch {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid request' }));
+        throw new RequestError(400, 'Invalid JSON');
       }
-    });
+      const entries = this.validatePrepareUpload(value);
+      const sender = this.validateSenderInfo(value);
+      const approved = await this.requestApproval({
+        sender,
+        files: entries.map(([, metadata]) => Object.freeze({ ...metadata })),
+        pin: url.searchParams.get('pin'),
+        remoteAddress,
+      });
+      if (!approved) throw new RequestError(403, 'Upload was not approved');
+      if (this.lifecycle !== 'running') throw new RequestError(503, 'LocalSend receiver is stopping');
+      const sessionId = randomUUID();
+      const tempDir = join(this.receiveDir, `.localsend-tmp-${sessionId}`);
+      mkdirSync(tempDir, { recursive: false, mode: 0o700 });
+
+      const files = new Map<string, SessionFile>();
+      const tokenMap = Object.create(null) as Record<string, string>;
+      for (const [fileId, meta] of entries) {
+        const token = randomUUID();
+        files.set(fileId, {
+          meta,
+          token,
+          tempName: `${randomUUID()}.part`,
+          received: false,
+          active: false,
+          request: null,
+          writeStream: null,
+        });
+        tokenMap[fileId] = token;
+      }
+
+      const session: ActiveSession = {
+        sessionId,
+        files,
+        tempDir,
+        expiresAt: Date.now() + this.sessionTimeoutMs,
+        timer: null,
+        remoteAddress,
+      };
+      this.sessions.set(sessionId, session);
+      this.touchSession(session);
+
+      const response: LocalSendPrepareUploadResponse = { sessionId, files: tokenMap };
+      this.emit('prepare-upload', { sessionId, fileCount: files.size });
+      this.sendJson(res, 200, response);
+    } finally {
+      releaseApprovalPermit();
+    }
   }
 
-  private handleUpload(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`);
+  private async handleUpload(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const sessionId = url.searchParams.get('sessionId');
     const fileId = url.searchParams.get('fileId');
     const token = url.searchParams.get('token');
 
     if (!sessionId || !fileId || !token) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Missing sessionId, fileId, or token' }));
-      return;
+      throw new RequestError(400, 'Missing sessionId, fileId, or token');
     }
 
     const session = this.sessions.get(sessionId);
-    if (!session) {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid session' }));
-      return;
+    if (!session || session.expiresAt <= Date.now()) {
+      if (session) this.cleanupSession(sessionId, true);
+      throw new RequestError(403, 'Invalid or expired session');
     }
 
     const fileEntry = session.files.get(fileId);
-    if (!fileEntry || fileEntry.token !== token) {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid file token' }));
-      return;
+    if (!fileEntry || fileEntry.token !== token) throw new RequestError(403, 'Invalid file token');
+    if (fileEntry.received || fileEntry.active) throw new RequestError(409, 'File upload is already active or complete');
+    if (this.activeUploads >= this.maxConcurrentUploads) {
+      throw new RequestError(503, 'Too many concurrent uploads');
     }
 
-    const tempPath = join(session.tempDir, fileId);
-    const writeStream = createWriteStream(tempPath);
+    const contentLength = parseContentLength(req.headers['content-length']);
+    if (contentLength !== null && contentLength > fileEntry.meta.size) {
+      throw new RequestError(413, 'Upload exceeds the declared file size');
+    }
+
+    const tempPath = join(session.tempDir, fileEntry.tempName);
+    const finalPath = join(this.receiveDir, fileEntry.meta.fileName);
     const hasher = createHash('sha256');
+    let received = 0;
+    const limiter = new Transform({
+      transform: (chunk: Buffer, _encoding, callback) => {
+        received += chunk.length;
+        if (received > fileEntry.meta.size) {
+          callback(new RequestError(413, 'Upload exceeds the declared file size'));
+          return;
+        }
+        this.touchSession(session);
+        hasher.update(chunk);
+        callback(null, chunk);
+      },
+    });
+    const writeStream = createWriteStream(tempPath, { flags: 'wx', mode: 0o600 });
+    fileEntry.active = true;
+    fileEntry.request = req;
+    fileEntry.writeStream = writeStream;
+    this.activeUploads += 1;
+    this.touchSession(session);
+    req.setTimeout(this.sessionTimeoutMs, () => {
+      req.destroy(new RequestError(408, 'Upload was idle for too long'));
+    });
 
-    req.pipe(writeStream);
-    req.on('data', (chunk: Buffer) => hasher.update(chunk));
-
-    writeStream.on('close', () => {
+    try {
+      await pipeline(req, limiter, writeStream);
+      if (received !== fileEntry.meta.size) {
+        throw new RequestError(422, 'Upload size does not match the declared file size');
+      }
       const hash = hasher.digest('hex');
       if (fileEntry.meta.sha256 && hash !== fileEntry.meta.sha256) {
-        unlinkSync(tempPath);
-        res.writeHead(422, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'SHA-256 mismatch' }));
-        return;
+        throw new RequestError(422, 'SHA-256 mismatch');
       }
 
-      // Move to final destination
-      const finalPath = join(this.opts.receiveDir, fileEntry.meta.fileName);
-      renameSync(tempPath, finalPath);
+      try {
+        publishFileNoOverwrite(tempPath, finalPath);
+      } catch (error: unknown) {
+        if (isNodeError(error) && error.code === 'EEXIST') {
+          throw new RequestError(409, 'A file with this name already exists');
+        }
+        throw error;
+      }
       fileEntry.received = true;
-
+      try { rmSync(tempPath, { force: true }); } catch (error: unknown) {
+        this.emit('cleanup-error', { sessionId, path: tempPath, error });
+      }
       this.emit('file-received', { sessionId, fileId, fileName: fileEntry.meta.fileName, path: finalPath });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
+      this.sendJson(res, 200, { success: true });
 
-      // Check if all files received
-      const allReceived = Array.from(session.files.values()).every((f) => f.received);
+      const allReceived = Array.from(session.files.values()).every((file) => file.received);
       if (allReceived) {
         this.emit('session-complete', { sessionId });
-        this.sessions.delete(sessionId);
+        this.cleanupSession(sessionId, false);
       }
-    });
-
-    writeStream.on('error', () => {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Write failed' }));
-    });
+    } catch (error) {
+      if (!fileEntry.received) rmSync(tempPath, { force: true });
+      throw error;
+    } finally {
+      req.setTimeout(0);
+      fileEntry.active = false;
+      fileEntry.request = null;
+      fileEntry.writeStream = null;
+      this.activeUploads -= 1;
+      const pendingTempDir = this.pendingCleanupDirs.get(sessionId);
+      if (pendingTempDir) this.removeTempDirectory(sessionId, pendingTempDir);
+    }
   }
 
-  private handleCancel(_req: http.IncomingMessage, res: http.ServerResponse): void {
-    const url = new URL(_req.url ?? '', `http://${_req.headers.host ?? 'localhost'}`);
+  private handleCancel(res: http.ServerResponse, url: URL): void {
     const sessionId = url.searchParams.get('sessionId');
     if (sessionId) {
-      this.sessions.delete(sessionId);
+      this.cleanupSession(sessionId, true);
       this.emit('cancel', { sessionId });
     }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end('{}');
+    this.sendJson(res, 200, {});
+  }
+
+  private validatePrepareUpload(value: unknown): Array<[string, LocalSendFileMetadata]> {
+    if (!isRecord(value) || !isRecord(value.files) || Array.isArray(value.files)) {
+      throw new RequestError(400, 'Invalid upload manifest');
+    }
+    const rawEntries = Object.entries(value.files);
+    if (rawEntries.length === 0 || rawEntries.length > this.maxFilesPerSession) {
+      throw new RequestError(400, 'Upload manifest has an invalid file count');
+    }
+
+    let totalSize = 0;
+    const entries: Array<[string, LocalSendFileMetadata]> = [];
+    const destinationNames = new Set<string>();
+    for (const [fileId, rawMeta] of rawEntries) {
+      if (!/^[A-Za-z0-9._-]{1,128}$/.test(fileId) || !isRecord(rawMeta)) {
+        throw new RequestError(400, 'Upload manifest contains an invalid file ID');
+      }
+      if (rawMeta.id !== fileId) throw new RequestError(400, 'File metadata ID does not match its key');
+      const fileName = validateFileName(rawMeta.fileName);
+      const destinationKey = fileName.normalize('NFC').toLowerCase();
+      if (destinationNames.has(destinationKey)) {
+        throw new RequestError(400, 'Upload manifest contains colliding file names');
+      }
+      destinationNames.add(destinationKey);
+      const size = rawMeta.size;
+      if (!Number.isSafeInteger(size) || (size as number) < 0 || (size as number) > this.maxFileSizeBytes) {
+        throw new RequestError(400, 'Upload manifest contains an invalid file size');
+      }
+      totalSize += size as number;
+      if (!Number.isSafeInteger(totalSize) || totalSize > this.maxSessionSizeBytes) {
+        throw new RequestError(400, 'Upload session exceeds the accepted size');
+      }
+      if (typeof rawMeta.fileType !== 'string' || rawMeta.fileType.length === 0 || rawMeta.fileType.length > 128) {
+        throw new RequestError(400, 'Upload manifest contains an invalid file type');
+      }
+      if (rawMeta.sha256 !== undefined
+        && (typeof rawMeta.sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(rawMeta.sha256))) {
+        throw new RequestError(400, 'Upload manifest contains an invalid SHA-256');
+      }
+      entries.push([fileId, {
+        id: fileId,
+        fileName,
+        size: size as number,
+        fileType: rawMeta.fileType,
+        ...(typeof rawMeta.sha256 === 'string' ? { sha256: rawMeta.sha256.toLowerCase() } : {}),
+      }]);
+    }
+    return entries;
+  }
+
+  private cleanupSession(sessionId: string, abortActive: boolean): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    this.sessions.delete(sessionId);
+    this.pendingCleanupDirs.set(sessionId, session.tempDir);
+    if (session.timer) clearTimeout(session.timer);
+    session.timer = null;
+    if (abortActive) {
+      for (const file of session.files.values()) {
+        file.request?.destroy(new Error('LocalSend upload session ended'));
+        file.writeStream?.destroy(new Error('LocalSend upload session ended'));
+      }
+    }
+    this.removeTempDirectory(sessionId, session.tempDir);
+  }
+
+  private removeTempDirectory(sessionId: string, tempDir: string): void {
+    try {
+      rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      this.pendingCleanupDirs.delete(sessionId);
+    } catch (error: unknown) {
+      this.emit('cleanup-error', { sessionId, path: tempDir, error });
+    }
+  }
+
+  private validateSenderInfo(value: unknown): LocalSendDeviceInfo {
+    if (!isRecord(value)) throw new RequestError(400, 'Upload manifest contains invalid sender information');
+    const info = value.info;
+    if (!isRecord(info)
+      || typeof info.alias !== 'string' || info.alias.length === 0 || info.alias.length > 128
+      || typeof info.version !== 'string' || info.version.length === 0 || info.version.length > 32
+      || typeof info.fingerprint !== 'string' || info.fingerprint.length === 0 || info.fingerprint.length > 256
+      || !Number.isSafeInteger(info.port) || (info.port as number) < 0 || (info.port as number) > 65535
+      || (info.protocol !== 'http' && info.protocol !== 'https')) {
+      throw new RequestError(400, 'Upload manifest contains invalid sender information');
+    }
+    const deviceModel = info.deviceModel == null ? 'Unknown' : info.deviceModel;
+    const deviceType = info.deviceType == null ? 'desktop' : info.deviceType;
+    if (typeof deviceModel !== 'string' || deviceModel.length > 128
+      || typeof deviceType !== 'string' || !['mobile', 'desktop', 'web', 'headless', 'server'].includes(deviceType)) {
+      throw new RequestError(400, 'Upload manifest contains invalid sender information');
+    }
+    return {
+      alias: info.alias,
+      version: info.version,
+      deviceModel,
+      deviceType: deviceType as LocalSendDeviceInfo['deviceType'],
+      fingerprint: info.fingerprint,
+      port: info.port as number,
+      protocol: info.protocol,
+      download: info.download === true,
+      announce: info.announce === true,
+    };
+  }
+
+  private async requestApproval(request: LocalSendUploadApproval): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const signal = this.lifecycleController.signal;
+    let onStopped: (() => void) | null = null;
+    try {
+      const timeout = new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), this.approvalTimeoutMs);
+        timer.unref?.();
+      });
+      const decision = Promise.resolve(this.authorizeUpload(Object.freeze(request))).then((value) => value === true);
+      const stopped = new Promise<boolean>((resolve) => {
+        if (signal.aborted) resolve(false);
+        else {
+          onStopped = () => resolve(false);
+          signal.addEventListener('abort', onStopped, { once: true });
+        }
+      });
+      return await Promise.race([decision, timeout, stopped]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (onStopped) signal.removeEventListener('abort', onStopped);
+    }
+  }
+
+  private touchSession(session: ActiveSession): void {
+    if (!this.sessions.has(session.sessionId)) return;
+    if (session.timer) clearTimeout(session.timer);
+    session.expiresAt = Date.now() + this.sessionTimeoutMs;
+    session.timer = setTimeout(() => this.cleanupSession(session.sessionId, true), this.sessionTimeoutMs);
+    session.timer.unref?.();
   }
 
   private readBody(req: http.IncomingMessage): Promise<Buffer> {
     return new Promise((resolve, reject) => {
+      const declaredLength = parseContentLength(req.headers['content-length']);
+      if (declaredLength !== null && declaredLength > this.requestBodyLimitBytes) {
+        req.resume();
+        reject(new RequestError(413, 'Request body exceeds the accepted limit'));
+        return;
+      }
+
       const chunks: Buffer[] = [];
-      req.on('data', (chunk: Buffer) => chunks.push(chunk));
-      req.on('end', () => resolve(Buffer.concat(chunks)));
-      req.on('error', reject);
+      let received = 0;
+      let settled = false;
+      const finish = (callback: (value: any) => void, value: any) => {
+        if (settled) return;
+        settled = true;
+        req.setTimeout(0);
+        req.removeListener('data', onData);
+        req.removeListener('end', onEnd);
+        req.removeListener('error', onError);
+        req.removeListener('aborted', onAborted);
+        callback(value);
+      };
+      const onData = (chunk: Buffer) => {
+        if (settled) return;
+        received += chunk.length;
+        if (received > this.requestBodyLimitBytes) {
+          req.resume();
+          finish(reject, new RequestError(413, 'Request body exceeds the accepted limit'));
+          return;
+        }
+        chunks.push(chunk);
+      };
+      const onEnd = () => finish(resolve, Buffer.concat(chunks, received));
+      const onError = (error: Error) => finish(reject, error);
+      const onAborted = () => finish(reject, new RequestError(408, 'Request body was interrupted'));
+      req.on('data', onData);
+      req.on('end', onEnd);
+      req.on('error', onError);
+      req.on('aborted', onAborted);
+      req.setTimeout(this.requestBodyTimeoutMs, () => {
+        finish(reject, new RequestError(408, 'Request body was idle for too long'));
+        req.destroy();
+      });
     });
+  }
+
+  private reserveApprovalPermit(remoteAddress: string): () => void {
+    const sessionsForIp = Array.from(this.sessions.values())
+      .filter((session) => session.remoteAddress === remoteAddress).length;
+    const pendingForIp = this.pendingApprovalsPerIp.get(remoteAddress) ?? 0;
+    if (this.sessions.size + this.pendingApprovals >= this.maxSessions) {
+      throw new RequestError(503, 'Too many pending upload sessions');
+    }
+    if (sessionsForIp + pendingForIp >= this.maxSessionsPerIp) {
+      throw new RequestError(429, 'Too many pending upload sessions for this address');
+    }
+    this.pendingApprovals += 1;
+    this.pendingApprovalsPerIp.set(remoteAddress, pendingForIp + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.pendingApprovals = Math.max(0, this.pendingApprovals - 1);
+      const count = this.pendingApprovalsPerIp.get(remoteAddress) ?? 0;
+      if (count <= 1) this.pendingApprovalsPerIp.delete(remoteAddress);
+      else this.pendingApprovalsPerIp.set(remoteAddress, count - 1);
+    };
+  }
+
+  private handleRequestError(res: http.ServerResponse, error: unknown): void {
+    if (res.headersSent || res.destroyed) {
+      res.destroy();
+      return;
+    }
+    const statusCode = error instanceof RequestError ? error.statusCode : 500;
+    const message = error instanceof RequestError ? error.message : 'Request failed';
+    this.sendJson(res, statusCode, { error: message });
   }
 
   private sendJson(res: http.ServerResponse, status: number, data: unknown): void {
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
   }
+}
+
+function validateFileName(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 255 || !value.isWellFormed()) {
+    throw new RequestError(400, 'Upload manifest contains an invalid file name');
+  }
+  const normalized = value.normalize('NFC');
+  if (Buffer.byteLength(normalized, 'utf8') > 255 || normalized === '.' || normalized === '..' || isAbsolute(normalized) || win32.isAbsolute(normalized)
+    || normalized.includes('/') || normalized.includes('\\') || /[\x00-\x1f<>:"|?*]/u.test(normalized)
+    || normalized.endsWith('.') || normalized.endsWith(' ')) {
+    throw new RequestError(400, 'Upload manifest contains an unsafe file name');
+  }
+  const windowsBaseName = normalized.split('.')[0]?.toUpperCase();
+  if (windowsBaseName && /^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$/u.test(windowsBaseName)) {
+    throw new RequestError(400, 'Upload manifest contains an unsafe file name');
+  }
+  return normalized;
+}
+
+function publishFileNoOverwrite(sourcePath: string, destinationPath: string): void {
+  try {
+    linkSync(sourcePath, destinationPath);
+  } catch (error: unknown) {
+    if (!isNodeError(error) || !['ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EACCES', 'EXDEV'].includes(error.code ?? '')) {
+      throw error;
+    }
+    copyFileSync(sourcePath, destinationPath, fsConstants.COPYFILE_EXCL);
+  }
+}
+
+function parseContentLength(value: string | undefined): number | null {
+  if (value === undefined) return null;
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) throw new RequestError(400, 'Invalid Content-Length');
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new RequestError(400, 'Invalid Content-Length');
+  return parsed;
+}
+
+function positiveIntegerOption(value: number | undefined, fallback: number, label: string): number {
+  const normalized = value ?? fallback;
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    throw new TypeError(`${label} must be a positive safe integer`);
+  }
+  return normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNodeError(value: unknown): value is NodeJS.ErrnoException {
+  return value instanceof Error && 'code' in value;
 }

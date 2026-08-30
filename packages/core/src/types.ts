@@ -1,8 +1,9 @@
 /**
  * Public TypeScript interfaces for @luo-5/core.
  *
- * These define the stable API surface that the desktop app, future CLI, and
- * other consumers program against. Implementation modules (crypto, discovery,
+ * These define the public pre-1.0 API surface that the desktop app, CLI, and
+ * other consumers program against. Compatibility may change between minor releases.
+ * Implementation modules (crypto, discovery,
  * pairing, transfer, protocol) are migrated in M1.3-M1.7 and re-exported from
  * index.ts; the interfaces here are contract-only.
  */
@@ -176,7 +177,7 @@ export interface ProtocolStatus {
   state: ProtocolState;
 }
 
-/** A protocol driver adapter. v2-stream is fully implemented; others are experimental. */
+/** A protocol driver adapter. Application-level availability is tracked separately. */
 export interface ProtocolAdapter {
   id: ProtocolId;
   name: string;

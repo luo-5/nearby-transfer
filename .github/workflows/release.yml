@@ -1,61 +1,225 @@
-name: Release & npm Publish
+name: Publish npm package
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'core-v*.*.*'
+      - 'cli-v*.*.*'
+      - 'localsend-adapter-v*.*.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build, Publish npm & GitHub Release
-    runs-on: ubuntu-latest
+  package:
+    name: Verify and package one npm workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
-      contents: write
-      id-token: write
+      contents: read
+    outputs:
+      workspace: ${{ steps.target.outputs.workspace }}
+      slug: ${{ steps.target.outputs.slug }}
+      version: ${{ steps.target.outputs.version }}
+      dist_tag: ${{ steps.target.outputs.dist_tag }}
+      prerelease: ${{ steps.target.outputs.prerelease }}
+      core_range: ${{ steps.target.outputs.core_range }}
+      tarball: ${{ steps.pack.outputs.tarball }}
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
         with:
-          node-version: '22.x'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: 24
+          package-manager-cache: false
 
-      - name: Install Dependencies
+      - name: Select and verify package target
+        id: target
+        shell: bash
+        run: |
+          case "$GITHUB_REF_NAME" in
+            core-v*) workspace='@luo-5/core'; manifest='packages/core/package.json'; slug='core'; expected="${GITHUB_REF_NAME#core-v}" ;;
+            cli-v*) workspace='@luo-5/cli'; manifest='packages/cli/package.json'; slug='cli'; expected="${GITHUB_REF_NAME#cli-v}" ;;
+            localsend-adapter-v*) workspace='@luo-5/localsend-adapter'; manifest='packages/localsend-adapter/package.json'; slug='localsend-adapter'; expected="${GITHUB_REF_NAME#localsend-adapter-v}" ;;
+            *) echo "Unsupported package tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
+          esac
+
+          actual="$(node -p "require('./$manifest').version")"
+          test "$expected" = "$actual" || { echo "Tag version $expected does not match $manifest version $actual" >&2; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo 'Release tag must point to a commit contained in main' >&2; exit 1; }
+
+          if [[ "$actual" == *-* ]]; then prerelease=true; dist_tag=next; else prerelease=false; dist_tag=latest; fi
+          if [ "$prerelease" = false ]; then
+            tag_prefix="${GITHUB_REF_NAME%-v*}"
+            highest_tag=''
+            while IFS= read -r candidate; do
+              candidate_version="${candidate#${tag_prefix}-v}"
+              if [[ "$candidate_version" != *-* ]]; then highest_tag="$candidate"; break; fi
+            done < <(git tag -l "${tag_prefix}-v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname)
+            test "$GITHUB_REF_NAME" = "$highest_tag" || { echo "Stable release tag must be the highest stable ${tag_prefix} tag (found $highest_tag)" >&2; exit 1; }
+          fi
+          core_range="$(node -p "require('./$manifest').dependencies?.['@luo-5/core'] || ''")"
+          echo "workspace=$workspace" >> "$GITHUB_OUTPUT"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "version=$actual" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+          echo "core_range=$core_range" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
         run: npm ci
 
-      - name: Run Full Test Suite
-        run: npm test
+      - name: Build and verify repository
+        run: npm run ci:verify
 
-      - name: Build Packages
+      - name: Pack and inspect the immutable publish tarball
+        id: pack
+        shell: bash
         run: |
-          npm run build --workspace @luo-5/core --if-present
-          npm run build --workspace @luo-5/cli --if-present
-          npm run build --workspace @luo-5/localsend-adapter --if-present
+          mkdir -p release-assets
+          npm pack --workspace '${{ steps.target.outputs.workspace }}' --pack-destination release-assets --json > "$RUNNER_TEMP/npm-pack.json"
+          filename="$(node -p "JSON.parse(require('fs').readFileSync('$RUNNER_TEMP/npm-pack.json','utf8'))[0].filename")"
+          tarball="release-assets/$filename"
+          test -f "$tarball"
+          contents="$RUNNER_TEMP/npm-package-contents.txt"
+          tar -tzf "$tarball" > "$contents"
+          grep -Fxq 'package/LICENSE' "$contents"
+          grep -Fxq 'package/README.md' "$contents"
+          grep -Fxq 'package/package.json' "$contents"
+          tar -xOf "$tarball" package/package.json > "$RUNNER_TEMP/packed-package.json"
+          node scripts/verify-packed-package.js "$RUNNER_TEMP/packed-package.json" "$contents"
+          (cd release-assets && sha256sum "$filename" > SHA256SUMS.txt)
+          echo "tarball=$filename" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to npm
+      - name: Upload verified package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ steps.target.outputs.slug }}-${{ steps.target.outputs.version }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-npm:
+    name: Publish the verified tarball to npm
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout release tag for final ordering check
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js 24 for npm provenance
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Download verified tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-${{ needs.package.outputs.slug }}-${{ needs.package.outputs.version }}
+          path: release-assets
+
+      - name: Publish once or verify an identical existing version
+        shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm publish --provenance --workspace @luo-5/core --access public
-          npm publish --provenance --workspace @luo-5/cli --access public
-          npm publish --provenance --workspace @luo-5/localsend-adapter --access public
+          tarball="release-assets/${{ needs.package.outputs.tarball }}"
+          if [ '${{ needs.package.outputs.dist_tag }}' = latest ]; then
+            git fetch --tags --force origin
+            tag_prefix="${GITHUB_REF_NAME%-v*}"
+            highest_tag=''
+            while IFS= read -r candidate; do
+              candidate_version="${candidate#${tag_prefix}-v}"
+              if [[ "$candidate_version" != *-* ]]; then highest_tag="$candidate"; break; fi
+            done < <(git tag -l "${tag_prefix}-v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname)
+            test "$GITHUB_REF_NAME" = "$highest_tag" || { echo "A newer stable release tag now exists: $highest_tag" >&2; exit 1; }
+          fi
+          if [ '${{ needs.package.outputs.workspace }}' != '@luo-5/core' ]; then
+            core_range='${{ needs.package.outputs.core_range }}'
+            test -n "$core_range" || { echo 'Dependent package does not declare an @luo-5/core range' >&2; exit 1; }
+            resolved_core="$(npm view "@luo-5/core@$core_range" version --json 2>/dev/null)" || {
+              echo "Publish @luo-5/core satisfying $core_range before this dependent package." >&2
+              exit 1
+            }
+            node -e "const v=JSON.parse(process.argv[1]); if (!(typeof v==='string' ? v : Array.isArray(v) && v.length)) process.exit(1)" "$resolved_core"
+          fi
 
-      - name: Generate npm tarball checksums
-        run: |
-          mkdir -p release-assets
-          npm pack --workspace @luo-5/core --workspace @luo-5/cli --workspace @luo-5/localsend-adapter --pack-destination release-assets
-          cd release-assets
-          sha256sum *.tgz > SHA256SUMS.txt
+          local_integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | openssl base64 -A)"
+          if remote_integrity="$(npm view '${{ needs.package.outputs.workspace }}@${{ needs.package.outputs.version }}' dist.integrity --json 2>/dev/null | tr -d '"\r\n')" && [ -n "$remote_integrity" ]; then
+            test "$remote_integrity" = "$local_integrity" || { echo 'Published npm integrity differs from the verified tarball' >&2; exit 1; }
+            echo 'Identical package version already exists; skipping npm publish.'
+          else
+            if [ '${{ needs.package.outputs.dist_tag }}' = latest ]; then
+              current_latest="$(npm view '${{ needs.package.outputs.workspace }}' dist-tags.latest --json 2>/dev/null | tr -d '"\r\n' || true)"
+              if [ -n "$current_latest" ]; then
+                node -e "const p=v=>{const m=/^(\\d+)\\.(\\d+)\\.(\\d+)$/.exec(v);if(!m)throw Error('stable version is not plain SemVer: '+v);return m.slice(1).map(Number)};const [n,c]=process.argv.slice(1).map(p);for(let i=0;i<3;i++){if(n[i]>c[i])process.exit(0);if(n[i]<c[i])process.exit(1)}process.exit(0)" '${{ needs.package.outputs.version }}' "$current_latest" || { echo "Refusing to move npm latest backward from $current_latest" >&2; exit 1; }
+              fi
+            fi
+            npm publish "$tarball" --access public --provenance --tag '${{ needs.package.outputs.dist_tag }}'
+          fi
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+  github-release:
+    name: Publish package GitHub release
+    needs: [package, publish-npm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
         with:
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          files: release-assets/SHA256SUMS.txt
+          name: npm-${{ needs.package.outputs.slug }}-${{ needs.package.outputs.version }}
+          path: release-assets
+
+      - name: Create or recover immutable package release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease_flag=''
+          if [ '${{ needs.package.outputs.prerelease }}' = 'true' ]; then prerelease_flag='--prerelease'; fi
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes $prerelease_flag --title '${{ needs.package.outputs.slug }} v${{ needs.package.outputs.version }}'
+          fi
+
+          existing_dir="$(mktemp -d)"
+          trap 'rm -rf "$existing_dir"' EXIT
+          existing_assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')"
+          while IFS= read -r name; do
+            [ -z "$name" ] && continue
+            test -f "release-assets/$name" || { echo "Existing release contains unexpected asset: $name" >&2; exit 1; }
+            gh release download "$GITHUB_REF_NAME" --pattern "$name" --dir "$existing_dir"
+            cmp -s "$existing_dir/$name" "release-assets/$name" || { echo "Existing release asset differs: $name" >&2; exit 1; }
+          done <<< "$existing_assets"
+
+          for asset in release-assets/*; do
+            name="$(basename "$asset")"
+            if printf '%s\n' "$existing_assets" | grep -Fxq "$name"; then continue; fi
+            gh release upload "$GITHUB_REF_NAME" "$asset"
+          done
+
+          final_assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort)"
+          desired_assets="$(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$final_assets" = "$desired_assets" || { echo 'Release asset set is incomplete or contains unexpected files' >&2; exit 1; }
+          gh release edit "$GITHUB_REF_NAME" --draft=false

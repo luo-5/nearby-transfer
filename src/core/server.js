@@ -33,6 +33,11 @@ class TransferServer {
     this.transferRequestWindowMs = positiveIntegerOption(options.transferRequestWindowMs, TRANSFER_REQUEST_WINDOW_MS);
     this.maxPendingTransfers = positiveIntegerOption(options.maxPendingTransfers, MAX_PENDING_TRANSFERS);
     this.cleanupTimer = null;
+    this.startPromise = null;
+    this.stopPromise = null;
+    this.stopping = false;
+    this.lifecycleGeneration = 0;
+    this.sockets = new Set();
   }
 
   cancelTransfer(transferId) {
@@ -41,47 +46,117 @@ class TransferServer {
       try {
         active.request.destroy(new Error('用户已主动取消接收'));
       } catch (_) {}
-      this.activeIncoming.delete(transferId);
       return true;
     }
     return false;
   }
 
   start(port) {
-    if (this.server) {
+    if (this.stopPromise) {
+      return this.stopPromise.then(() => this.start(port));
+    }
+    if (this.startPromise) {
+      return this.startPromise;
+    }
+    if (this.server && this.port !== null) {
       return Promise.resolve(this.port);
     }
 
     this.saveDirectory = ensureSafeDirectory(this.saveDirectory);
-    this.server = http.createServer((request, response) => {
+    const generation = ++this.lifecycleGeneration;
+    const server = http.createServer((request, response) => {
+      if (this.stopping || this.server !== server) {
+        respondJson(response, 503, { ok: false, error: 'Transfer service is stopping' });
+        return;
+      }
       this._handleRequest(request, response).catch((error) => {
         respondJson(response, 500, { ok: false, error: error.message });
       });
     });
-    this.server.timeout = UPLOAD_IDLE_TIMEOUT_MS;
+    server.timeout = UPLOAD_IDLE_TIMEOUT_MS;
+    server.on('connection', (socket) => {
+      this.sockets.add(socket);
+      socket.once('close', () => this.sockets.delete(socket));
+    });
+    this.server = server;
+    this.stopping = false;
 
-    return new Promise((resolve, reject) => {
-      this.server.on('error', reject);
-      this.server.listen(port || 0, '0.0.0.0', () => {
-        this.port = this.server.address().port;
+    const startPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      const rejectStart = (error) => {
+        if (settled) return;
+        settled = true;
+        if (this.server === server) {
+          this.server = null;
+          this.port = null;
+        }
+        try { server.close(); } catch (_) {}
+        reject(error);
+      };
+      server.on('error', rejectStart);
+      server.listen(port || 0, '0.0.0.0', () => {
+        if (this.server !== server || this.stopping || this.lifecycleGeneration !== generation) {
+          try { server.close(); } catch (_) {}
+          rejectStart(new Error('Transfer service start was cancelled'));
+          return;
+        }
+        settled = true;
+        this.port = server.address().port;
         this.cleanupTimer = setInterval(() => this._cleanupPending(), 30000);
         resolve(this.port);
       });
     });
+    this.startPromise = startPromise;
+    return startPromise.finally(() => {
+      if (this.startPromise === startPromise) this.startPromise = null;
+    });
   }
 
   stop() {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopping = true;
+    this.lifecycleGeneration += 1;
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
-    if (this.server) {
-      this.server.close();
-      this.server = null;
+    const server = this.server;
+    const pendingStart = this.startPromise;
+    this.server = null;
+    this.port = null;
+    const pendingTransfers = this.pending;
+    const activeIncoming = this.activeIncoming;
+    this.pending = new Map();
+    this.activeIncoming = new Map();
+    this.reservedTransferIds = new Set();
+    this.requestWindows = new Map();
+    for (const pending of pendingTransfers.values()) {
+      if (Buffer.isBuffer(pending.key)) pending.key.fill(0);
     }
-    this.reservedTransferIds.clear();
-    this.requestWindows.clear();
-    this.activeIncoming.clear();
+    pendingTransfers.clear();
+    const activeDone = [];
+    for (const active of activeIncoming.values()) {
+      activeDone.push(active.done);
+      try { active.request.destroy(new Error('Transfer service stopped')); } catch (_) {}
+      try { active.response.destroy(); } catch (_) {}
+      safeRemove(active.tempPath);
+    }
+    for (const socket of this.sockets) {
+      try { socket.destroy(); } catch (_) {}
+    }
+
+    const stopPromise = Promise.resolve(pendingStart)
+      .catch(() => {})
+      .then(() => closeServer(server))
+      .then(() => Promise.allSettled(activeDone))
+      .finally(() => {
+        activeIncoming.clear();
+        this.sockets.clear();
+        this.stopping = false;
+        if (this.stopPromise === stopPromise) this.stopPromise = null;
+      });
+    this.stopPromise = stopPromise;
+    return stopPromise;
   }
 
   setSaveDirectory(saveDirectory) {
@@ -111,6 +186,10 @@ class TransferServer {
   }
 
   async _handleTransferRequest(request, response) {
+    const requestGeneration = this.lifecycleGeneration;
+    const requestServer = this.server;
+    const pendingTransfers = this.pending;
+    const reservedTransferIds = this.reservedTransferIds;
     const rateLimit = this._consumeTransferRequest(request.socket.remoteAddress || 'unknown');
     if (!rateLimit.allowed) {
       response.setHeader('retry-after', String(rateLimit.retryAfterSeconds));
@@ -119,6 +198,10 @@ class TransferServer {
     }
 
     const payload = await readJsonBody(request, REQUEST_BODY_LIMIT);
+    if (this.lifecycleGeneration !== requestGeneration || this.server !== requestServer) {
+      respondJson(response, 503, { accepted: false, error: 'Transfer service changed while handling the request' });
+      return;
+    }
     const validationError = validateTransferRequest(payload);
     if (validationError) {
       respondJson(response, 400, { ok: false, error: validationError });
@@ -138,16 +221,16 @@ class TransferServer {
     }
 
     const transferId = payload.transferId;
-    if (this.pending.has(transferId) || this.reservedTransferIds.has(transferId)) {
+    if (pendingTransfers.has(transferId) || reservedTransferIds.has(transferId)) {
       respondJson(response, 409, { ok: false, error: 'Transfer ID is already pending' });
       return;
     }
-    if (this.pending.size + this.reservedTransferIds.size >= this.maxPendingTransfers) {
+    if (pendingTransfers.size + reservedTransferIds.size >= this.maxPendingTransfers) {
       respondJson(response, 503, { ok: false, error: 'Too many pending transfers' });
       return;
     }
 
-    this.reservedTransferIds.add(transferId);
+    reservedTransferIds.add(transferId);
     try {
       const safeName = safeFilename(payload.file.name);
       const savePath = uniqueDestinationPath(this.saveDirectory, safeName);
@@ -186,6 +269,10 @@ class TransferServer {
       }
 
       const decision = await this.onIncomingRequest(incoming);
+      if (this.lifecycleGeneration !== requestGeneration || this.server !== requestServer) {
+        respondJson(response, 503, { accepted: false, error: 'Transfer service is stopping' });
+        return;
+      }
       if (!decision || !decision.accepted) {
         this.onTransferEvent(Object.assign({}, incoming, {
           direction: 'receive',
@@ -197,7 +284,7 @@ class TransferServer {
         return;
       }
 
-      this.pending.set(transferId, {
+      pendingTransfers.set(transferId, {
         createdAt: Date.now(),
         key,
         sender: incoming.sender,
@@ -212,17 +299,19 @@ class TransferServer {
       }));
       respondJson(response, 200, { accepted: true, transferId });
     } finally {
-      this.reservedTransferIds.delete(transferId);
+      reservedTransferIds.delete(transferId);
     }
   }
 
   async _handleUpload(transferId, request, response) {
-    const pending = this.pending.get(transferId);
+    const pendingTransfers = this.pending;
+    const activeIncoming = this.activeIncoming;
+    const pending = pendingTransfers.get(transferId);
     if (!pending) {
       respondJson(response, 404, { ok: false, error: 'Transfer is not pending or was already used' });
       return;
     }
-    this.pending.delete(transferId);
+    pendingTransfers.delete(transferId);
     request.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, () => request.destroy(new Error('Upload timed out')));
 
     const tempPath = `${pending.savePath}.part-${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
@@ -253,7 +342,9 @@ class TransferServer {
       }
     });
 
-    this.activeIncoming.set(transferId, { request, response, tempPath });
+    let settleActive;
+    const done = new Promise((resolve) => { settleActive = resolve; });
+    activeIncoming.set(transferId, { request, response, tempPath, done });
 
     try {
       const decrypted = new DecryptFrameStream(pending.key);
@@ -299,7 +390,8 @@ class TransferServer {
       });
       respondJson(response, 400, { ok: false, error: error.message });
     } finally {
-      this.activeIncoming.delete(transferId);
+      settleActive();
+      activeIncoming.delete(transferId);
     }
   }
 
@@ -342,6 +434,18 @@ class TransferServer {
     window.count += 1;
     return { allowed: true, retryAfterSeconds: 0 };
   }
+}
+
+function closeServer(server) {
+  if (!server || !server.listening) return Promise.resolve();
+  return new Promise((resolve) => {
+    try {
+      server.close(() => resolve());
+      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    } catch (_error) {
+      resolve();
+    }
+  });
 }
 
 function positiveIntegerOption(value, fallback) {

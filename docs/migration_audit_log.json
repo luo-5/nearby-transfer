@@ -1,4 +1,5 @@
 {
+  "disclaimer": "Historical, non-authoritative migration log. Claims and counts must be revalidated against the current revision; local device identifiers and addresses have been removed.",
   "version": "1.0.0",
   "author": "Antigravity Pair Programmer",
   "co_authored_by": "Codex <codex@openai.com>",
@@ -153,7 +154,7 @@
         "scripts/start_desktop.ps1"
       ],
       "type": "VERIFICATION",
-      "description": "Connected real Android physical phone (via Wi-Fi subnet 192.168.9.x), deployed debug APK with full runtime permissions, established UDP multicast group 239.255.77.77:47777, and completed bidirectional device discovery, TCP pairing socket handshake, and 6-digit SAS pairing confirmation code negotiation between Desktop Electron and Android.",
+      "description": "Historical record of an Android-to-desktop interoperability exercise on an isolated test network; endpoint addresses were removed.",
       "rationale": "Ensures real-world physical device inter-operability, robust local networking, and seamless cross-platform pairing behavior."
     },
     {
@@ -192,7 +193,7 @@
         "scripts/test_mobile_upload.js"
       ],
       "type": "FEATURE",
-      "description": "Implemented full Android WebDavClient supporting /api/session peer token negotiation, /api/list directory enumeration, streamed file downloads to Download/Nearby Transfer with progress toasts, and mobile file PUT uploads. Verified on physical hardware (R58M4308MGE) with real-time UI card rendering and 100% verified download & upload execution against Desktop WebDAV port 56578.",
+      "description": "Historical record of Android shared-library client work and a physical-device exercise; the device identifier and absolute success claim were removed.",
       "rationale": "Completes the end-to-end NAS / WebDAV shared file library experience across Desktop and physical Android phone."
     },
     {
@@ -222,8 +223,8 @@
       "id": "CHANGE-018",
       "timestamp": "2026-08-21T16:16:00.000Z",
       "type": "TEST_AND_RELEASE",
-      "description": "Executed multi-round end-to-end hardware verification on physical phone (R58M4308MGE) and Desktop Windows VM. Verified 3-level deep directory recursion (Root -> 我的相册 -> 2026旅行), breadcrumb instant jump navigation, remote MKCOL folder creation, subfolder file download/upload, and 100% pass across 33 desktop smoke/unit test suites and 301 Android Gradle unit tests. Upgraded project version to 1.1.0 (versionCode 3).",
-      "rationale": "Ensures absolute production reliability, backward compatibility, and clean release readiness."
+      "description": "Historical record of a physical-device and desktop exercise. Device identifiers and absolute pass claims were removed; current behavior must be revalidated.",
+      "rationale": "Preserves migration history without treating it as a production reliability guarantee."
     },
     {
       "id": "CHANGE-019",
@@ -292,7 +293,7 @@
       "runtime_apk_installed": true
     },
     "live_hardware_test": {
-      "device_model": "Android Phone (R58M4308MGE / iPhone 20 Pro Max alias)",
+      "device_model": "Android test phone (identifier removed)",
       "multicast_discovery": "PASSED (Bidirectional)",
       "tcp_pairing_handshake": "PASSED",
       "sas_code_generation": "PASSED",

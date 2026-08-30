@@ -10,7 +10,6 @@ This guide describes how to build Nearby Transfer from source for Linux, Windows
 - Java 17 for Android builds.
 - Android SDK platform 35 and build tools 35.0.0 for Android builds.
 - No global Gradle installation is required; use the checked-in Gradle Wrapper.
-- `rpmbuild` on Linux if RPM packages are needed.
 
 ## Install Desktop Dependencies
 
@@ -27,11 +26,12 @@ export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
 ## Verify Source
 
 ```bash
-npm run check
-npm test
+npm run ci:verify
 ```
 
-`npm run check` runs JavaScript syntax checks. `npm test` runs the Node smoke tests for crypto and local encrypted transfer.
+This builds all published packages, runs all package type checks and tests, checks
+JavaScript syntax under `src/` and `test/`, and runs the desktop smoke/integration
+suite.
 
 ## Run Desktop App
 
@@ -47,14 +47,17 @@ Start the app on two devices on the same LAN. Firewalls must allow UDP `47777` f
 npm run dist:linux
 ```
 
-This uses `packaging/linux/electron-builder.yml`, which installs the Linux app under `/opt/nearby-transfer` while keeping the desktop display name `Nearby Transfer`.
+The standard command builds an installable x64 Debian package.
 
 Expected artifacts:
 
-- `nearby-transfer-0.2.0-linux-amd64.deb`
-- `nearby-transfer-0.2.0-linux-arm64.deb`
-- `nearby-transfer-0.2.0-linux-x86_64.rpm`
-- `nearby-transfer-0.2.0-linux-aarch64.rpm`
+- `nearby-transfer-<version>-linux-amd64.deb`
+
+The Debian installer configures Electron's Chromium sandbox and an AppArmor profile on
+supported Ubuntu releases. Raw Linux archives are not public release artifacts because
+extracting an archive cannot securely establish the sandbox ownership and policy.
+RPM, AppImage, and additional architectures remain release-roadmap work until matching
+CI and real-system installation tests are added.
 
 ## Build Windows Packages
 
@@ -64,15 +67,18 @@ Windows release packages should be built on a Windows runner:
 npm run dist:windows
 ```
 
-The current project can build unsigned test packages. Public Windows releases should be code-signed before distribution to reduce SmartScreen warnings and improve installer integrity.
+The current script builds an unsigned portable executable and zip for x64. Public
+Windows releases should be code-signed before distribution to reduce SmartScreen
+warnings and improve publisher identity.
 
 On Linux, zip test packages can be generated without Wine:
 
 ```bash
-electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
+npm exec -- electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
 ```
 
-The NSIS installer target requires a Windows runner or Wine when cross-building from Linux.
+NSIS is configured as future packaging work but is not requested by the standard
+`dist:windows` script.
 
 ## Test and Build Android
 
@@ -93,6 +99,12 @@ On Linux and macOS:
 ```
 
 The debug APK is intended for local testing only. Configure release signing and build a release APK or AAB before public Android distribution.
+
+On Windows, a repository path containing non-ASCII characters causes generated
+Android output to be redirected to a same-drive ASCII directory. Gradle prints the
+actual output root. If the drive root is not writable, set
+`-PnearbyTransferBuildRoot=<same-drive ASCII writable path>` explicitly. Do not assume
+the APK remains under `android-app/build` in that environment.
 ## GitHub Actions
 
 The repository includes workflows for source checks and platform artifacts:
@@ -101,8 +113,13 @@ The repository includes workflows for source checks and platform artifacts:
 - `.github/workflows/build-linux.yml`
 - `.github/workflows/build-windows.yml`
 - `.github/workflows/build-android.yml`
+- `.github/workflows/release-app.yml`
+- `.github/workflows/release.yml`
 
-Release-tag workflows may produce test artifacts unless signing secrets and release-specific build steps are configured.
+Application tags use `app-v<version>`. Individual npm packages use `core-v<version>`,
+`cli-v<version>`, or `localsend-adapter-v<version>`. See [`releasing.md`](releasing.md).
+Android debug APKs are verification artifacts and are excluded from public application
+releases until signing is configured.
 
 ## Large Files
 

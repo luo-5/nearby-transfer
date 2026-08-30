@@ -1,48 +1,43 @@
-# Legacy protocol v0.x
+# Current classic desktop protocol
 
-This document describes the version 1 MVP protocol retained only for the
-v0.2.0 baseline. The incompatible v1.0 protocol foundation is documented in
-[`protocol/v2.md`](protocol/v2.md).
+This document describes the classic protocol used by the current Electron desktop send/receive path. Protocol-v2 components and their integration target are documented separately under [`protocol/`](protocol/).
 
----
-# Protocol
+## Compatibility note
+
+Current desktop and Android builds use **classic discovery announcement version 2**. It replaces the unsigned version-1 announcement and is intentionally wire incompatible with older discovery builds. Update both endpoints together. This discovery version is independent of the classic transfer request's existing `protocolVersion` field.
 
 ## Discovery
 
-Nearby Transfer apps announce themselves with UDP multicast.
+Devices announce themselves through UDP multicast on `239.255.77.77:47777` at a two-second interval. Peers expire after ten seconds.
 
-- Multicast address: `239.255.77.77`
-- Port: `47777`
-- Interval: 2 seconds
-- Peer timeout: 10 seconds
+Each canonical version-2 announcement contains the application identifier, message type, device ID and name, transfer port, Ed25519 signing public key, X25519 public key, fingerprint, timestamp, and an Ed25519 signature. Receivers verify:
 
-Each announcement contains the device ID, device name, transfer port, identity fingerprint, and public encryption key.
+- the protocol version and message type;
+- the signing and encryption key types;
+- device ID and fingerprint derivation from the signing key;
+- the canonical announcement signature; and
+- that the timestamp is within the accepted freshness window.
 
-## Transfer Request
+Announcements that are unsigned, stale, malformed, or identity-inconsistent are not added to the peer list.
 
-The sender opens a local-network HTTP request to the receiver. File bytes are encrypted at the application layer before they enter the HTTP request body.
+## Transfer request
+
+The sender opens a local HTTP request to the receiver:
 
 ```text
 POST /transfer/request
 ```
 
-The request includes file metadata, sender metadata, a sender ephemeral X25519 public key, and an Ed25519 signature over those fields. The receiver verifies the signature, derives the shared transfer key, and shows a confirmation dialog. The file is not uploaded unless the receiver accepts.
+The request includes file metadata, sender identity metadata, an ephemeral X25519 public key, and an Ed25519 signature. The receiver verifies the request, derives the shared transfer key, and asks the user to accept. File data is not uploaded unless the request is accepted.
 
 ## Upload
 
-After acceptance, the sender uploads encrypted chunk frames:
+After acceptance, the sender streams encrypted frames to:
 
 ```text
 POST /transfer/upload/:transferId
 ```
 
-Each encrypted frame is encoded as:
+Each frame contains a big-endian ciphertext length, a 12-byte AES-GCM nonce, a 16-byte authentication tag, and ciphertext. The receiver writes to a temporary file, verifies the final SHA-256 hash and expected size, and publishes the result without overwriting an existing file.
 
-```text
-4 bytes  ciphertext length, big endian
-12 bytes AES-GCM IV
-16 bytes AES-GCM auth tag
-N bytes  ciphertext
-```
-
-The receiver decrypts each frame, writes to a temporary file, verifies the final SHA-256 hash, and then moves the file into the configured receive directory.
+Classic transfers restart from the beginning after interruption; protocol-v2 recovery components do not currently change that user-facing behavior.

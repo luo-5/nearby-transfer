@@ -28,6 +28,7 @@ import {
   MULTICAST_ADDRESS,
   DISCOVERY_PORT,
   MAX_ANNOUNCEMENT_BYTES,
+  V2Discovery,
 } from '../src/index.js';
 import type { DiscoveryDevice } from '../src/index.js';
 
@@ -144,4 +145,10 @@ test('discovery: parseOverride handles comma-separated and empty', () => {
 test('discovery: constants match protocol', () => {
   assert.equal(MULTICAST_ADDRESS, '239.255.77.77');
   assert.equal(DISCOVERY_PORT, 47777);
+});
+
+test('discovery: listen-only mode accepts port zero without advertising an invalid endpoint', () => {
+  const device = makeDevice();
+  assert.doesNotThrow(() => new V2Discovery({ device, port: 0, announce: false }));
+  assert.throws(() => new V2Discovery({ device, port: 0 }), /port is invalid/);
 });

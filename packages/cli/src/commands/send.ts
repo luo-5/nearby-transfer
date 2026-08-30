@@ -14,11 +14,10 @@ import {
   V2Discovery,
   buildTransferSourceManifest,
   createDesktopTransferExecutor,
-  JOB_DIRECTION,
-  JOB_STATUS,
   type DiscoveredPeerEntry,
 } from '@luo-5/core';
-import { loadOrCreateDevice, parseCommonOptions } from '../device.js';
+import { loadOrCreateDevice, parseCommonOptions, requireTrustedPeerIdentity } from '../device.js';
+import { commitCliCheckpoint, createCliTransferContext } from '../transfer-context.js';
 
 export async function sendCommand(args: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
@@ -54,20 +53,11 @@ export async function sendCommand(args: string[]): Promise<void> {
 
   process.stdout.write(`Sending ${filePaths.length} file(s) to ${values.to}...\n`);
 
-  // Build the source manifest (scans files, computes SHA-256)
-  process.stdout.write('Building manifest...\n');
-  const sourceManifest = await buildTransferSourceManifest(filePaths);
-  const manifest = sourceManifest.manifest;
-
-  for (const file of sourceManifest.files) {
-    process.stdout.write(`  ${file.path} (${formatBytes(file.size)})\n`);
-  }
-  process.stdout.write(`  Total: ${manifest.totalFiles} file(s), ${formatBytes(manifest.totalBytes)}\n\n`);
-
   // Discover the target device
   const discovery = new V2Discovery({
     device,
     port: 0,
+    announce: false,
     capabilities: ['pairing', 'transfer'],
   });
 
@@ -92,30 +82,42 @@ export async function sendCommand(args: string[]): Promise<void> {
   }
 
   const peer = targetPeer as DiscoveredPeerEntry;
+  await requireTrustedPeerIdentity(peer, opts.dataDir);
   process.stdout.write(`Connected to: ${peer.deviceName} (${peer.deviceId})\n`);
   process.stdout.write(`  Address: ${peer.host}:${peer.port}\n\n`);
 
-  // Construct the transfer job
-  const now = Date.now();
-  const job = {
-    taskId: manifest.taskId,
-    peerDeviceId: peer.deviceId,
-    direction: JOB_DIRECTION.OUTGOING,
-    status: JOB_STATUS.TRANSFERRING,
+  // Hash only after the requested peer has been found and its current identity
+  // has been checked. A typo in --to should not scan large local files.
+  process.stdout.write('Building manifest...\n');
+  const sourceManifest = await buildTransferSourceManifest(filePaths);
+  const manifest = sourceManifest.manifest;
+  for (const file of sourceManifest.files) {
+    process.stdout.write(`  ${file.path} (${formatBytes(file.size)})\n`);
+  }
+  process.stdout.write(`  Total: ${manifest.totalFiles} file(s), ${formatBytes(manifest.totalBytes)}\n\n`);
+
+  const { job, trustedPeer } = createCliTransferContext({
+    device,
+    peer,
     manifest,
-    sources: sourceManifest.files.map((f) => ({ path: f.path, sourcePath: f.sourcePath, size: f.size, sha256: f.sha256 })),
-    createdAt: now,
-    updatedAt: now,
-    // Extra fields the executor accesses via type casting:
-    localDeviceId: device.deviceId,
-    signingPrivateKey: device.signingPrivateKey,
-    remoteSigningPublicKey: peer.signingPublicKey,
-    remoteEncryptionPublicKey: peer.encryptionPublicKey,
-    peer: { host: peer.host, port: peer.port },
-  };
+    sources: sourceManifest.files.map((file) => ({
+      path: file.path,
+      sourcePath: file.sourcePath,
+      size: file.size,
+      sha256: file.sha256,
+    })),
+  });
 
   const controller = new AbortController();
-  const commitRemoteCheckpoint = () => job; // no-op checkpoint commit for CLI
+  let interrupted = false;
+  const onSignal = () => {
+    if (interrupted) return;
+    interrupted = true;
+    process.stderr.write('\nStopping transfer...\n');
+    controller.abort(new Error('Transfer interrupted by user'));
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
   const checkpoint = {
     files: sourceManifest.files.map((f) => ({ path: f.path, size: f.size, committedOffset: 0, completed: false })),
     nextSequence: 0,
@@ -128,38 +130,28 @@ export async function sendCommand(args: string[]): Promise<void> {
       job: job as never,
       checkpoint: checkpoint as never,
       signal: controller.signal,
-      commitRemoteCheckpoint: commitRemoteCheckpoint as never,
+      commitRemoteCheckpoint: commitCliCheckpoint,
       localDevice: {
         deviceId: device.deviceId,
         signingPrivateKey: device.signingPrivateKey,
       },
       trustedPeerStore: {
-        getTrustedPeer: () => ({
-          identity: {
-            deviceId: peer.deviceId,
-            signingPublicKey: peer.signingPublicKey,
-            encryptionPublicKey: peer.encryptionPublicKey,
-          },
-          permissions: { transfer: true },
-        }),
+        getTrustedPeer: () => trustedPeer,
       },
       lanService: {
         listPeers: () => [peer as never],
       },
     });
 
-    executor.done.then(() => {
-      process.stdout.write('\nTransfer completed successfully!\n');
-    }).catch((error: Error) => {
-      process.stderr.write(`\nTransfer failed: ${error.message}\n`);
-      process.exit(1);
-    });
-
     await executor.done;
+    process.stdout.write('\nTransfer completed successfully!\n');
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Transfer setup failed: ${msg}\n`);
-    process.exit(1);
+    process.stderr.write(`${interrupted ? 'Transfer interrupted' : 'Transfer failed'}: ${msg}\n`);
+    process.exitCode = interrupted ? 130 : 1;
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
   }
 }
 

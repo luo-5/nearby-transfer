@@ -33,6 +33,7 @@ async function main() {
   fs.writeFileSync(sourcePath, source);
 
   await assertSymlinkSendSourceRejected({ sender, receiver, sourcePath, tempRoot });
+  await assertSenderWaitsForUploadCompletion({ sender, receiver, tempRoot });
 
   const events = [];
   const server = new TransferServer({
@@ -68,8 +69,9 @@ async function main() {
     await assertConcurrentSameNameTransfers({ sender, receiver, port, saveDir });
     await assertTransferRequestRateLimit({ sender, receiver, saveDir });
     await assertPendingTransferLimits({ sender, receiver, saveDir });
+    await assertServerLifecycle({ receiver, saveDir });
   } finally {
-    server.stop();
+    await server.stop();
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
@@ -246,7 +248,7 @@ async function assertTransferRequestRateLimit(options) {
     }
     assert.deepStrictEqual(server.requestWindows.get('flood-test').count, 2);
   } finally {
-    server.stop();
+    await server.stop();
   }
 }
 
@@ -272,7 +274,117 @@ async function assertPendingTransferLimits(options) {
     assert.strictEqual(full.statusCode, 503);
     assert.strictEqual(full.body.error, 'Too many pending transfers');
   } finally {
-    server.stop();
+    await server.stop();
+  }
+}
+
+async function assertSenderWaitsForUploadCompletion(options) {
+  const sourcePath = path.join(options.tempRoot, 'sender-lifecycle.bin');
+  fs.writeFileSync(sourcePath, Buffer.alloc(4 * 1024 * 1024, 0x5a));
+  let uploadEnded = false;
+  let responded = false;
+  const server = http.createServer((request, response) => {
+    if (request.url === '/transfer/request') {
+      request.resume();
+      request.once('end', () => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ accepted: true }));
+      });
+      return;
+    }
+    if (request.url.startsWith('/transfer/upload/')) {
+      request.on('data', () => {
+        if (!responded) {
+          responded = true;
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ ok: true }));
+        }
+      });
+      request.once('end', () => { uploadEnded = true; });
+      return;
+    }
+    response.writeHead(404).end();
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    await assert.rejects(() => sendFile({
+      device: options.sender,
+      filePath: sourcePath,
+      peer: {
+        deviceId: options.receiver.deviceId,
+        deviceName: options.receiver.deviceName,
+        host: '127.0.0.1',
+        port: server.address().port,
+        fingerprint: options.receiver.fingerprint,
+        encryptionPublicKey: options.receiver.encryptionPublicKey,
+        signingPublicKey: options.receiver.signingPublicKey
+      }
+    }), /premature|closed|socket|write/i);
+    assert.strictEqual(responded, true);
+    assert.strictEqual(uploadEnded, false, 'fixture unexpectedly consumed the complete upload');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function assertServerLifecycle(options) {
+  const occupied = http.createServer();
+  await new Promise((resolve, reject) => {
+    occupied.once('error', reject);
+    occupied.listen(0, '0.0.0.0', resolve);
+  });
+  const occupiedPort = occupied.address().port;
+  const server = new TransferServer({
+    device: options.receiver,
+    saveDirectory: options.saveDir,
+    onIncomingRequest: async () => ({ accepted: false })
+  });
+  try {
+    await assert.rejects(() => server.start(occupiedPort), (error) => error && error.code === 'EADDRINUSE');
+    const firstPort = await server.start(0);
+    assert(Number.isSafeInteger(firstPort) && firstPort > 0);
+    await server.stop();
+    assert.strictEqual(server.pending.size, 0);
+    assert.strictEqual(server.activeIncoming.size, 0);
+    const secondPort = await server.start(0);
+    assert(Number.isSafeInteger(secondPort) && secondPort > 0);
+    await server.stop();
+
+    let releaseApproval;
+    let approvalStartedResolve;
+    const approvalStarted = new Promise((resolve) => { approvalStartedResolve = resolve; });
+    const delayed = new TransferServer({
+      device: options.receiver,
+      saveDirectory: options.saveDir,
+      onIncomingRequest: () => {
+        approvalStartedResolve();
+        return new Promise((resolve) => { releaseApproval = resolve; });
+      }
+    });
+    try {
+      const delayedPort = await delayed.start(0);
+      const oldRequest = postJsonWithStatus(
+        delayedPort,
+        '/transfer/request',
+        createSignedRequest(loadOrCreateDevice(path.join(options.saveDir, 'lifecycle-sender')), 'delayed-approval')
+      ).catch((error) => error);
+      await approvalStarted;
+      await delayed.stop();
+      await delayed.start(0);
+      releaseApproval({ accepted: true });
+      await oldRequest;
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.strictEqual(delayed.pending.size, 0, 'an approval from the previous generation leaked into the restarted server');
+    } finally {
+      if (releaseApproval) releaseApproval({ accepted: false });
+      await delayed.stop();
+    }
+  } finally {
+    await server.stop();
+    await new Promise((resolve) => occupied.close(resolve));
   }
 }
 

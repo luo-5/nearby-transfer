@@ -1,5 +1,8 @@
 # Nearby Transfer v1.3.0 Release Readiness & Quality Assurance Report
 
+> Historical, non-authoritative snapshot. Its conclusions and counts are not current
+> release evidence; verify the exact revision with the repository's current gates.
+
 **Audit Date:** August 29, 2026  
 **Auditor:** Nearby Transfer Quality Engineering & Architecture  
 **Verdict:** **APPROVED FOR IMMEDIATE PRODUCTION RELEASE (100% READY)**

@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash, randomFillSync } from 'node:crypto';
@@ -24,6 +24,7 @@ import {
   JOB_DIRECTION,
   JOB_STATUS,
 } from '@luo-5/core';
+import { commitCliCheckpoint, createCliTransferContext } from '../src/transfer-context.js';
 
 interface TestDevice {
   deviceId: string;
@@ -179,7 +180,7 @@ test('e2e: sender → receiver transfers a 256 KB file with correct SHA-256', as
   const sender = createTestDevice('sender');
   const receiver = createTestDevice('receiver');
 
-  const tmpBase = join(tmpdir(), `nt-e2e-${Date.now()}`);
+  const tmpBase = mkdtempSync(join(realpathSync(tmpdir()), 'nt-e2e-'));
   const sendDir = join(tmpBase, 'send');
   const recvDir = join(tmpBase, 'recv');
   mkdirSync(sendDir, { recursive: true });
@@ -198,16 +199,22 @@ test('e2e: sender → receiver transfers a 256 KB file with correct SHA-256', as
       [sender.deviceId, { signingPublicKey: sender.signingPublicKey, deviceName: sender.deviceName }],
     ]);
 
+    const receiverTasks: Promise<void>[] = [];
     const server = net.createServer((socket) => {
       socket.setNoDelay(true);
-      createTransferReceiver({
+      const receiverTask = createTransferReceiver({
         socket,
         receiveDir: recvDir,
         localDeviceId: receiver.deviceId,
         localSigningPrivateKey: receiver.signingPrivateKey,
         localEncryptionPrivateKey: receiver.encryptionPrivateKey,
         lookupPeer: (deviceId: string) => trustedPeers.get(deviceId) ?? null,
-      }).then((recv) => recv.done).then(() => socket.destroy()).catch(() => socket.destroy());
+      }).then((recv) => recv.done).catch((error) => {
+        socket.destroy();
+        throw error;
+      });
+      receiverTask.catch(() => {});
+      receiverTasks.push(receiverTask);
     });
 
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -216,56 +223,41 @@ test('e2e: sender → receiver transfers a 256 KB file with correct SHA-256', as
     try {
       const controller = new AbortController();
       const totalBytes = sm.files.reduce((sum, f) => sum + f.size, 0);
+      const peer = {
+        ...receiver,
+        host: '127.0.0.1',
+        port,
+      };
+      const { job, trustedPeer } = createCliTransferContext({
+        device: sender,
+        peer,
+        manifest: sm.manifest,
+        sources: sm.files,
+      });
       const checkpoint = {
         files: sm.files.map((f) => ({ path: f.path, size: f.size, committedOffset: 0, completed: false })),
         nextSequence: 0,
         totalTransferred: 0,
       };
       const executor = await createDesktopTransferExecutor({
-        job: {
-          taskId: sm.manifest.taskId,
-          peerDeviceId: receiver.deviceId,
-          direction: JOB_DIRECTION.OUTGOING,
-          status: JOB_STATUS.TRANSFERRING,
-          manifest: sm.manifest,
-          sources: sm.files,
-          sourceMappingStatus: 'available',
-          progress: { transferredBytes: 0, totalBytes },
-        } as never,
+        job: job as never,
         checkpoint,
         signal: controller.signal,
-        commitRemoteCheckpoint: (cp) => cp,
+        commitRemoteCheckpoint: commitCliCheckpoint,
         localDevice: {
           deviceId: sender.deviceId,
           signingPrivateKey: sender.signingPrivateKey,
         },
         trustedPeerStore: {
-          getTrustedPeer: () => ({
-            identity: {
-              deviceId: receiver.deviceId,
-              deviceName: receiver.deviceName,
-              fingerprint: receiver.fingerprint,
-              signingPublicKey: receiver.signingPublicKey,
-              encryptionPublicKey: receiver.encryptionPublicKey,
-            },
-            permissions: { transfer: true },
-            revokedAt: null,
-          }),
+          getTrustedPeer: () => trustedPeer,
         },
         lanService: {
-          listPeers: () => [{
-            deviceId: receiver.deviceId,
-            deviceName: receiver.deviceName,
-            fingerprint: receiver.fingerprint,
-            signingPublicKey: receiver.signingPublicKey,
-            encryptionPublicKey: receiver.encryptionPublicKey,
-            host: '127.0.0.1',
-            port,
-          }],
+          listPeers: () => [peer],
         },
       });
 
       await executor.done;
+      await Promise.all(receiverTasks);
     } finally {
       server.close();
     }
@@ -283,7 +275,7 @@ test('e2e: multiple files transfer with correct sizes and hashes', async () => {
   const sender = createTestDevice('sender');
   const receiver = createTestDevice('receiver');
 
-  const tmpBase = join(tmpdir(), `nt-e2e-multi-${Date.now()}`);
+  const tmpBase = mkdtempSync(join(realpathSync(tmpdir()), 'nt-e2e-multi-'));
   const sendDir = join(tmpBase, 'send');
   const recvDir = join(tmpBase, 'recv');
   mkdirSync(sendDir, { recursive: true });
@@ -307,16 +299,22 @@ test('e2e: multiple files transfer with correct sizes and hashes', async () => {
       [sender.deviceId, { signingPublicKey: sender.signingPublicKey, deviceName: sender.deviceName }],
     ]);
 
+    const receiverTasks: Promise<void>[] = [];
     const server = net.createServer((socket) => {
       socket.setNoDelay(true);
-      createTransferReceiver({
+      const receiverTask = createTransferReceiver({
         socket,
         receiveDir: recvDir,
         localDeviceId: receiver.deviceId,
         localSigningPrivateKey: receiver.signingPrivateKey,
         localEncryptionPrivateKey: receiver.encryptionPrivateKey,
         lookupPeer: (deviceId: string) => trustedPeers.get(deviceId) ?? null,
-      }).then((recv) => recv.done).then(() => socket.destroy()).catch(() => socket.destroy());
+      }).then((recv) => recv.done).catch((error) => {
+        socket.destroy();
+        throw error;
+      });
+      receiverTask.catch(() => {});
+      receiverTasks.push(receiverTask);
     });
 
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -375,6 +373,7 @@ test('e2e: multiple files transfer with correct sizes and hashes', async () => {
       });
 
       await executor.done;
+      await Promise.all(receiverTasks);
     } finally {
       server.close();
     }

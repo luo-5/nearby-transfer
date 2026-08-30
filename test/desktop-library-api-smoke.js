@@ -35,7 +35,7 @@ async function testDesktopLibraryApiHandlers() {
   };
 
   const mockLibraryService = {
-    shares: [{ id: 'default-share', name: '电脑共享文件库', localPath: path.join(tempUserData, 'SharedLibrary') }],
+    shares: [{ id: 'default-share', name: '电脑共享文件库', localPath: path.join(tempUserData, 'SharedLibrary'), readOnly: true }],
     getStatus() {
       return { ok: true, isListening: true, port: 56578 };
     },
@@ -69,7 +69,15 @@ async function testDesktopLibraryApiHandlers() {
   const statusRes = handlers.get('v2:library-get-status')();
   assert.strictEqual(statusRes.ok, true);
   assert.strictEqual(statusRes.port, 56578);
-  assert.strictEqual(statusRes.webDavUrl, 'http://192.168.1.100:56578/webdav/default-share');
+  assert.strictEqual(statusRes.webDavUrl, 'https://192.168.1.100:56578/webdav/default-share');
+  assert.strictEqual(statusRes.primaryShare.readOnly, true);
+
+  const noLanHandlers = new Map();
+  registerLibraryServiceIpcHandlers({ handle: (channel, fn) => noLanHandlers.set(channel, fn) }, mockLibraryService, {
+    userDataDir: tempUserData,
+    getLanIp: () => null
+  });
+  assert.strictEqual(noLanHandlers.get('v2:library-get-status')().webDavUrl, null);
 
   // Test open-share-directory
   const openRes = await handlers.get('v2:library-open-share-directory')();

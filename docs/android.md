@@ -1,6 +1,8 @@
 # Android Client
 
-The Android client targets Android 8-16, API 26 and newer.
+The Android module currently builds with minimum SDK 26 and target/compile SDK 35.
+Automated JVM/debug-build coverage does not by itself claim a complete Android OS or
+device compatibility matrix.
 
 ## Current State
 
@@ -19,8 +21,9 @@ The current Android MVP can:
 
 - Minimum SDK: 26, Android 8.
 - Target SDK: 35 initially, to be updated with current Android releases.
-- Primary device ABI: arm64-v8a.
-- Emulator ABI: x86_64 can be added when native dependencies are introduced.
+- The current build does not restrict ABI because the project does not ship its
+  own native libraries. If native dependencies are introduced later, add and
+  validate an explicit device/emulator ABI matrix at that time.
 
 ## Protocol Compatibility
 
@@ -40,5 +43,8 @@ The current Android MVP can:
 
 ## Remaining Work
 
-- Add a foreground service for reliable discovery and receiving under Android background limits.
-- Add Android instrumentation tests and real-device transfer matrix coverage.
+- Connect the durable v2 services to the default user-facing transfer route only after
+  lifecycle, trust, recovery, and cross-client tests pass.
+- Add Android instrumentation tests and repeatable real-device transfer matrix coverage.
+- Configure protected release signing and artifact verification. Current CI APKs are
+  debug artifacts only.

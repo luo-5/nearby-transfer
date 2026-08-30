@@ -15,8 +15,8 @@ async function testDiskSpacePrecheck() {
   console.log('     TESTING DISK SPACE PRE-CHECK & MULTI-NIC RELOAD  ');
   console.log('======================================================');
 
-  const tempDir = path.join(os.tmpdir(), 'nearby-disk-precheck-test-' + Date.now());
-  fs.mkdirSync(tempDir, { recursive: true });
+  const tempRoot = fs.realpathSync.native(os.tmpdir());
+  const tempDir = fs.mkdtempSync(path.join(tempRoot, 'nearby-disk-precheck-test-'));
 
   const senderDir = path.join(tempDir, 'sender');
   const receiverDir = path.join(tempDir, 'receiver');

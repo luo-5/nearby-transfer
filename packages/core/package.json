@@ -1,6 +1,6 @@
 {
   "name": "@luo-5/core",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Protocol core for Nearby Transfer — crypto, discovery, pairing, transfer, and protocol registry as a pure TypeScript library.",
   "type": "module",
   "license": "MIT",
@@ -14,8 +14,18 @@
   "bugs": {
     "url": "https://github.com/luo-5/nearby-transfer/issues"
   },
+  "keywords": [
+    "local-network",
+    "file-transfer",
+    "typescript",
+    "encryption"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "files": [
     "dist",
@@ -35,10 +45,12 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsup",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts"
   },
   "devDependencies": {
+    "@types/node": "^24.13.3",
     "tsup": "^8.3.5",
     "tsx": "^4.23.12",
     "typescript": "^5.7.2"

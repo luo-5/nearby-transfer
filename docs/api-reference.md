@@ -1,85 +1,46 @@
-# @luo-5/core API Reference
+# `@luo-5/core` selected API overview
 
-Complete reference for the `@luo-5/core` public API.
+This page highlights commonly used exports. It is not an exhaustive API reference.
+The published package currently exposes its public API from the package root only:
 
----
+```ts
+import {
+  createEd25519KeyPair,
+  createX25519KeyPair,
+  deriveDeviceId,
+  V2Discovery,
+  createTransferManifest,
+  createDesktopTransferExecutor
+} from '@luo-5/core';
+```
 
-## 1. Crypto (`@luo-5/core/crypto`)
+Imports such as `@luo-5/core/crypto` or `@luo-5/core/transfer` are not public
+package entry points.
 
-### `createEd25519KeyPair(): KeyPair`
-Generates a new Ed25519 signing keypair in PEM format (`publicKey`, `privateKey`).
+## Identity and session primitives
 
-### `createX25519KeyPair(): KeyPair`
-Generates a new X25519 ECDH keypair in PEM format.
+- `createEd25519KeyPair()` creates a signing key pair in PEM form.
+- `createX25519KeyPair()` creates a key-agreement key pair in PEM form.
+- `deriveDeviceId(signingPublicKeyPem)` derives the 16-character device ID.
+- `fingerprintFor(publicKeyPem)` returns a human-readable key fingerprint.
+- `deriveSessionKey(input)` derives a 32-byte session key with X25519 and HKDF-SHA256.
+- `encryptChunk(input)` and `decryptChunk(input)` use AES-256-GCM with position-bound authenticated metadata.
 
-### `deriveDeviceId(signingPublicKeyPem: string): string`
-Returns the 16-hex-character device identifier derived from `sha256(signingPublicKeyPem).slice(0, 16)`.
+## Discovery and pairing
 
-### `fingerprintFor(publicKeyPem: string): string`
-Computes the formatted fingerprint string (`AAAA-BBBB-CCCC-DDDD-EEEE-FFFF`).
+- `V2Discovery` manages signed v2 discovery announcements and peer expiry.
+- `createDiscoveryAnnouncement`, `signDiscoveryAnnouncement`, and `verifyDiscoveryAnnouncement` create and verify discovery messages.
+- `derivePairingCode(context)` derives the six-digit SAS value.
+- `createPairingOffer` and `createPairingConfirmation` build pairing messages.
 
-### `deriveSessionKey(input: SessionKeyInput): Buffer`
-Performs X25519 ECDH exchange and HKDF-SHA256 derivation to produce a 32-byte session key.
+## Transfer manifests and execution
 
-### `encryptChunk(input: ChunkEncryptInput): EncryptedChunk`
-Encrypts a single plaintext buffer using AES-256-GCM and position-bound AAD. Returns `{ nonce, ciphertext, authTag }`.
+- `createTransferManifest(input)` normalizes file and directory entries.
+- `serializeTransferManifest(manifest)` produces canonical persisted JSON.
+- `parsePersistedTransferManifest(serialized)` validates stored manifests.
+- `createDesktopTransferExecutor(input)` creates an outgoing v2 transfer executor.
+- `createTransferReceiver(input)` creates a v2 receive-side executor.
 
-### `decryptChunk(input: ChunkDecryptInput): Buffer`
-Decrypts and authenticates an encrypted chunk. Throws `Error` if the tag fails to verify.
+Executors expose a `done` promise and asynchronous `pause`, `resume`, and `cancel` operations. Protocol-v2 executors are library components; they are not yet connected to the default Electron desktop send/receive data path. See [`capabilities.md`](capabilities.md) before presenting a component as shipped.
 
----
-
-## 2. Discovery (`@luo-5/core/discovery`)
-
-### `class V2Discovery extends EventEmitter`
-Manages UDP multicast discovery announcements and peer tracking.
-* `new V2Discovery(options: V2DiscoveryOptions)`
-* `start(): void`
-* `stop(): void`
-* `listPeers(): DiscoveredPeerEntry[]`
-* `getPeer(deviceId: string): DiscoveredPeerEntry | null`
-* *Events*: `'peer'`, `'peers'`, `'error'`
-
----
-
-## 3. Pairing (`@luo-5/core/pairing`)
-
-### `derivePairingCode(context: PairingCodeContext): string`
-Computes the 6-digit SAS code from the canonical JSON transcript of initiator and responder identities.
-
-### `createPairingOffer(options): PairingOffer`
-Creates a signed pairing offer envelope.
-
-### `createPairingConfirmation(options): PairingConfirmation`
-Creates a signed pairing confirmation payload carrying the 6-digit code.
-
----
-
-## 4. Transfer Manifest (`@luo-5/core/transfer`)
-
-### `createTransferManifest(input: CreateManifestInput): TransferManifest`
-Creates and normalizes a transfer manifest containing file and directory entries.
-
-### `serializeTransferManifest(manifest: TransferManifest): string`
-Serializes a manifest into byte-for-byte canonical JSON for hashing and signing.
-
-### `parsePersistedTransferManifest(serialized: string): TransferManifest`
-Parses and validates a stored manifest string.
-
----
-
-## 5. Transfer Execution (`@luo-5/core/transfer`)
-
-### `createDesktopTransferExecutor(input: ExecutorInput): Promise<DesktopTransferExecutor>`
-Initiates an outgoing transfer job to a connected peer.
-* `done: Promise<void>`
-* `pause(): Promise<void>`
-* `resume(): Promise<void>`
-* `cancel(reason?: unknown): Promise<void>`
-
-### `createTransferReceiver(input: TransferReceiverInput): Promise<TransferReceiver>`
-Accepts an incoming transfer stream on a TCP socket, receives manifest, and handles chunk writes.
-* `done: Promise<void>`
-* `pause(): Promise<void>`
-* `resume(): Promise<void>`
-* `cancel(reason?: unknown): Promise<void>`
+For the exact current public surface and TypeScript types, use the declarations published with the installed package or inspect `packages/core/src/index.ts` in the matching source tag.

@@ -1,6 +1,6 @@
 # Release Builds
 
-Release artifacts are written to `../nearby-transfer-dist/` by the desktop packaging config.
+Release artifacts are written to the output directory selected by the build command.
 
 ## Local Linux Build
 
@@ -10,31 +10,33 @@ ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" npm run dist:linux
 
 Linux packages use a Linux-specific electron-builder config so the installed app directory is `/opt/nearby-transfer` without spaces. The desktop launcher still displays `Nearby Transfer`. This avoids Electron/Chromium zygote startup failures on Linux desktop environments when the install path contains spaces.
 
-Expected artifacts:
+Expected artifact:
 
-- `nearby-transfer-0.2.0-linux-amd64.deb`
-- `nearby-transfer-0.2.0-linux-arm64.deb`
-- `nearby-transfer-0.2.0-linux-x86_64.rpm`
-- `nearby-transfer-0.2.0-linux-aarch64.rpm`
+- `nearby-transfer-<version>-linux-amd64.deb`
 
-The RPM build requires `rpmbuild`.
+The Linux workflow installs this package on its Ubuntu runner and requires the app to
+remain running under Xvfb with Chromium sandboxing enabled. Raw archives are not
+published because they cannot perform the root-owned sandbox and AppArmor installation
+steps. RPM, AppImage, and arm64 builds are not current release outputs.
 
 ## Windows
 
-Windows installers should be built on Windows runners. Linux cross-builds need Wine and are not recommended for release validation.
+Windows release artifacts should be built on Windows runners. Linux cross-builds are not recommended for release validation.
 
 On Linux, Windows zip test packages can be generated without Wine:
 
 ```bash
-ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
+ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" npm exec -- electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
 ```
 
 Expected local test artifacts:
 
-- `nearby-transfer-0.2.0-win-x64.zip`
-- `nearby-transfer-0.2.0-win-arm64.zip`
+- `nearby-transfer-<version>-win-x64.zip`
+- `nearby-transfer-<version>-win-arm64.zip`
 
-The NSIS installer remains the Windows release target and is produced by `.github/workflows/build-windows.yml` on a Windows runner.
+The current Windows release workflow produces an unsigned x64 portable executable and
+zip. NSIS and arm64 remain future release work until their build, signing, and install
+paths are verified.
 
 ## Android
 

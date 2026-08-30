@@ -13,13 +13,13 @@ function registerLibraryServiceIpcHandlers(ipcMain, libraryService, { dialog, sh
     const status = libraryService.getStatus();
     const shares = libraryService.listShares();
     const primaryShare = shares.find(s => s.id === 'default-share') || shares[0] || null;
-    const ip = typeof getLanIp === 'function' ? getLanIp() : '127.0.0.1';
+    const ip = typeof getLanIp === 'function' ? getLanIp() : null;
     return {
       ...status,
       shares,
       primaryShare,
       isDefault: primaryShare ? (defaultDir && path.resolve(primaryShare.localPath) === path.resolve(defaultDir)) : true,
-      webDavUrl: status.port ? `http://${ip}:${status.port}/webdav/default-share` : null
+      webDavUrl: status.port && ip ? `https://${ip}:${status.port}/webdav/default-share` : null
     };
   });
 

@@ -14,6 +14,7 @@ import static org.junit.Assert.assertNull;
 
 public class DiscoveryAnnouncementTest {
     private static String signingPublicKey;
+    private static String signingPrivateKey;
     private static String encryptionPublicKey;
 
     @BeforeClass
@@ -21,6 +22,7 @@ public class DiscoveryAnnouncementTest {
         KeyPair signing = CryptoUtil.generateEd25519KeyPair();
         KeyPair encryption = CryptoUtil.generateX25519KeyPair();
         signingPublicKey = CryptoUtil.toPublicPem(signing.getPublic());
+        signingPrivateKey = CryptoUtil.toPrivatePem(signing.getPrivate());
         encryptionPublicKey = CryptoUtil.toPublicPem(encryption.getPublic());
     }
 
@@ -56,6 +58,19 @@ public class DiscoveryAnnouncementTest {
     }
 
     @Test
+    public void rejectsChangedMissingOrStaleSignedAnnouncements() throws Exception {
+        assertRejected(with(validPayload(), "port", 47779));
+        assertRejected(with(validPayload(), "signature", "invalid"));
+        JSONObject missing = validPayload();
+        missing.remove("signature");
+        assertRejected(missing);
+        JSONObject stale = validPayload();
+        stale.put("timestamp", 1234L + 30_001L);
+        stale.put("signature", CryptoUtil.sign(JsonUtil.canonicalDiscoveryAnnouncementPayload(stale), signingPrivateKey));
+        assertRejected(stale);
+    }
+
+    @Test
     public void rejectsWrongOrMalformedPublicKeys() throws Exception {
         JSONObject wrongSigningType = validPayload();
         wrongSigningType.put("signingPublicKey", encryptionPublicKey);
@@ -84,7 +99,7 @@ public class DiscoveryAnnouncementTest {
     private static JSONObject validPayload() throws Exception {
         JSONObject payload = new JSONObject();
         payload.put("app", "nearby-transfer");
-        payload.put("protocolVersion", 1);
+        payload.put("protocolVersion", 2);
         payload.put("type", "announce");
         payload.put("deviceId", CryptoUtil.deviceIdFor(signingPublicKey));
         payload.put("deviceName", "Test sender");
@@ -93,6 +108,7 @@ public class DiscoveryAnnouncementTest {
         payload.put("encryptionPublicKey", encryptionPublicKey);
         payload.put("fingerprint", CryptoUtil.fingerprintFor(signingPublicKey));
         payload.put("timestamp", 1234L);
+        payload.put("signature", CryptoUtil.sign(JsonUtil.canonicalDiscoveryAnnouncementPayload(payload), signingPrivateKey));
         return payload;
     }
 

@@ -27,7 +27,7 @@ Usage:
   nearby-transfer sync --dir <directory> --to <device-id|ip>  Sync a directory
   nearby-transfer receive --dir <directory>             Start receiving files
   nearby-transfer devices                               List discovered devices
-  nearby-transfer pair --to <device-id|ip>              Pair with a device
+  nearby-transfer pair --to <device-id|ip>              Inspect a pairing candidate (preview)
   nearby-transfer trust list                            List trusted devices
   nearby-transfer trust remove <device-id>              Remove a trusted device
 

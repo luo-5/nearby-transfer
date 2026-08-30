@@ -61,6 +61,8 @@ interface ActiveJob {
   controller: AbortController;
   doneResult: { error: Error | null } | null;
   settled: boolean;
+  cleanupRequested: boolean;
+  cleanupReason: unknown;
   cleanupPromise?: Promise<void>;
 }
 
@@ -159,14 +161,18 @@ export class DesktopTransferScheduler {
     return this._enqueue(async () => {
       const active = this._active && this._active.job.taskId === taskId ? this._active : null;
       if (!active) {
+        const current = this.transferJobStore.get(taskId);
+        if (current && (current.status === JOB_STATUS.CANCELLED || current.status === JOB_STATUS.COMPLETED)) {
+          return current;
+        }
         return this.transferJobStore.cancel(taskId);
       }
 
-      await this._waitForExecutor(active);
-      await this._cleanupExecutor(active, new Error('Transfer cancelled by the user'));
-      if (this._active !== active) return this.transferJobStore.get(taskId);
+      active.settled = true;
+      const cleanup = this._cleanupExecutor(active, new Error('Transfer cancelled by the user'));
       active.job = this.transferJobStore.cancel(taskId);
-      this._active = null;
+      if (this._active === active) this._active = null;
+      void cleanup.catch(() => {});
       await this._pump();
       return active.job;
     });
@@ -178,13 +184,13 @@ export class DesktopTransferScheduler {
       const active = this._active;
       if (!active) return null;
 
-      await this._waitForExecutor(active);
-      await this._cleanupExecutor(active, new Error('Transfer scheduler stopped'));
-      if (this._active !== active) return null;
+      active.settled = true;
+      const cleanup = this._cleanupExecutor(active, new Error('Transfer scheduler stopped'));
       if (active.job.status === JOB_STATUS.TRANSFERRING) {
         active.job = this.transferJobStore.pause(taskIdOf(active));
       }
-      this._active = null;
+      if (this._active === active) this._active = null;
+      void cleanup.catch(() => {});
       return active.job;
     });
   }
@@ -203,7 +209,7 @@ export class DesktopTransferScheduler {
     while (this._running && !this._active) {
       const job = this.transferJobStore.list({ includeTerminal: false })
         .find((candidate) => candidate.direction === JOB_DIRECTION.OUTGOING &&
-          candidate.status === JOB_STATUS.QUEUED && (candidate as any).recoverable !== false);
+          candidate.status === JOB_STATUS.QUEUED && candidate.recoverable !== false);
       if (!job) return;
 
       let started: TransferJob;
@@ -224,14 +230,16 @@ export class DesktopTransferScheduler {
         controller: new AbortController(),
         doneResult: null,
         settled: false,
+        cleanupRequested: false,
+        cleanupReason: null,
       };
       this._active = active;
       active.executorReady = this._createExecutor(active);
-      try {
-        await active.executorReady;
-      } catch (error) {
-        await this._finishActive(active, error as Error);
-      }
+      void active.executorReady.catch((error: unknown) => {
+        if (this._active !== active || active.settled) return;
+        const failure = error instanceof Error ? error : new Error(String(error));
+        void this._enqueue(() => this._finishActive(active, failure)).catch(() => {});
+      });
       break;
     }
   }
@@ -256,17 +264,16 @@ export class DesktopTransferScheduler {
       },
     });
     assertExecutor(executor);
-    if (this._active !== active || active.settled) {
-      await cleanupExecutor(executor, new Error('Transfer executor was superseded'));
-      return;
-    }
     active.executor = executor;
+    if (this._active !== active || active.settled || active.cleanupRequested) return;
     Promise.resolve(executor.done).then(
       () => {
+        if (this._active !== active || active.settled) return;
         active.doneResult = { error: null };
         return this._enqueue(() => this._finishActive(active, null)).catch(() => {});
       },
       (error: unknown) => {
+        if (this._active !== active || active.settled) return;
         const failure = error === null || error === undefined ? new Error('Transfer executor failed') : (error instanceof Error ? error : new Error(String(error)));
         active.doneResult = { error: failure };
         return this._enqueue(() => this._finishActive(active, failure)).catch(() => {});
@@ -302,8 +309,19 @@ export class DesktopTransferScheduler {
 
   private _cleanupExecutor(active: ActiveJob, reason: unknown): Promise<void> {
     if (active.cleanupPromise) return active.cleanupPromise;
+    active.cleanupRequested = true;
+    active.cleanupReason = reason;
     active.controller.abort(reason);
-    active.cleanupPromise = cleanupExecutor(active.executor, reason);
+    active.cleanupPromise = (async () => {
+      if (active.executorReady) {
+        try {
+          await active.executorReady;
+        } catch {
+          // A rejected factory produced no executor to clean up.
+        }
+      }
+      await cleanupExecutor(active.executor, active.cleanupReason);
+    })();
     return active.cleanupPromise;
   }
 
