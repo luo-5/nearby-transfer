@@ -49,5 +49,7 @@ export * from './transfer/receiver.js';
 export * from './transfer/job-store.js';
 export * from './transfer/scheduler.js';
 export * from './transport/lan-service.js';
+export * from './security/connection-limiter.js';
+export * from './security/rate-limiter.js';
 export * from './protocol/types.js';
 export * from './protocol/registry.js';

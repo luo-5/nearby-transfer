@@ -63,6 +63,7 @@ export interface V2DiscoveryOptions {
   device: DiscoveryDevice;
   port: number;
   capabilities?: string[];
+  announce?: boolean;
   announceIntervalMs?: number;
   peerTtlMs?: number;
 }
@@ -73,19 +74,23 @@ export class V2Discovery extends EventEmitter {
   capabilities: string[];
   announceIntervalMs: number;
   peerTtlMs: number;
+  private announceEnabled: boolean;
   private socket: dgram.Socket | null = null;
   private peers = new Map<string, DiscoveredPeerEntry>();
   private announceTimer: NodeJS.Timeout | null = null;
   private pruneTimer: NodeJS.Timeout | null = null;
   private multicastInterfaceList: string[] = [];
 
-  constructor({ device, port, capabilities = [], announceIntervalMs = ANNOUNCE_INTERVAL_MS, peerTtlMs = PEER_TTL_MS }: V2DiscoveryOptions) {
+  constructor({ device, port, capabilities = [], announce = true, announceIntervalMs = ANNOUNCE_INTERVAL_MS, peerTtlMs = PEER_TTL_MS }: V2DiscoveryOptions) {
     super();
     assertValidPublicIdentity(device);
-    assertPort(port);
+    if (typeof announce !== 'boolean') throw new TypeError('Discovery announce flag is invalid');
+    if (announce) assertPort(port);
+    else assertListenOnlyPort(port);
     this.device = device;
     this.port = port;
     this.capabilities = normalizeCapabilities(capabilities);
+    this.announceEnabled = announce;
     this.announceIntervalMs = positiveInteger(announceIntervalMs, 'announceIntervalMs');
     this.peerTtlMs = positiveInteger(peerTtlMs, 'peerTtlMs');
   }
@@ -99,8 +104,10 @@ export class V2Discovery extends EventEmitter {
     socket.bind(DISCOVERY_PORT, () => {
       if (socket !== this.socket) return;
       this.configureMulticast(socket);
-      this.announce();
-      this.announceTimer = setInterval(() => this.announce(), this.announceIntervalMs);
+      if (this.announceEnabled) {
+        this.announce();
+        this.announceTimer = setInterval(() => this.announce(), this.announceIntervalMs);
+      }
       this.pruneTimer = setInterval(() => this.prunePeers(), this.announceIntervalMs);
     });
   }
@@ -117,7 +124,7 @@ export class V2Discovery extends EventEmitter {
   }
 
   announce(now: number = Date.now()): void {
-    if (!this.socket) return;
+    if (!this.socket || !this.announceEnabled) return;
     try {
       const announcement = createDiscoveryAnnouncement({
         device: this.device,
@@ -312,6 +319,10 @@ export function assertFreshDiscoveryAnnouncement(announcement: DiscoveryAnnounce
 
 function assertPort(port: number): void {
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new TypeError('Discovery port is invalid');
+}
+
+function assertListenOnlyPort(port: number): void {
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError('Discovery port is invalid');
 }
 
 function positiveInteger(value: number, name: string): number {
