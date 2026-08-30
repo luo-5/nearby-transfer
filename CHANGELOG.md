@@ -5,6 +5,10 @@ All notable changes to Nearby Transfer will be documented in this file.
 ## [Unreleased] - Audit Remediation - 2026-08-29
 
 ### Security
+- **LocalSend receiver confinement**: untrusted manifest names and IDs are validated,
+  temporary paths are server-generated, completed files never overwrite an existing
+  destination, and request/file/session/concurrency limits plus expiry cleanup bound
+  receiver resource use.
 - **Library handshake now requires a signature** (`/api/session`): requests must carry
   `deviceId`, `timestamp`, `nonce`, and an Ed25519 `signature` over
   `nearby-transfer:library-auth:<deviceId>:<timestamp>:<nonce>`; timestamps outside a

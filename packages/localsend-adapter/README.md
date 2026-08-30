@@ -41,6 +41,18 @@ await sendFiles({
 });
 ```
 
+## Receiver safety
+
+The receiver treats LocalSend manifests and uploads as untrusted input. It rejects
+unsafe file names and IDs, writes uploads to server-generated temporary paths, and
+publishes completed files without overwriting an existing destination.
+
+Resource limits are enabled by default for request bodies, file and session sizes,
+pending sessions, concurrent uploads, and session lifetime. They can be adjusted with
+`requestBodyLimitBytes`, `maxFileSizeBytes`, `maxSessionSizeBytes`,
+`maxFilesPerSession`, `maxSessions`, `maxConcurrentUploads`, and `sessionTimeoutMs`.
+Cancelled, expired, and stopped sessions remove their temporary upload data.
+
 ## License
 
 MIT
