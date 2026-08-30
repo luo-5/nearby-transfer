@@ -5,21 +5,81 @@ on:
     tags:
       - 'cli-v*.*.*'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-container-release
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}-cli
 
 jobs:
+  verify:
+    name: Verify CLI tag and repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.target.outputs.version }}
+      prerelease: ${{ steps.target.outputs.prerelease }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify tag version and source branch
+        id: target
+        shell: bash
+        run: |
+          actual="$(node -p "require('./packages/cli/package.json').version")"
+          expected="${GITHUB_REF_NAME#cli-v}"
+          test "$expected" = "$actual" || { echo "Tag version $expected does not match CLI version $actual" >&2; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo 'Release tag must point to a commit contained in main' >&2; exit 1; }
+          if [[ "$actual" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          if [ "$prerelease" = false ]; then
+            highest_tag=''
+            while IFS= read -r candidate; do
+              candidate_version="${candidate#cli-v}"
+              if [[ "$candidate_version" != *-* ]]; then highest_tag="$candidate"; break; fi
+            done < <(git tag -l 'cli-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname)
+            test "$GITHUB_REF_NAME" = "$highest_tag" || { echo "Stable container tag must be the highest stable CLI tag (found $highest_tag)" >&2; exit 1; }
+          fi
+          echo "version=$actual" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify repository and CLI
+        run: npm run ci:verify
+
   build-and-push:
-    name: Build & Push Docker Image
-    runs-on: ubuntu-latest
+    name: Build and push CLI image
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -34,17 +94,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Refuse to replace an existing immutable version tag
+        shell: bash
+        run: |
+          git fetch --tags --force origin
+          if [ '${{ needs.verify.outputs.prerelease }}' = false ]; then
+            highest_tag=''
+            while IFS= read -r candidate; do
+              candidate_version="${candidate#cli-v}"
+              if [[ "$candidate_version" != *-* ]]; then highest_tag="$candidate"; break; fi
+            done < <(git tag -l 'cli-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname)
+            test "$GITHUB_REF_NAME" = "$highest_tag" || { echo "A newer stable CLI tag now exists: $highest_tag" >&2; exit 1; }
+          fi
+          version_image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.verify.outputs.version }}"
+          if docker buildx imagetools inspect "$version_image" >/dev/null 2>&1; then
+            echo "Container version tag already exists and will not be replaced: $version_image" >&2
+            exit 1
+          fi
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=match,pattern=cli-v(.*),group=1
-            type=raw,value=latest
+            type=raw,value=${{ needs.verify.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.verify.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./packages/cli/Dockerfile
@@ -52,3 +133,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true

@@ -8,36 +8,62 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: app-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     name: Verify release tag and repository
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
 
-      - name: Verify application version
+      - name: Verify application version and source branch
+        id: version
         shell: bash
         run: |
           actual="$(node -p "require('./package.json').version")"
           expected="${GITHUB_REF_NAME#app-v}"
-          if [ "$expected" != "$actual" ]; then
-            echo "Tag version $expected does not match package.json version $actual" >&2
-            exit 1
-          fi
+          test "$expected" = "$actual" || { echo "Tag version $expected does not match package.json version $actual" >&2; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo 'Release tag must point to a commit contained in main' >&2; exit 1; }
+          if [[ "$actual" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          echo "version=$actual" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build and verify repository
         run: npm run ci:verify
+
+      - name: Generate SBOM
+        run: npm sbom --sbom-format spdx > sbom.spdx.json
+
+      - name: Upload verified SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: nearby-transfer-sbom-${{ steps.version.outputs.version }}
+          path: sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 14
 
   build-linux:
     needs: verify
@@ -55,40 +81,48 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies for SBOM
-        run: npm ci --ignore-scripts
-
-      - name: Download build artifacts
+      - name: Download build artifacts and SBOM
         uses: actions/download-artifact@v4
         with:
           pattern: nearby-transfer-*
           path: release-assets
           merge-multiple: true
 
-      - name: Generate SBOM and checksums
+      - name: Generate checksums
         shell: bash
         run: |
-          npm sbom --sbom-format spdx > release-assets/sbom.spdx.json
-          find release-assets -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
+          (cd release-assets && find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
             | sort -z \
-            | xargs -0 sha256sum > release-assets/SHA256SUMS.txt
+            | xargs -0 sha256sum > SHA256SUMS.txt)
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: 'Nearby Transfer ${{ github.ref_name }}'
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: true
-          files: |
-            release-assets/*
+      - name: Create or recover application release without replacing assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease_flag=''
+          if [ '${{ needs.verify.outputs.prerelease }}' = 'true' ]; then prerelease_flag='--prerelease'; fi
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes $prerelease_flag --title 'Nearby Transfer ${{ github.ref_name }}'
+          fi
+
+          existing_dir="$(mktemp -d)"
+          trap 'rm -rf "$existing_dir"' EXIT
+          existing_assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')"
+          while IFS= read -r name; do
+            [ -z "$name" ] && continue
+            test -f "release-assets/$name" || { echo "Existing release contains unexpected asset: $name" >&2; exit 1; }
+            gh release download "$GITHUB_REF_NAME" --pattern "$name" --dir "$existing_dir"
+            cmp -s "$existing_dir/$name" "release-assets/$name" || { echo "Existing release asset differs: $name" >&2; exit 1; }
+          done <<< "$existing_assets"
+
+          for asset in release-assets/*; do
+            name="$(basename "$asset")"
+            if printf '%s\n' "$existing_assets" | grep -Fxq "$name"; then continue; fi
+            gh release upload "$GITHUB_REF_NAME" "$asset"
+          done
+
+          final_assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort)"
+          desired_assets="$(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$final_assets" = "$desired_assets" || { echo 'Release asset set is incomplete or contains unexpected files' >&2; exit 1; }
+          gh release edit "$GITHUB_REF_NAME" --draft=false

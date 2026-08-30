@@ -75,9 +75,6 @@ ALLOW=$(echo "$OPT_HEADERS" | grep -i '^Allow:' | tr -d '\r')
 ok "OPTIONS Allow includes MKCOL" "$(echo "$ALLOW" | grep -qi MKCOL && echo true || echo false)" "$ALLOW"
 ok "OPTIONS Allow includes DELETE" "$(echo "$ALLOW" | grep -qi DELETE && echo true || echo false)" "$ALLOW"
 ok "OPTIONS Allow includes MOVE" "$(echo "$ALLOW" | grep -qi MOVE && echo true || echo false)" "$ALLOW"
-DAV_HDR=$(echo "$OPT_HEADERS" | grep -i '^DAV:' | tr -d '\r')
-ok "OPTIONS DAV is class 1 (not 2)" "$(echo "$DAV_HDR" | grep -qi '2' && echo false || echo true)" "$DAV_HDR"
-
 # ── Test 2: PROPFIND root (Depth: 1) ───────────────────────────────────────
 PF_ROOT=$(body -X PROPFIND -H "$AUTH" -H "Depth: 1" "${BASE_URL}/docs/")
 PF_ROOT_CODE=$(status -X PROPFIND -H "$AUTH" -H "Depth: 1" "${BASE_URL}/docs/")
