@@ -50,9 +50,21 @@ Pre-built installers for the latest release are on the [Releases page](https://g
 
 Open `android-app/` in Android Studio (or run `./gradlew.bat :android-app:assembleDebug`) and install the resulting APK. Requires Android 8.0 (API 26) or later.
 
+## npm Packages · npm 包
+
+These public packages are versioned independently from the desktop and Android apps.
+They remain pre-1.0, so review the [capability matrix](docs/capabilities.md) for current
+maturity and security boundaries before integrating them.
+
+| Package | npm status | Purpose · 用途 | Install | Source |
+| --- | --- | --- | --- | --- |
+| [`@luo-5/core`](https://www.npmjs.com/package/@luo-5/core) | [![npm version](https://img.shields.io/npm/v/%40luo-5%2Fcore?label=latest&logo=npm)](https://www.npmjs.com/package/@luo-5/core) | Electron/DOM-independent protocol-v2 primitives for crypto, discovery, pairing, and transfer · 不依赖 Electron/DOM 的 v2 协议基础库 | `npm install @luo-5/core` | [`packages/core`](packages/core) |
+| [`@luo-5/cli`](https://www.npmjs.com/package/@luo-5/cli) | [![npm version](https://img.shields.io/npm/v/%40luo-5%2Fcli?label=latest&logo=npm)](https://www.npmjs.com/package/@luo-5/cli) | Developer-preview CLI for LAN discovery, transfer, and directory-sync foundations · 局域网发现、传输与目录同步的开发者预览 CLI | `npm install -g @luo-5/cli` | [`packages/cli`](packages/cli) |
+| [`@luo-5/localsend-adapter`](https://www.npmjs.com/package/@luo-5/localsend-adapter) | [![npm version](https://img.shields.io/npm/v/%40luo-5%2Flocalsend-adapter?label=latest&logo=npm)](https://www.npmjs.com/package/@luo-5/localsend-adapter) | LocalSend v2 interoperability adapter for LAN file exchange · 用于局域网文件交换的 LocalSend v2 互操作适配器 | `npm install @luo-5/localsend-adapter` | [`packages/localsend-adapter`](packages/localsend-adapter) |
+
 ## Current Status · 当前状态
 
-Released at **v1.3.0**. The v2 protocol — Ed25519 identities, SAS pairing, AES-256-GCM chunk encryption, resumable transfers, WebDAV shared library, and the 7-protocol engine — is stable and cross-platform tested across Windows, Ubuntu, and CentOS. Work is underway to extract the protocol core into a reusable TypeScript package (`@luo-5/core`) and to grow the ecosystem (CLI, Docker, LocalSend interop) per the roadmap.
+Released at **v1.3.0**. The v2 protocol — Ed25519 identities, SAS pairing, AES-256-GCM chunk encryption, resumable transfers, WebDAV shared library, and the 7-protocol engine — is stable and cross-platform tested across Windows, Ubuntu, and CentOS. The protocol core, developer-preview CLI, and LocalSend interoperability adapter are now public, independently versioned pre-1.0 npm packages linked above.
 
 ### v0.2 Transfer Flow
 
