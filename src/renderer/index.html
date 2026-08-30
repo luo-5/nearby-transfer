@@ -38,7 +38,7 @@
 
         <div id="selectedFile" class="selected-file empty" data-i18n="no_file_selected">未选择文件。</div>
         <button id="sendButton" class="primary" type="button" disabled data-i18n="send_button">发送</button>
-        <p id="statusText" class="status-text" data-i18n="initial_status">先选择附近设备，再选择要发送的文件。</p>
+        <p id="statusText" class="status-text" role="status" aria-live="polite" data-i18n="initial_status">先选择附近设备，再选择要发送的文件。</p>
       </section>
 
       <article class="panel identity">
@@ -64,10 +64,10 @@
 
       <article class="panel library-panel">
         <div class="panel-title-row">
-          <h2 data-i18n="nas_library_title">NAS 共享文件库 (WebDAV)</h2>
+          <h2 data-i18n="nas_library_title">Nearby Transfer 共享文件库</h2>
           <span id="libraryStatusBadge" class="badge" data-i18n="library_ready_badge">已就绪</span>
         </div>
-        <p class="pairing-intro" data-i18n="library_intro">手机与其它设备可通过受控免密会话或 WebDAV 直接访问与同步该目录下的所有文件。</p>
+        <p class="pairing-intro" data-i18n="library_intro">受支持的 Nearby Transfer 客户端可在签名会话协商后访问此 HTTPS 共享库；它不是通用免密 WebDAV 挂载点。</p>
         <dl>
           <div>
             <dt data-i18n="current_share_folder">当前共享文件夹</dt>
@@ -75,7 +75,7 @@
             <dd id="libraryShareMode" class="mode-line">-</dd>
           </div>
           <div>
-            <dt data-i18n="webdav_url_label">局域网 WebDAV 挂载地址</dt>
+            <dt data-i18n="webdav_url_label">Nearby Transfer 共享库地址</dt>
             <dd id="libraryWebDavUrl" class="url-display">-</dd>
           </div>
         </dl>
@@ -86,7 +86,7 @@
             data-i18n="open_in_explorer">在资源管理器中打开</button>
           <button id="resetLibraryPathButton" class="secondary" type="button"
             data-i18n="reset_share_folder">恢复默认共享目录</button>
-          <button id="copyWebDavUrlButton" class="secondary" type="button" data-i18n="copy_webdav_url">复制挂载链接</button>
+          <button id="copyWebDavUrlButton" class="secondary" type="button" data-i18n="copy_webdav_url">复制共享库地址</button>
         </div>
       </article>
     </section>
@@ -101,39 +101,39 @@
       </div>
 
       <!-- 分类筛选标签 -->
-      <div class="protocol-category-tabs" role="tablist">
-        <button class="proto-tab-btn active" data-category="all" type="button" data-i18n="protocol_category_all">全部 (7)</button>
-        <button class="proto-tab-btn" data-category="fast" type="button" data-i18n="protocol_category_fast">🚀 极速传输</button>
-        <button class="proto-tab-btn" data-category="system" type="button" data-i18n="protocol_category_system">🪟 系统共享</button>
-        <button class="proto-tab-btn" data-category="standard" type="button" data-i18n="protocol_category_standard">🌐 标准服务</button>
+      <div class="protocol-category-tabs" role="group" aria-label="Protocol category filter">
+        <button class="proto-tab-btn active" data-category="all" type="button" aria-pressed="true" data-i18n="protocol_category_all">全部 (7)</button>
+        <button class="proto-tab-btn" data-category="fast" type="button" aria-pressed="false" data-i18n="protocol_category_fast">🚀 极速传输</button>
+        <button class="proto-tab-btn" data-category="system" type="button" aria-pressed="false" data-i18n="protocol_category_system">🪟 系统共享</button>
+        <button class="proto-tab-btn" data-category="standard" type="button" aria-pressed="false" data-i18n="protocol_category_standard">🌐 标准服务</button>
       </div>
 
-      <div class="protocol-grid">
+      <div class="protocol-grid" role="radiogroup" aria-labelledby="protocolSettingsTitle">
         <!-- 1. V2 Stream (fast) -->
         <div class="protocol-card" data-protocol="v2-stream" data-category="fast" tabindex="0" role="radio" aria-checked="false">
           <div class="protocol-card-header">
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
               <h3 class="protocol-name" data-i18n="protocol_v2_name">V2 高可靠流式协议</h3>
-              <span class="protocol-tag tag-recommended" data-i18n="protocol_v2_badge">自研 / 稳定推荐</span>
+              <span class="protocol-tag tag-recommended" data-i18n="protocol_v2_badge">组件测试中 / 桌面未接入</span>
             </div>
           </div>
           <div class="protocol-details">
             <div class="protocol-pro-item">
               <span class="bullet bullet-pro">✓</span>
-              <span class="protocol-text" data-i18n="protocol_v2_pros">优势：毫秒级断点续传、分块确认(ACK)防丢包、双向暂停恢复与网络自动重连。</span>
+              <span class="protocol-text" data-i18n="protocol_v2_pros">现状：核心分块、检查点与控制组件已有自动化测试。</span>
             </div>
             <div class="protocol-con-item">
               <span class="bullet bullet-con">✕</span>
-              <span class="protocol-text" data-i18n="protocol_v2_cons">缺点：带有二进制分帧与 ACK 心跳开销。</span>
+              <span class="protocol-text" data-i18n="protocol_v2_cons">限制：尚未接入当前桌面发送与接收数据通路。</span>
             </div>
             <div class="protocol-scenario-item">
               <span class="bullet bullet-scenario">★</span>
-              <span class="protocol-text" data-i18n="protocol_v2_scenario">适用：跨端日常互传、大文件传输、Wi-Fi 波动弱网环境。</span>
+              <span class="protocol-text" data-i18n="protocol_v2_scenario">规划：完成跨端集成和兼容性验证后再开放选择。</span>
             </div>
             <div class="protocol-client-item">
               <span class="bullet bullet-client">💻</span>
-              <span class="protocol-text protocol-client-text" data-i18n="protocol_v2_client">兼容：Nearby Transfer 官方桌面与移动端</span>
+              <span class="protocol-text protocol-client-text" data-i18n="protocol_v2_client">可用客户端：暂无完整端到端支持</span>
             </div>
           </div>
         </div>
@@ -144,25 +144,25 @@
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
               <h3 class="protocol-name" data-i18n="protocol_turbo_name">Turbo 极速多通道并发协议</h3>
-              <span class="protocol-tag tag-speed" data-i18n="protocol_turbo_badge">4~8路并发 / 千兆极限</span>
+              <span class="protocol-tag tag-speed" data-i18n="protocol_turbo_badge">路线图 / 未实现</span>
             </div>
           </div>
           <div class="protocol-details">
             <div class="protocol-pro-item">
               <span class="bullet bullet-pro">✓</span>
-              <span class="protocol-text" data-i18n="protocol_turbo_pros">优势：4~8 路并发管道高速分片吞吐，极限压榨 Wi-Fi 6 / 2.5G 千兆局域网硬件带宽。</span>
+              <span class="protocol-text" data-i18n="protocol_turbo_pros">现状：仅保留协议驱动接口与路线图条目，没有可用数据通路。</span>
             </div>
             <div class="protocol-con-item">
               <span class="bullet bullet-con">✕</span>
-              <span class="protocol-text" data-i18n="protocol_turbo_cons">缺点：并发占用较多系统 Socket，对老旧弱单核路由器有一定压力。</span>
+              <span class="protocol-text" data-i18n="protocol_turbo_cons">限制：性能、资源占用和兼容性均尚未验证。</span>
             </div>
             <div class="protocol-scenario-item">
               <span class="bullet bullet-scenario">★</span>
-              <span class="protocol-text" data-i18n="protocol_turbo_scenario">适用：强信号 5GHz Wi-Fi / 有线千兆内网、传输 5GB+ 4K 电影与超大文件。</span>
+              <span class="protocol-text" data-i18n="protocol_turbo_scenario">规划：实现后再通过基准测试确定适用场景。</span>
             </div>
             <div class="protocol-client-item">
               <span class="bullet bullet-client">💻</span>
-              <span class="protocol-text protocol-client-text" data-i18n="protocol_turbo_client">兼容：Nearby Transfer Turbo 极速引擎</span>
+              <span class="protocol-text protocol-client-text" data-i18n="protocol_turbo_client">可用客户端：无</span>
             </div>
           </div>
         </div>
@@ -173,25 +173,25 @@
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
               <h3 class="protocol-name" data-i18n="protocol_quic_name">QUIC / UDP 极速抗弱网协议</h3>
-              <span class="protocol-tag tag-quic" data-i18n="protocol_quic_badge">UDP / 0-RTT 弱网利器</span>
+              <span class="protocol-tag tag-quic" data-i18n="protocol_quic_badge">路线图 / 未实现</span>
             </div>
           </div>
           <div class="protocol-details">
             <div class="protocol-pro-item">
               <span class="bullet bullet-pro">✓</span>
-              <span class="protocol-text" data-i18n="protocol_quic_pros">优势：基于 UDP 彻底无队头阻塞，丢包率 20%~30% 时仍能维持极高速率，0-RTT 极速握手。</span>
+              <span class="protocol-text" data-i18n="protocol_quic_pros">现状：仅保留协议驱动接口，尚无 QUIC 运行时。</span>
             </div>
             <div class="protocol-con-item">
               <span class="bullet bullet-con">✕</span>
-              <span class="protocol-text" data-i18n="protocol_quic_cons">缺点：部分严格企业/校园网防火墙会限制或阻断 UDP 流量。</span>
+              <span class="protocol-text" data-i18n="protocol_quic_cons">限制：网络行为和平台兼容性均尚未验证。</span>
             </div>
             <div class="protocol-scenario-item">
               <span class="bullet bullet-scenario">★</span>
-              <span class="protocol-text" data-i18n="protocol_quic_scenario">适用：弱信号 Wi-Fi 边缘、公共咖啡厅热点、手机移动热点共享。</span>
+              <span class="protocol-text" data-i18n="protocol_quic_scenario">规划：实现并完成弱网测试后再说明适用场景。</span>
             </div>
             <div class="protocol-client-item">
               <span class="bullet bullet-client">💻</span>
-              <span class="protocol-text protocol-client-text" data-i18n="protocol_quic_client">兼容：Nearby Transfer QUIC 加速引擎</span>
+              <span class="protocol-text protocol-client-text" data-i18n="protocol_quic_client">可用客户端：无</span>
             </div>
           </div>
         </div>
@@ -202,25 +202,25 @@
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
               <h3 class="protocol-name" data-i18n="protocol_smb_name">SMB 3.0 局域网网络邻居协议</h3>
-              <span class="protocol-tag tag-smb" data-i18n="protocol_smb_badge">免装客户端 / 系统原生</span>
+              <span class="protocol-tag tag-smb" data-i18n="protocol_smb_badge">路线图 / 未实现</span>
             </div>
           </div>
           <div class="protocol-details">
             <div class="protocol-pro-item">
               <span class="bullet bullet-pro">✓</span>
-              <span class="protocol-text" data-i18n="protocol_smb_pros">优势：Windows 资源管理器与 macOS Finder 原生直接挂载，无需安装任何 App 即可直接双击打开与编辑。</span>
+              <span class="protocol-text" data-i18n="protocol_smb_pros">现状：项目尚未提供 SMB 服务端或桌面传输数据通路。</span>
             </div>
             <div class="protocol-con-item">
               <span class="bullet bullet-con">✕</span>
-              <span class="protocol-text" data-i18n="protocol_smb_cons">缺点：跨网段容易被防火墙拦截 445 端口，协议握手较重。</span>
+              <span class="protocol-text" data-i18n="protocol_smb_cons">限制：认证、权限和平台兼容性设计尚未完成。</span>
             </div>
             <div class="protocol-scenario-item">
               <span class="bullet bullet-scenario">★</span>
-              <span class="protocol-text" data-i18n="protocol_smb_scenario">适用：办公室局域网电脑互访、家庭局域网多设备文件免装客户端直拷。</span>
+              <span class="protocol-text" data-i18n="protocol_smb_scenario">规划：实现并验证各平台挂载行为后再开放。</span>
             </div>
             <div class="protocol-client-item">
               <span class="bullet bullet-client">💻</span>
-              <span class="protocol-text protocol-client-text" data-i18n="protocol_smb_client">兼容：Windows 资源管理器、Mac Finder、Linux Samba</span>
+              <span class="protocol-text protocol-client-text" data-i18n="protocol_smb_client">可用客户端：无</span>
             </div>
           </div>
         </div>
@@ -231,13 +231,13 @@
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
               <h3 class="protocol-name" data-i18n="protocol_webdav_name">WebDAV 直连云盘同步协议</h3>
-              <span class="protocol-tag tag-nas" data-i18n="protocol_webdav_badge">RFC 4918 / 云盘挂载</span>
+              <span class="protocol-tag tag-nas" data-i18n="protocol_webdav_badge">共享库预览 / 非传输驱动</span>
             </div>
           </div>
           <div class="protocol-details">
             <div class="protocol-pro-item">
               <span class="bullet bullet-pro">✓</span>
-              <span class="protocol-text" data-i18n="protocol_webdav_pros">优势：基于标准 RFC 4918 协议，支持手机直接挂载电脑磁盘、在线浏览与按需下载点播。</span>
+              <span class="protocol-text" data-i18n="protocol_webdav_pros">现状：共享库提供受限 WebDAV 方法集，但尚未作为桌面传输协议接入。</span>
             </div>
             <div class="protocol-con-item">
               <span class="bullet bullet-con">✕</span>
@@ -245,11 +245,11 @@
             </div>
             <div class="protocol-scenario-item">
               <span class="bullet bullet-scenario">★</span>
-              <span class="protocol-text" data-i18n="protocol_webdav_scenario">适用：手机文件管理器挂载电脑共享库、照片库增量自动备份、在线视频播放。</span>
+              <span class="protocol-text" data-i18n="protocol_webdav_scenario">适用：在能力矩阵所列限制内进行共享库预览。</span>
             </div>
             <div class="protocol-client-item">
               <span class="bullet bullet-client">💻</span>
-              <span class="protocol-text protocol-client-text" data-i18n="protocol_webdav_client">兼容：Android SAF、Solid Explorer、WPS、Infuse</span>
+              <span class="protocol-text protocol-client-text" data-i18n="protocol_webdav_client">兼容性：需按客户端单独验证</span>
             </div>
           </div>
         </div>
@@ -260,13 +260,13 @@
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
               <h3 class="protocol-name" data-i18n="protocol_v1_name">V1 经典 HTTP 流加密协议</h3>
-              <span class="protocol-tag tag-light" data-i18n="protocol_v1_badge">轻量 / 极低开销</span>
+              <span class="protocol-tag tag-light" data-i18n="protocol_v1_badge">当前桌面默认</span>
             </div>
           </div>
           <div class="protocol-details">
             <div class="protocol-pro-item">
               <span class="bullet bullet-pro">✓</span>
-              <span class="protocol-text" data-i18n="protocol_v1_pros">优势：标准 RESTful HTTP 流式传输，防火墙穿透性极好，内存与 CPU 占用极低。</span>
+              <span class="protocol-text" data-i18n="protocol_v1_pros">现状：当前桌面端使用签名请求与加密分帧进行流式文件传输。</span>
             </div>
             <div class="protocol-con-item">
               <span class="bullet bullet-con">✕</span>
@@ -274,11 +274,11 @@
             </div>
             <div class="protocol-scenario-item">
               <span class="bullet bullet-scenario">★</span>
-              <span class="protocol-text" data-i18n="protocol_v1_scenario">适用：低功耗/低配设备、老旧路由器、散碎小文件与日常照片。</span>
+              <span class="protocol-text" data-i18n="protocol_v1_scenario">适用：日常局域网文件传输；中断后需整体重试。</span>
             </div>
             <div class="protocol-client-item">
               <span class="bullet bullet-client">💻</span>
-              <span class="protocol-text protocol-client-text" data-i18n="protocol_v1_client">兼容：通用 HTTP 客户端、Web 浏览器、Nearby Transfer v1</span>
+              <span class="protocol-text protocol-client-text" data-i18n="protocol_v1_client">兼容：支持当前签名发现与加密帧格式的 Nearby Transfer 客户端</span>
             </div>
           </div>
         </div>
@@ -289,25 +289,25 @@
             <div class="protocol-radio-indicator"></div>
             <div class="protocol-card-title-group">
               <h3 class="protocol-name" data-i18n="protocol_ftps_name">FTPS 极速安全传输服务协议</h3>
-              <span class="protocol-tag tag-ftps" data-i18n="protocol_ftps_badge">TLS 加密 / 专业工具</span>
+              <span class="protocol-tag tag-ftps" data-i18n="protocol_ftps_badge">路线图 / 未实现</span>
             </div>
           </div>
           <div class="protocol-details">
             <div class="protocol-pro-item">
               <span class="bullet bullet-pro">✓</span>
-              <span class="protocol-text" data-i18n="protocol_ftps_pros">优势：数十年工业级验证的高速传输协议，完美适配第三方专业文件管理工具。</span>
+              <span class="protocol-text" data-i18n="protocol_ftps_pros">现状：项目尚未提供 FTPS 服务端或客户端数据通路。</span>
             </div>
             <div class="protocol-con-item">
               <span class="bullet bullet-con">✕</span>
-              <span class="protocol-text" data-i18n="protocol_ftps_cons">缺点：主动/被动模式对复杂 NAT 端口映射要求较高。</span>
+              <span class="protocol-text" data-i18n="protocol_ftps_cons">限制：认证、证书和客户端兼容性尚未设计完成。</span>
             </div>
             <div class="protocol-scenario-item">
               <span class="bullet bullet-scenario">★</span>
-              <span class="protocol-text" data-i18n="protocol_ftps_scenario">适用：专业开发者、Linux 终端脚本同步、开发板与 NAS 极速拉取。</span>
+              <span class="protocol-text" data-i18n="protocol_ftps_scenario">规划：实现并完成第三方客户端验证后再开放。</span>
             </div>
             <div class="protocol-client-item">
               <span class="bullet bullet-client">💻</span>
-              <span class="protocol-text protocol-client-text" data-i18n="protocol_ftps_client">兼容：FileZilla、Total Commander、ES 文件浏览器、lftp</span>
+              <span class="protocol-text protocol-client-text" data-i18n="protocol_ftps_client">可用客户端：无</span>
             </div>
           </div>
         </div>
@@ -351,7 +351,7 @@
             <h3 id="v2TrustedTitle" data-i18n="v2_trusted_devices">受信设备</h3>
             <span id="v2TrustedCount" class="badge">0</span>
           </div>
-          <p class="pairing-help" data-i18n="v2_trusted_help">新配对仅授予“传输”权限；其他权限不会自动开启。</p>
+          <p class="pairing-help" data-i18n="v2_trusted_help">配对只保存设备身份，默认不授予任何权限；请按需显式开启。</p>
           <div id="v2TrustedPeers" class="pairing-list empty" data-i18n="v2_no_trusted_devices">暂无受信设备。</div>
         </section>
       </div>
@@ -360,30 +360,30 @@
     <section class="panel transfers-panel" aria-labelledby="v2TransferJobsTitle">
       <div class="panel-title-row">
         <div>
-          <h2 id="v2TransferJobsTitle" data-i18n="transfers_title">可恢复传输任务</h2>
-          <p class="pairing-intro" data-i18n="v2_pairing_intro">任务状态会持久化；应用重启或网络中断后可在这里重试。</p>
+          <h2 id="v2TransferJobsTitle" data-i18n="recoverable_transfers_title">实验性 v2 持久化任务</h2>
+          <p class="pairing-intro" data-i18n="recoverable_transfers_intro">这里仅显示实验性 v2 任务状态；当前经典桌面传输不在此面板中，也不支持断点恢复。</p>
         </div>
         <span id="v2TransferJobSummary" class="badge">0</span>
       </div>
-      <p id="v2TransferJobStatus" class="pairing-status" role="status" aria-live="polite">正在读取可恢复传输任务...</p>
-      <div id="v2TransferJobs" class="transfers empty" data-i18n="no_transfers">暂无持久化传输任务。</div>
+      <p id="v2TransferJobStatus" class="pairing-status" role="status" aria-live="polite" data-i18n="recoverable_transfers_loading">正在读取实验性 v2 任务...</p>
+      <div id="v2TransferJobs" class="transfers empty" data-i18n="recoverable_transfers_empty">暂无实验性 v2 任务。</div>
       <button id="v2TransferJobRefresh" class="secondary pairing-action" type="button"
-        data-i18n="refresh_peers">刷新任务</button>
+        data-i18n="recoverable_transfers_refresh">刷新任务</button>
     </section>
 
     <section class="panel transfers-panel">
       <div class="panel-title-row">
         <div>
           <h2 data-i18n="transfers_title">传输记录</h2>
-          <p class="pairing-intro">实时监控传输进度，支持暂停、继续、终止和定位打开已接收文件。</p>
+          <p class="pairing-intro" data-i18n="transfer_live_intro">显示当前经典桌面传输记录；可用操作取决于任务状态。</p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center;">
           <button id="clearCompletedTransfersButton" class="secondary" type="button"
-            style="font-size: 0.8rem; padding: 4px 12px;">清除已完成</button>
-          <span class="badge">实时</span>
+            style="font-size: 0.8rem; padding: 4px 12px;" data-i18n="clear_completed">清除已完成</button>
+          <span class="badge" data-i18n="live_badge">实时</span>
         </div>
       </div>
-      <div id="transfers" class="transfers empty" data-i18n="no_transfers">暂无传输记录。</div>
+      <div id="transfers" class="transfers empty" role="log" aria-live="polite" aria-relevant="additions text" data-i18n="no_transfers">暂无传输记录。</div>
     </section>
   </main>
   <script src="i18n.js"></script>

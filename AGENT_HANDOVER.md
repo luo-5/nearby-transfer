@@ -1,6 +1,11 @@
-# Nearby Transfer 全量项目交接文档 (Agent Handover)
+# Nearby Transfer 历史项目交接文档 (Agent Handover)
 
-> **文档性质**：面向下一位接手 AI Agent / 核心开发者的权威项目交接与开发指南。  
+> **历史记录 / 非权威资料：** 本文件记录一次旧交接状态，版本、测试数量、
+> 分支、工具链和实现说明可能已经过期。当前能力只以
+> [`docs/capabilities.md`](docs/capabilities.md) 为准，发布流程以
+> [`docs/releasing.md`](docs/releasing.md) 为准。不得据此文件宣称功能已交付。
+
+> **文档性质**：旧版 AI Agent / 开发者交接记录。
 > **交接日期**：2026-08-30
 > **交接基线提交**：`5ec1d93` (`main`；后续工作请以实际 `git status` 为准)
 > **远程仓库**：`https://github.com/luo-5/nearby-transfer.git`  

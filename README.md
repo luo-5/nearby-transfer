@@ -22,8 +22,8 @@ package downloads; npm publishes separate per-package statistics.
 - **V2 pairing foundation · V2 配对基础** — signed offers, 6-digit SAS derivation, trust persistence, and replay-aware control messages are implemented and tested as v2 components; application integration remains in progress.
 - **Resumable transfer foundation · 断点续传基础** — protocol-v2 includes chunk checkpoints and recovery state machines. Do not assume every current client or protocol path can resume yet.
 - **Protocol migration · 协议迁移** — the desktop transfer flow currently uses `v1-classic`. The `v2-stream`, Turbo, QUIC, SMB, WebDAV-driver, and FTPS adapters remain visible as experimental roadmap entries but cannot be selected until their send/receive paths are integrated.
-- **Shared library (WebDAV) · 共享库** — turn a device into an HTTPS WebDAV NAS; browse, upload, download, and delete with Bearer-token auth over self-signed TLS.
-- **Concurrent multi-device · 多设备并发** — send to and receive from several peers simultaneously.
+- **Shared library (limited WebDAV) · 共享库** — supported Nearby Transfer clients negotiate a signed session and then use a Bearer token over self-signed HTTPS. This is not a generic password-free mount for arbitrary WebDAV clients; the default share is read-only and a user-selected share is writable.
+- **Concurrent receive handling · 并发接收** — the receiver tracks multiple incoming transfers; the current desktop send UI starts a transfer to one selected peer at a time.
 - **Cross-platform foundations · 跨平台基础** — Electron, Android, and Node implementations live in one repository and share protocol fixtures. End-to-end compatibility is tracked per client rather than claimed globally.
 - **Directory sync preview · 目录同步预览** — the CLI contains directory scanning, hashing, conflict, and resume components, but its trust and pairing workflow is not yet ready for general use.
 - **Scoped security hardening · 分范围安全加固** — protocol-v2 components enforce bounded frames, random chunk nonces, authenticated metadata, and receive-path validation. These guarantees do not automatically apply to the classic, WebDAV, or LocalSend paths.
@@ -33,29 +33,42 @@ package downloads; npm publishes separate per-package statistics.
 **Desktop · 桌面端**
 
 ```bash
-# install dependencies (Node.js >= 24)
-npm install
+# install the lockfile-pinned dependencies (Node.js >= 24)
+npm ci
 
 # run the app
 npm start
 
-# run the smoke test suite
-npm test
+# run the repository release gate
+npm run ci:verify
 
-# build current desktop artifacts
-npm run dist:windows   # Windows portable executable + zip (unsigned)
-npm run dist:linux     # Linux x64 Debian package
 ```
 
-Pre-built installers for the latest release are on the [Releases page](https://github.com/luo-5/nearby-transfer/releases).
+Build on the matching platform. On Windows:
+
+```powershell
+npm run dist:windows # portable executable + zip (unsigned)
+```
+
+On Linux:
+
+```bash
+npm run dist:linux # x64 Debian package
+```
+
+Release assets for the latest version are on the [Releases page](https://github.com/luo-5/nearby-transfer/releases).
 
 **Android · 安卓端**
 
-Open `android-app/` in Android Studio (or run `./gradlew.bat :android-app:assembleDebug`) and install the resulting APK. Requires Android 8.0 (API 26) or later.
+Open `android-app/` in Android Studio, or build from the repository root with
+`./gradlew :android-app:assembleDebug` on Linux/macOS and
+`.\gradlew.bat :android-app:assembleDebug` on Windows. Install the resulting APK.
+Android 8.0 (API 26) or later is required.
 
 ## Current Status · 当前状态
 
-Released at **v1.3.0**. The desktop app currently sends files through the classic encrypted HTTP stream. V2 pairing, transfer primitives, and resumable job infrastructure are under active integration, while the WebDAV shared-library service is available separately. The remaining protocol adapters are experimental scaffolds rather than complete transfer implementations. The npm packages are pre-1.0 and may change. See the [capability and security matrix](docs/capabilities.md) before choosing a client or protocol.
+The latest documented application release is **v1.3.0**; this worktree prepares
+**v1.3.1**. The desktop app currently sends files through the classic encrypted HTTP stream. V2 pairing, transfer primitives, and resumable job infrastructure are under active integration, while the WebDAV shared-library service is available separately. The remaining protocol adapters are experimental scaffolds rather than complete transfer implementations. The npm packages are pre-1.0 and may change. See the [capability and security matrix](docs/capabilities.md) before choosing a client or protocol.
 
 ### Current classic transfer flow
 
@@ -80,15 +93,14 @@ Unsigned Windows builds are intended for testing. Public Windows releases should
 ## Run
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
 ## Verify
 
 ```bash
-npm run check
-npm test
+npm run ci:verify
 ```
 
 ## Build Guide
@@ -97,9 +109,10 @@ See [`docs/build.md`](docs/build.md) for complete Linux, Windows, and Android bu
 Release tags and independent application/package version lines are documented in
 [`docs/releasing.md`](docs/releasing.md).
 
-For the v1.0 rewrite plan, current implementation boundary, and moving the
-working directory to another computer, see
-[`docs/next-version-handoff.md`](docs/next-version-handoff.md).
+Current implementation boundaries are tracked in the
+[`capability matrix`](docs/capabilities.md); planned work is tracked in
+[`ROADMAP.md`](ROADMAP.md), and contributor workflows are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Protocol Specification · 协议规范
 
@@ -139,10 +152,10 @@ Cross-platform packages are best built on matching CI runners. The repository in
 On Linux, Windows zip test packages can be generated without Wine by running:
 
 ```bash
-electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
+npm exec -- electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
 ```
 
-The Windows NSIS installer requires Wine when cross-building from Linux, or a native Windows runner.
+The current Windows release target is an unsigned portable executable plus zip. NSIS is future packaging work.
 
 ## Build Android APK
 

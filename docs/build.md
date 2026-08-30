@@ -74,7 +74,7 @@ warnings and improve publisher identity.
 On Linux, zip test packages can be generated without Wine:
 
 ```bash
-electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
+npm exec -- electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
 ```
 
 NSIS is configured as future packaging work but is not requested by the standard
@@ -99,6 +99,12 @@ On Linux and macOS:
 ```
 
 The debug APK is intended for local testing only. Configure release signing and build a release APK or AAB before public Android distribution.
+
+On Windows, a repository path containing non-ASCII characters causes generated
+Android output to be redirected to a same-drive ASCII directory. Gradle prints the
+actual output root. If the drive root is not writable, set
+`-PnearbyTransferBuildRoot=<same-drive ASCII writable path>` explicitly. Do not assume
+the APK remains under `android-app/build` in that environment.
 ## GitHub Actions
 
 The repository includes workflows for source checks and platform artifacts:

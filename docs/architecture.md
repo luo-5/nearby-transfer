@@ -1,71 +1,58 @@
-# Nearby Transfer Architecture Document
+# Nearby Transfer architecture
 
-## 1. System Overview
+Nearby Transfer is a local-network file-transfer project with an Electron desktop application, an Android application, npm libraries, a CLI preview, and a limited HTTPS shared-library service.
 
-**Nearby Transfer** is a secure, high-performance, zero-external-dependency local-area network (LAN) file transfer system for desktop (Node.js/Electron), mobile (Android), and NAS (WebDAV) environments.
+The `@luo-5/core` package has zero runtime npm dependencies. That statement does not apply to the whole repository: the desktop application uses Electron and the build and test toolchain has development dependencies.
 
-The system is architected as a modular monorepo:
-* **`@luo-5/core`**: Protocol, cryptographic primitives, and state machines with zero runtime npm dependencies.
-* **`@luo-5/cli`**: Cross-platform command-line tool (`nearby-transfer`).
-* **`@luo-5/localsend-adapter`**: Protocol bridge supporting LocalSend v2 interoperation.
-* **`protocol-spec`**: Deterministic protocol specifications and test vectors.
+## Current user-facing paths
 
----
+- Electron desktop file transfer uses the classic encrypted HTTP stream.
+- Desktop and Android classic discovery use signed discovery announcement version 2.
+- The HTTPS shared-library service is a separate limited WebDAV implementation for supported Nearby Transfer clients after signed session negotiation.
+- Protocol-v2 pairing, transfer, persistence, scheduling, and recovery components are implemented as a migration foundation, but the v2 data plane is not the default Electron send/receive path.
+- Turbo, QUIC, SMB, a WebDAV transfer driver, and FTPS are roadmap entries only.
 
-## 2. Protocol Layers & Data Flow
+The capability matrix is the source of truth for shipped status: [`capabilities.md`](capabilities.md).
+
+## Repository boundaries
+
+- `packages/core`: protocol-v2 primitives and state machines.
+- `packages/cli`: developer-preview command-line client.
+- `packages/localsend-adapter`: LocalSend interoperability adapter with a separate protocol and trust boundary.
+- `packages/protocol-spec`: protocol constants and schema-related material.
+- `src/core`: current classic Electron discovery and transfer path.
+- `src/v2`: Electron integration adapters and shared-library service.
+- `android-app`: Android application and protocol clients.
+
+## Current classic desktop flow
+
+1. A device periodically sends a signed discovery announcement.
+2. A sender opens an HTTP transfer-request connection and submits signed metadata.
+3. The receiver asks the user to accept or reject the request.
+4. On acceptance, the sender streams application-encrypted frames.
+5. The receiver writes a temporary file, verifies its final hash, and publishes it without overwriting an existing destination.
+
+## Protocol-v2 target/component flow
+
+The following is the intended v2 component flow. It describes tested library components and the integration target, not the currently selectable Electron path.
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant Alice as Sender (Device A)
-    participant Bob as Receiver (Device B)
-
-    Note over Alice,Bob: Phase 1: UDP Multicast Discovery
-    Alice->>Bob: UDP Announcement (Ed25519 Signed Public Identity)
-    Bob->>Alice: UDP Announcement (Ed25519 Signed Public Identity)
-
-    Note over Alice,Bob: Phase 2: TCP Connection & Wire Frame Bootstrap
-    Alice->>Bob: TCP Connect
-    Alice->>Bob: WireFrame(TRANSFER_MANIFEST, Ephemeral X25519 Key)
-    Bob->>Alice: WireFrame(TRANSFER_DECISION: accepted)
-
-    Note over Alice,Bob: Phase 3: Cryptographic Session Establishment
-    Note over Alice: ECDH(Local Priv, Remote Pub) + HKDF-SHA256 -> SessionKey
-    Note over Bob: ECDH(Local Priv, Remote Pub) + HKDF-SHA256 -> SessionKey
-
-    Note over Alice,Bob: Phase 4: Stream MUX Session (NTV2MUX1)
-    Alice->>Bob: MUX(Control: stream-hello)
-    Bob->>Alice: MUX(Control: stream-hello)
-    Alice->>Bob: MUX(Control: stream-start)
-    loop Every Chunk (1 MiB)
-        Alice->>Bob: MUX(Chunk: NTV2CHNK, Encrypted AES-256-GCM + AAD)
-        Bob->>Alice: MUX(Progress: Signed ACK)
-    end
-    Alice->>Bob: MUX(Control: stream-complete)
-    Bob->>Alice: MUX(Control: stream-complete-ack)
+    participant Sender
+    participant Receiver
+    Sender->>Receiver: Signed v2 discovery announcement
+    Sender->>Receiver: Manifest bootstrap over a framed connection
+    Receiver->>Sender: Accept or reject
+    Sender->>Receiver: Authenticated encrypted chunks
+    Receiver->>Sender: Signed progress/control messages
+    Sender->>Receiver: Completion control
+    Receiver->>Sender: Completion acknowledgement
 ```
 
----
+## Persistence and publication
 
-## 3. Core Component Boundaries
+Transfer components use task-scoped state and staging paths. A completed file is published only after size and digest verification. Job-store recovery flags describe v2 jobs only; they do not make current classic desktop transfers resumable.
 
-### 3.1 Crypto Subsystem (`packages/core/src/crypto/`)
-* **`identity.ts`**: Ed25519 signing keypairs, SHA-256 deviceId derivation (`sha256(pem)[:16]`), and user-friendly fingerprints (`AAAA-BBBB-...`).
-* **`session.ts`**: Ephemeral X25519 ECDH key agreement, HKDF-SHA256 context-bound session key derivation, and AES-256-GCM chunk encryption.
-* **`timing-safe-compare.ts`**: Constant-time byte and string equality checks.
+## Shared-library boundary
 
-### 3.2 Discovery Subsystem (`packages/core/src/discovery/`)
-* Runs UDP multicast on `239.255.77.77:47777`.
-* Announces device name, deviceId, public keys, and capabilities with monotonic timestamps and Ed25519 signatures.
-* Handles peer expiration with a sliding TTL (default 10s).
-
-### 3.3 Pairing Subsystem (`packages/core/src/pairing/`)
-* Implements Short Authentication String (SAS) 6-digit out-of-band verification.
-* Transcripts bind `pairingId`, initiator identity, and responder identity in canonical JSON to defeat Man-in-the-Middle (MitM) attacks.
-
-### 3.4 Transfer Pipeline (`packages/core/src/transfer/`)
-* **`bootstrap.ts`**: Handles manifest announcement and acceptance negotiation over wire frames.
-* **`stream-session.ts`**: Full-duplex multiplexed streaming session managing chunk transmission, pause/resume, and flow control.
-* **`receive-planner.ts`**: Allocates isolated `.nearby-transfer-staging-<taskId>.partial` staging directories and conflict-free target filenames.
-* **`encrypted-writer.ts`**: Atomic staging file write, SHA-256 digest validation, and hardlink/rename publication to final paths.
-* **`sync-state.ts` & `resume-store.ts`**: Incremental file modification scanning and interrupted transfer checkpoint resumption.
+The shared-library service uses self-signed HTTPS and an application-specific signed session request that returns a Bearer token. It is not advertised as a generic password-based WebDAV mount. The default share is read-only; choosing another folder is the explicit action that enables writes for that configured share.

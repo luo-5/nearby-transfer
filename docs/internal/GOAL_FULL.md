@@ -1,15 +1,17 @@
 # Nearby Transfer — 完整 /goal 提示词
 
+> 历史提示词归档，不应直接执行。它包含过期假设和旧工作流；不得据此自动推送、发布或修改本机网络设置。
+
 以下是一个整块提示词，直接全部复制粘贴即可。Agent 会连续工作，完成所有阶段。
 
 ---
 
 ```
-你在 Nearby Transfer 项目（Node.js/Electron 桌面 + Android LAN 加密文件传输 + NAS WebDAV）工作。仓库在 D:\github项目\pr\pr\nearby-transfer-next-version。这是一个 npm workspaces monorepo：packages/core（TS 核心库，零运行时依赖，只用 node: 内置模块）、packages/cli（CLI 工具）、packages/localsend-adapter、packages/protocol-spec。桌面端 Electron app 用旧 src/v2/*.js（约 30 个文件），TS 核心库独立。GitHub: https://github.com/luo-5/nearby-transfer.git，git 身份 luo-5 / lluo77250@gmail.com。TypeScript strict 模式。测试一律用 npx tsx --test（不要用 vitest，vitest 不支持 node:test 风格测试）。零运行时 npm 依赖原则（core/cli 不引入新 npm 依赖，只用 node:crypto, node:net, node:fs, node:http, node:dgram 等）。提交用英文 conventional commits。配对安全模型（Ed25519 签名 + SAS 双向比对码 + X25519 ECDH + AES-256-GCM）永远不改。每改完一组就 git commit + git push。如果 git push 或 npm publish 失败（网络），重试最多 5 次每次间隔 15 秒。
+你在 Nearby Transfer 项目（Node.js/Electron 桌面 + Android LAN 加密文件传输 + 共享库）工作。仓库位置记为 `<repository-root>`。这是一个 npm workspaces monorepo。TypeScript 使用 strict 模式。测试使用仓库脚本。提交和发布必须由维护者明确授权。
 
 当前 HEAD 7a10b00。工作树有未跟踪文件 PROJECT_PLAN.md, GOAL_24H_PLAN.md, GOAL_PROMPTS.md（这些是规划文件，不要删，但也不需要提交，除非你想提交）。
 
-你的任务分 6 个阶段，连续完成。每阶段完成后提交并推送，然后继续下一阶段。不要停下来问我。如果某阶段卡住超过 3 次尝试，跳到下一阶段并记录跳过原因到 D:\github项目\pr\pr\nearby-transfer-next-version\SKIPPED.md。全部完成后做最终全量测试。
+你的任务分 6 个阶段，连续完成。将跳过原因记录到 `<repository-root>/SKIPPED.md`。全部完成后做最终全量测试。
 
 ═══════════════════════════════════════════════
 阶段 1：修通 CLI 端到端传输（关键阻塞）
@@ -188,7 +190,7 @@ Behavioral differences documented in MIGRATION_NOTES.md." && git push origin mai
 
 5) 写 packages/core/test/security.test.ts：测试 timing-safe-compare 正确性、路径遍历被拒绝（../和绝对路径）、超大 frame 被拒绝、nonce 不重复。
 
-如果 D:\github项目\gemini-package.tar.gz 已解压或有 expected-output/ 目录（Gemini 返回的产出），整合：
+如果维护者提供了外部产出，先验证来源与内容，再决定是否整合：
 - B2/B3/B4 测试 → packages/core/test/，跑 npx tsx --test 确认通过才保留
 - A2 timing-safe-compare → packages/core/src/crypto/
 - A3 DoS 防护 → packages/core/src/security/（新建）

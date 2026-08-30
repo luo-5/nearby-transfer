@@ -2,6 +2,19 @@
 
 All notable changes to Nearby Transfer will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Classic desktop and Android discovery announcements now use signed discovery
+  version 2 with freshness and identity/key validation. This intentionally rejects
+  older unsigned announcements, so both endpoints must be updated together. The
+  classic transfer request wire format remains unchanged.
+- Desktop, CLI, LocalSend, shared-library, and v2 transfer lifecycles now wait for
+  active work and cleanup before reporting shutdown or completion.
+- UI and public documentation distinguish current classic transfer, experimental v2
+  components, roadmap-only protocol entries, and the application-specific HTTPS
+  shared-library authentication flow.
+
 ## [@luo-5/core 0.2.1, @luo-5/cli 0.2.1 & @luo-5/localsend-adapter 0.1.1] - 2026-08-30
 
 ### Security
@@ -15,7 +28,7 @@ All notable changes to Nearby Transfer will be documented in this file.
 - Package builds and tests run on Node.js 24 with verified publish contents and npm
   provenance.
 
-## [Unreleased] - Audit Remediation - 2026-08-29
+## Audit remediation queued for the next application release - 2026-08-29
 
 ### Security
 - **LocalSend receiver confinement**: untrusted manifest names and IDs are validated,
@@ -87,8 +100,8 @@ All notable changes to Nearby Transfer will be documented in this file.
   now state the implemented boundary and real v1.2.x/v1.3.0 asset manifests.
 - CLI send/sync now fail closed unless the discovered signing key matches an existing
   trust record; the preview-only pair command no longer reports a successful pairing.
-- Repository layout: one-off development scripts moved to `scripts/dev/` (private VM
-  addresses parameterized via env vars), working notes moved to `docs/internal/`,
+- Repository layout: machine-specific one-off development scripts removed from the
+  public tree, working notes moved to `docs/internal/`,
   committed `__pycache__` artifacts removed; README/`docs/audit.md` use the real package
   name `@luo-5/core`; `packages/core` README documents install and usage.
 
@@ -146,8 +159,8 @@ All notable changes to Nearby Transfer will be documented in this file.
 
 ## 1.2.1
 
-- Released the 7-protocol driver engine (`turbo-parallel`, `quic-udp`, `smb-share`, `webdav-sync`, `v2-stream`, `v1-classic`, `ftps-secure`) with category-based hot switching.
-- Kept the zero-runtime-dependency desktop architecture (pure `node:crypto` self-signed TLS via `src/v2/cert-manager.js`).
+- Added a seven-entry protocol registry and selector UI. Only `v1-classic` was connected to the desktop transfer path; the other entries were roadmap scaffolds.
+- Kept protocol-core runtime primitives dependency-free; the Electron desktop application itself has external runtime and build dependencies.
 - Aligned Android transfer controls (notification pause/resume/cancel, foreground service) with desktop.
 
 ## 1.2.0
@@ -160,7 +173,7 @@ All notable changes to Nearby Transfer will be documented in this file.
 
 - Released recursive multi-level directory sync, breadcrumb navigation, and the desktop library manager for NAS WebDAV.
 
-## 1.0.0 - In development
+## Protocol-v2 foundation (historical 1.0.0 plan)
 
 ### Foundation
 

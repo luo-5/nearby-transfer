@@ -35,6 +35,13 @@ Android or shared-vector changes also require:
 .\gradlew.bat :android-app:assembleDebug
 ```
 
+On Linux or macOS, use the checked-in POSIX wrapper instead:
+
+```bash
+./gradlew :android-app:testDebugUnitTest
+./gradlew :android-app:assembleDebug
+```
+
 ---
 
 ## 3. Commit Convention

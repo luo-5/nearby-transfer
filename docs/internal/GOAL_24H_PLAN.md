@@ -1,7 +1,9 @@
 # Nearby Transfer 24 小时自主执行计划
 
+> 历史计划，不应直接执行；所有路径、提交号和测试数量均可能过期。
+
 **创建日期：** 2026-08-24
-**仓库：** `D:\github项目\pr\pr\nearby-transfer-next-version`
+**仓库：** `<repository-root>`
 **GitHub：** `https://github.com/luo-5/nearby-transfer.git`
 **当前 HEAD：** `7a10b00`
 **测试基线：** 核心 67 + CLI 14 + 桌面 42 文件 + 互操作 62 断言 = 全绿
@@ -363,7 +365,7 @@ P1 修通后执行。
 #### 步骤
 
 ```bash
-cd D:\github项目\pr\pr\nearby-transfer-next-version
+cd <repository-root>
 
 # 1. 版本号
 # packages/core/package.json: "version": "0.1.0" → "0.2.0"
@@ -899,7 +901,7 @@ All tests pass, Electron starts without errors."
 #### 6.1 全量测试
 
 ```bash
-cd D:\github项目\pr\pr\nearby-transfer-next-version
+cd <repository-root>
 
 # TypeScript 编译
 npx tsc --noEmit -p packages/core/tsconfig.json
@@ -1007,7 +1009,7 @@ git push origin main
 
 1. **零运行时 npm 依赖**：`packages/core` 和 `packages/cli` 不引入新的 npm 依赖（只用 node: 内置模块）
 2. **TypeScript strict 模式**：与 `packages/core/tsconfig.json` 一致
-3. **提交规范**：英文 conventional commits，身份 `luo-5 / lluo77250@gmail.com`
+3. **提交规范**：遵循当前 `CONTRIBUTING.md`，提交身份由维护者本地配置
 4. **安全模型不变**：Ed25519 签名 + SAS 双向比对码 + X25519 ECDH + AES-256-GCM
 5. **Gemini 产出必须测试**：不盲目信任，整合后跑全部测试
 6. **方案 A 不通切方案 B**：不要死磕一个方案

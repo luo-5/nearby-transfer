@@ -8,7 +8,7 @@
 
 ## Docker build — RESOLVED ✅
 - Date: 2026-08-26
-- Status: Docker image built successfully on CentOS (192.168.80.130).
+- Status: Historical Docker image build reported on a CentOS test host (address removed).
 - Docker CE 29.7.2 installed on CentOS via yum.
 - Image: `nearby-transfer-cli:latest`
 - Build fix: Added `RUN cd packages/core && npm install --save-dev @types/node@24` to Dockerfile (DTS build needed @types/node).

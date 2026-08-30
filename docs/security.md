@@ -18,6 +18,7 @@ private identity keys, or release-signing credentials have been compromised.
 ### Classic desktop transfer
 
 - File contents are encrypted before the classic HTTP upload body is sent.
+- Discovery announcements are signed and verified before a peer is accepted.
 - Transfer requests are signed with the sender's persistent device identity.
 - The receiver asks the user before accepting an incoming transfer.
 - Discovery and transfer metadata are visible on the LAN.
@@ -45,7 +46,11 @@ desktop transfer flow.
 
 - The service uses HTTPS with a self-signed certificate.
 - Session acquisition verifies a signed request, timestamp, and one-time nonce.
+- The Bearer session flow is application-specific; generic WebDAV clients cannot
+  directly authenticate with a normal username/password prompt.
 - Trusted-peer permissions restrict read and upload operations.
+- The default share is read-only. Write access starts only after the user explicitly
+  selects a shared folder and the peer has the required permission.
 - Android remembers the first observed certificate fingerprint and fails closed on a
   later mismatch.
 - Share-root path checks, request limits, connection limits, and cleanup remain

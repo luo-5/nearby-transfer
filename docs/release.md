@@ -21,12 +21,12 @@ steps. RPM, AppImage, and arm64 builds are not current release outputs.
 
 ## Windows
 
-Windows installers should be built on Windows runners. Linux cross-builds need Wine and are not recommended for release validation.
+Windows release artifacts should be built on Windows runners. Linux cross-builds are not recommended for release validation.
 
 On Linux, Windows zip test packages can be generated without Wine:
 
 ```bash
-ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
+ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" npm exec -- electron-builder --config packaging/electron-builder.yml --win zip --x64 --arm64
 ```
 
 Expected local test artifacts:

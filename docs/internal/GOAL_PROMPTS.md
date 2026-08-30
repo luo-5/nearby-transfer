@@ -1,5 +1,7 @@
 # Nearby Transfer — /goal 提示词
 
+> 历史提示词归档，不应直接执行。路径、提交号、能力和自动发布指令均可能过期。
+
 4 个提示词，按顺序执行。每个都是自包含的，直接复制粘贴即可。
 
 ---
@@ -7,7 +9,7 @@
 ## 提示词 1（Day 1 上午）：P1 修通 CLI 端到端传输
 
 ```
-你在 Nearby Transfer 项目（Node.js/Electron 桌面 + Android LAN 加密文件传输）工作。仓库在 D:\github项目\pr\pr\nearby-transfer-next-version。这是一个 npm workspaces monorepo：packages/core（TS 核心库）、packages/cli（CLI 工具）、packages/localsend-adapter、packages/protocol-spec。还有桌面端 src/v2/*.js（旧 JS 实现）。GitHub: https://github.com/luo-5/nearby-transfer.git，git 身份 luo-5 / lluo77250@gmail.com。零运行时 npm 依赖原则（core/cli 只用 node: 内置模块）。TypeScript strict 模式。测试用 npx tsx --test（不要用 vitest，vitest 不支持 node:test 风格的测试）。
+你在 `<repository-root>` 的 Nearby Transfer 项目工作。这是一个 npm workspaces monorepo；以当前仓库脚本和维护者文档为准。
 
 当前 HEAD 7a10b00，工作树干净（除了 PROJECT_PLAN.md 和 GOAL_24H_PLAN.md 未跟踪）。
 
@@ -78,7 +80,7 @@ git push origin main
 ## 提示词 2（Day 1 下午）：P2 npm 发布 + P3 文件夹同步
 
 ```
-你在 Nearby Transfer 项目工作。仓库在 D:\github项目\pr\pr\nearby-transfer-next-version。npm workspaces monorepo：packages/core、packages/cli、packages/localsend-adapter。GitHub: https://github.com/luo-5/nearby-transfer.git，身份 luo-5 / lluo77250@gmail.com。零运行时 npm 依赖。测试用 npx tsx --test（不要用 vitest）。
+你在 `<repository-root>` 的 Nearby Transfer 项目工作；以当前仓库脚本和维护者文档为准。
 
 前一个阶段已修通 CLI 端到端传输（bootstrap→stream session leftoverData 方案）。现在做两件事：发布 npm 0.2.0 + 实现文件夹同步。
 
@@ -181,7 +183,7 @@ git push origin main
 ## 提示词 3（Day 2 上午-下午）：P4 Strangler Fig 迁移
 
 ```
-你在 Nearby Transfer 项目工作。仓库在 D:\github项目\pr\pr\nearby-transfer-next-version。npm workspaces monorepo。GitHub: https://github.com/luo-5/nearby-transfer.git，身份 luo-5 / lluo77250@gmail.com。零运行时 npm 依赖。测试用 npx tsx --test。
+你在 `<repository-root>` 的 Nearby Transfer 项目工作；以当前仓库脚本和维护者文档为准。
 
 当前状态：CLI 端到端传输已修通，npm 0.2.0 已发布，文件夹同步已实现。桌面端 Electron app 用旧 src/v2/*.js（约 30 个文件），TS 核心库（@luo-5/core）独立。两套代码并行是最大维护成本。
 
@@ -247,7 +249,7 @@ git push origin main
 ## 提示词 4（Day 2 下午-晚上）：P5 安全加固 + P6 最终测试
 
 ```
-你在 Nearby Transfer 项目工作。仓库在 D:\github项目\pr\pr\nearby-transfer-next-version。npm workspaces monorepo。GitHub: https://github.com/luo-5/nearby-transfer.git，身份 luo-5 / lluo77250@gmail.com。零运行时 npm 依赖。测试用 npx tsx --test。
+你在 `<repository-root>` 的 Nearby Transfer 项目工作；以当前仓库脚本和维护者文档为准。
 
 当前状态：CLI 传输修通，npm 0.2.0 已发布，文件夹同步已实现，Strangler fig 迁移第 1-2 批已完成。
 
@@ -255,7 +257,7 @@ git push origin main
 
 == P5：安全加固 ==
 
-先检查 D:\github项目\gemini-package.tar.gz 是否已解压或有 Gemini 返回的 expected-output/ 目录。如果有 Gemini 产出，整合它；如果没有，自主做安全加固。
+如果维护者提供了外部产出，先验证来源与内容，再决定是否整合。
 
 自主安全加固（无论有没有 Gemini 产出都做）：
 

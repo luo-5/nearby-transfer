@@ -60,8 +60,12 @@ implemented, the Dockerfile would need to expose port 990 (implicit) or 21
 
 ## Recommendation
 
-Defer FTPS implementation until the WebDAV and SMB paths are proven in
-production. WebDAV over HTTPS already covers the "zero-install mount" use case
-for Windows/macOS/iOS; SMB (via Docker) covers Windows native. FTPS adds
-value primarily for legacy clients and FileZilla power users, but the
-implementation cost is high relative to the marginal benefit.
+Defer FTPS implementation until the shared-library and SMB paths have completed
+their integration and compatibility gates. The current HTTPS shared-library
+endpoint is intended for supported Nearby Transfer clients and is not a generic
+zero-install WebDAV mount. SMB remains a roadmap item rather than a shipped
+desktop transfer driver. The CLI container includes a separate optional Samba
+sidecar, but that does not constitute desktop protocol integration and its
+cross-client behavior still requires an explicit compatibility gate. FTPS may
+add value for legacy clients and FileZilla users, but only after a real
+implementation and client interoperability testing exist.

@@ -140,7 +140,7 @@ Dockerfile 已验证正确，只需启动 Docker daemon 实际构建。
 
 ## Gemini 任务包（已打包）
 
-**文件：** `D:\github项目\gemini-package.tar.gz`（219 KB，131 个文件）
+**文件：** `<external-artifact>`（历史记录）
 
 ### 包含的参考材料
 
@@ -232,7 +232,7 @@ packages/cli/test/transfer-integration.test.ts # 集成测试（需重写为端�
 packages/protocol-spec/v2-spec.md              # 协议规范
 packages/core/test/vectors/*.json              # 测试向量
 packages/core/scripts/generate-all-vectors.ts   # 向量生成器
-D:\github项目\gemini-package.tar.gz            # Gemini 任务包
+<external-artifact>                              # 历史外部产出
 ```
 
 ---
@@ -246,4 +246,4 @@ D:\github项目\gemini-package.tar.gz            # Gemini 任务包
 5. **npm 发布需要 token**：需要有效的 npm access token（IP 限制为服务器 IP）
 6. **零运行时依赖原则不变**：core/cli 不引入新 npm 依赖
 7. **TypeScript strict 模式不变**：与 packages/core/tsconfig.json 一致
-8. **提交规范**：英文 conventional commits，身份 luo-5 / lluo77250@gmail.com
+8. **提交规范**：遵循当前 `CONTRIBUTING.md`，提交身份由维护者本地配置

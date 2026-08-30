@@ -38,7 +38,7 @@ const transferJobState = {
   jobs: [],
   loading: false,
   busyTaskIds: new Set(),
-  message: '正在读取可恢复传输任务...',
+  message: '',
   messageIsError: false
 };
 
@@ -115,6 +115,7 @@ function applyProtocolAvailability(entries) {
     const unavailable = entry && entry.available === false;
     card.classList.toggle('protocol-unavailable', Boolean(unavailable));
     card.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
+    card.setAttribute('tabindex', '0');
     if (unavailable) card.setAttribute('title', t('protocol_unavailable'));
     else card.removeAttribute('title');
   });
@@ -154,11 +155,9 @@ function filterProtocolCards(category) {
   selectedProtocolCategory = category;
   const tabBtns = document.querySelectorAll('.proto-tab-btn');
   tabBtns.forEach(btn => {
-    if (btn.getAttribute('data-category') === category) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
+    const active = btn.getAttribute('data-category') === category;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 
   const cards = document.querySelectorAll('.protocol-card');
@@ -197,7 +196,6 @@ function initializeProtocolSelector() {
     });
   });
 
-  const isZhInit = (window.i18n ? window.i18n.getCurrentLanguage() : 'zh') === 'zh';
   const cards = document.querySelectorAll('.protocol-card');
   cards.forEach(card => {
     const proto = card.getAttribute('data-protocol');
@@ -208,17 +206,22 @@ function initializeProtocolSelector() {
       toggle.type = 'button';
       toggle.className = 'protocol-expand-toggle';
       toggle.setAttribute('aria-expanded', 'false');
-      toggle.textContent = isZhInit ? '详情' : 'Details';
+      toggle.textContent = t('details');
       toggle.addEventListener('click', (e) => {
         e.stopPropagation();
         const expanded = card.classList.toggle('expanded');
         toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        toggle.textContent = expanded ? (isZhInit ? '收起' : 'Collapse') : (isZhInit ? '详情' : 'Details');
+        toggle.textContent = expanded ? t('collapse') : t('details');
       });
       header.appendChild(toggle);
     }
 
     const onSelect = async () => {
+      const availability = protocolAvailability.get(proto);
+      if ((availability && availability.available === false) || (!availability && proto !== 'v1-classic')) {
+        setStatus(t('protocol_unavailable'));
+        return;
+      }
       if (window.lanTransfer && typeof window.lanTransfer.setProtocol === 'function') {
         try {
           const result = await window.lanTransfer.setProtocol(proto);
@@ -263,6 +266,8 @@ function updateLanguageButtons() {
   const current = window.i18n.getCurrentLanguage();
   if (elements.langZhBtn) elements.langZhBtn.className = current === 'zh' ? 'lang-btn active' : 'lang-btn';
   if (elements.langEnBtn) elements.langEnBtn.className = current === 'en' ? 'lang-btn active' : 'lang-btn';
+  if (elements.langZhBtn) elements.langZhBtn.setAttribute('aria-pressed', current === 'zh' ? 'true' : 'false');
+  if (elements.langEnBtn) elements.langEnBtn.setAttribute('aria-pressed', current === 'en' ? 'true' : 'false');
 }
 
 if (elements.langZhBtn) {
@@ -294,6 +299,9 @@ function reRenderAll() {
   renderTransferJobs();
   refreshProtocolAvailabilityLabels();
   updateProtocolBadge(selectedProtocol);
+  document.querySelectorAll('.protocol-expand-toggle').forEach((toggle) => {
+    toggle.textContent = toggle.getAttribute('aria-expanded') === 'true' ? t('collapse') : t('details');
+  });
 }
 
 updateLanguageButtons();
@@ -310,16 +318,21 @@ async function refreshLibraryInfo() {
   try {
     const status = await window.lanTransfer.library.getStatus();
     if (elements.libraryStatusBadge) {
-      elements.libraryStatusBadge.textContent = status.running ? `${t('library_ready_badge')} :${status.port}` : t('v2_not_connected');
+      elements.libraryStatusBadge.textContent = status.running ? `${t('library_ready_badge')} :${status.port}` : t('library_not_running');
     }
     if (elements.librarySharePath) {
       elements.librarySharePath.textContent = (status.primaryShare && status.primaryShare.localPath) || '-';
     }
     if (elements.libraryShareMode) {
-      elements.libraryShareMode.textContent = status.isDefault ? t('default_save_mode') : t('custom_save_mode');
+      elements.libraryShareMode.textContent = status.primaryShare && status.primaryShare.readOnly
+        ? t('library_read_only_mode')
+        : t('library_writable_mode');
     }
     if (elements.libraryWebDavUrl) {
-      elements.libraryWebDavUrl.textContent = status.webDavUrl || `https://127.0.0.1:${status.port || 56578}/webdav/default-share`;
+      elements.libraryWebDavUrl.textContent = status.webDavUrl || t('library_no_lan_address');
+    }
+    if (elements.copyWebDavUrlButton) {
+      elements.copyWebDavUrlButton.disabled = !status.webDavUrl;
     }
   } catch (err) {
     console.error('Failed to get library status:', err);
@@ -355,7 +368,7 @@ if (elements.resetLibraryPathButton) {
 if (elements.copyWebDavUrlButton) {
   elements.copyWebDavUrlButton.addEventListener('click', async () => {
     const url = elements.libraryWebDavUrl?.textContent;
-    if (url && url !== '-') {
+    if (url && !elements.copyWebDavUrlButton.disabled) {
       try {
         await navigator.clipboard.writeText(url);
         setStatus(t('copied'));
@@ -621,7 +634,7 @@ function renderSendState() {
   } else if (!state.selectedFile) {
     setStatus(t('select_file_first'));
   } else {
-    setStatus(t('send_button') + ' Ready');
+    setStatus(t('ready_to_send'));
   }
 }
 
@@ -650,6 +663,11 @@ function renderTransfers() {
 
     const progress = document.createElement('div');
     progress.className = 'progress';
+    progress.setAttribute('role', 'progressbar');
+    progress.setAttribute('aria-label', t('transfer_progress_label'));
+    progress.setAttribute('aria-valuemin', '0');
+    progress.setAttribute('aria-valuemax', '100');
+    progress.setAttribute('aria-valuenow', String(progressPercent(transfer)));
     const bar = document.createElement('span');
     bar.style.width = `${progressPercent(transfer)}%`;
     progress.append(bar);
@@ -834,7 +852,7 @@ async function refreshTransferJobs({ silent = false } = {}) {
     transferJobState.jobs = (Array.isArray(jobs) ? jobs : [])
       .filter((job) => job && typeof job.taskId === 'string' && typeof job.status === 'string')
       .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0));
-    setTransferJobMessage(transferJobState.jobs.length > 0 ? (window.i18n.getCurrentLanguage() === 'zh' ? '可在此恢复、暂停、重试或取消持久化任务。' : 'Recover, pause, retry, or cancel persistent transfer tasks.') : t('no_transfers'));
+    setTransferJobMessage(transferJobState.jobs.length > 0 ? t('persistent_jobs_actions') : t('recoverable_transfers_empty'));
   } catch (error) {
     setTransferJobMessage(errorMessage(error), true);
   } finally {
@@ -851,10 +869,10 @@ function renderTransferJobs() {
   elements.v2TransferJobStatus.textContent = transferJobState.message;
   elements.v2TransferJobStatus.className = transferJobState.messageIsError ? 'pairing-status failed' : 'pairing-status';
   elements.v2TransferJobRefresh.disabled = !api || transferJobState.loading;
-  elements.v2TransferJobRefresh.textContent = transferJobState.loading ? (isZh ? '正在刷新...' : 'Refreshing…') : (isZh ? '刷新任务' : 'Refresh Jobs');
+  elements.v2TransferJobRefresh.textContent = transferJobState.loading ? t('refreshing') : t('recoverable_transfers_refresh');
   if (jobs.length === 0) {
     elements.v2TransferJobs.className = 'transfers empty';
-    elements.v2TransferJobs.textContent = transferJobState.loading ? t('loading') : t('no_transfers');
+    elements.v2TransferJobs.textContent = transferJobState.loading ? t('recoverable_transfers_loading') : t('recoverable_transfers_empty');
     return;
   }
 
@@ -876,6 +894,11 @@ function renderTransferJobs() {
     diagnostic.textContent = job.errorMessage ? `${job.diagnosticCode || 'ERROR'}: ${job.errorMessage}` : (job.diagnosticCode ? (isZh ? `诊断：${job.diagnosticCode}` : `Diag: ${job.diagnosticCode}`) : (isZh ? `设备：${shortDeviceId(job.peerDeviceId)}` : `Device: ${shortDeviceId(job.peerDeviceId)}`));
     const progressTrack = document.createElement('div');
     progressTrack.className = 'progress';
+    progressTrack.setAttribute('role', 'progressbar');
+    progressTrack.setAttribute('aria-label', t('transfer_progress_label'));
+    progressTrack.setAttribute('aria-valuemin', '0');
+    progressTrack.setAttribute('aria-valuemax', '100');
+    progressTrack.setAttribute('aria-valuenow', String(jobProgressPercent(job)));
     const bar = document.createElement('span');
     bar.style.width = `${jobProgressPercent(job)}%`;
     progressTrack.append(bar);
@@ -1246,6 +1269,7 @@ function renderV2TrustedPeers() {
     name.value = peer.displayName || peerLabel(peer);
     name.maxLength = 128;
     name.placeholder = peerLabel(peer);
+    name.setAttribute('aria-label', t('trusted_device_name_label'));
     name.disabled = !pairingApi || isBusy;
     const device = document.createElement('span');
     device.className = 'pairing-meta';
@@ -1283,6 +1307,9 @@ function renderV2TrustedPeers() {
       label.append(checkbox, document.createTextNode(` ${labelText}`));
       permissionControls.append(label);
     }
+    name.addEventListener('change', () => {
+      saveV2TrustedPeer(peer, { displayName: name, permissions: permissionInputs });
+    });
     details.append(name, device, fingerprint, permissions, lastSeen, permissionControls);
 
     const actions = document.createElement('div');

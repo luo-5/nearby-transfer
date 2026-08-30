@@ -1,4 +1,9 @@
-# v1.0 development handoff
+# Historical v1.0 development handoff
+
+> **Historical, non-authoritative record.** Branch names, pull requests, build output
+> locations, test results, and remaining-work lists below describe an earlier point in
+> development. Use [`capabilities.md`](capabilities.md) for current implementation
+> status and [`releasing.md`](releasing.md) for the active release process.
 
 This document is the handoff point for the large v1.0 rewrite. The repository
 is intentionally still a Draft PR and the production transfer composition roots
@@ -144,7 +149,7 @@ then run:
 ```
 
 The source tree must not rely on the old absolute paths under
-`C:\Users\31752\Desktop\pr`. Android toolchain paths are environment
+`<repository-root>`. Android toolchain paths are environment
 configuration only; set `JAVA_HOME` and `ANDROID_HOME` on the new computer.
 
 ## Safe handoff checklist

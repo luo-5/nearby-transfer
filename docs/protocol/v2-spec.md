@@ -1,7 +1,7 @@
 # Nearby Transfer Protocol v2 Specification
 
 **Version:** 2 (protocol version integer) · **Document revision:** 1
-**Reference implementation:** `@luo-5/core@0.1.0` (`packages/core/`)
+**Initial reference baseline:** `@luo-5/core@0.1.0`; the actively developed implementation is in `packages/core/` and its current version is defined by that package manifest.
 **License:** MIT
 
 ---

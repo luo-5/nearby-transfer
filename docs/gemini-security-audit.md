@@ -1,5 +1,9 @@
 # Nearby Transfer 核心库（@luo-5/core）全量安全审计报告 (A1)
 
+> **历史分析 / 非权威资料：** 本文件保留早期审查思路，可能包含未复现的
+> 假设、旧版本基线或过时结论。当前能力以 docs/capabilities.md、现行规范
+> 和可重复运行的测试为准；其中的数值或完成度不得作为发布承诺。
+
 **审计基线：** `@luo-5/core@0.2.0` (commit `3c5c153`)  
 **审计范围：** `packages/core/src/` 全部源码（23 个 TypeScript 核心模块，覆盖 `crypto/`, `discovery/`, `pairing/`, `protocol/`, `transfer/`, `transport/`）  
 **审计维度：** 8 大安全维度（时序侧信道、Nonce 碰撞、密钥卫生、路径遍历、DoS/资源耗尽、规范 JSON 攻击、重放保护、TLS 配置）
