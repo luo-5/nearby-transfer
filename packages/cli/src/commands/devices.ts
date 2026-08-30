@@ -12,6 +12,7 @@ export async function devicesCommand(args: string[]): Promise<void> {
   const discovery = new V2Discovery({
     device,
     port: 0,
+    announce: false,
     capabilities: ['pairing'],
   });
 

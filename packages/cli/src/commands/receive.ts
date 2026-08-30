@@ -15,6 +15,7 @@ import { Buffer } from 'node:buffer';
 import {
   V2Discovery,
   JsonTrustStore,
+  ConnectionLimiter,
   createTransferReceiver,
   type TrustRecord,
 } from '@luo-5/core';
@@ -53,24 +54,36 @@ export async function receiveCommand(args: string[]): Promise<void> {
   const dataDir = opts.dataDir ?? undefined;
   const trustStore = new JsonTrustStore(dataDir ?? `${process.env.HOME ?? process.env.USERPROFILE ?? '.'}/.nearby-transfer`);
 
-  // Pre-load trusted peers into a Map for synchronous lookup
-  const trustedPeers = await trustStore.load();
-  const peerMap = new Map<string, { signingPublicKey: string; deviceName?: string }>();
-  for (const peer of trustedPeers) {
-    peerMap.set(peer.deviceId, {
-      signingPublicKey: rawEd25519ToPem(peer.signingPublicKey),
-      deviceName: peer.name,
-    });
-  }
+  const initialTrustedPeers = trustStore.loadSync();
+  const lookupPeer = createLiveTrustLookup(trustStore);
 
   process.stdout.write(`Receiving files into: ${receiveDir}\n`);
   process.stdout.write(`Device: ${device.deviceName} (${device.deviceId})\n`);
   process.stdout.write(`Fingerprint: ${device.fingerprint}\n`);
-  process.stdout.write(`Trusted peers: ${peerMap.size}\n\n`);
+  process.stdout.write(`Trusted peers: ${initialTrustedPeers.length}\n\n`);
 
   // Create the TCP server
+  const connectionLimiter = new ConnectionLimiter({ maxGlobalConnections: 16, maxPerIpConnections: 4 });
+  const activeSockets = new Set<Socket>();
+  const activeReceivers = new Set<Promise<void>>();
   const server = createServer(async (socket: Socket) => {
     const remoteAddr = `${socket.remoteAddress}:${socket.remotePort}`;
+    const lease = connectionLimiter.acquire(socket.remoteAddress ?? 'unknown');
+    if (!lease) {
+      process.stderr.write(`[reject] Connection limit reached for ${remoteAddr}\n`);
+      socket.destroy();
+      return;
+    }
+    activeSockets.add(socket);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      activeSockets.delete(socket);
+      lease.release();
+    };
+    socket.once('close', release);
+    socket.setTimeout(15_000, () => socket.destroy(new Error('Unauthenticated connection timed out')));
     process.stdout.write(`\n[connect] ${remoteAddr}\n`);
     try {
       const receiver = await createTransferReceiver({
@@ -79,14 +92,19 @@ export async function receiveCommand(args: string[]): Promise<void> {
         localDeviceId: device.deviceId,
         localSigningPrivateKey: device.signingPrivateKey,
         localEncryptionPrivateKey: device.encryptionPrivateKey,
-        lookupPeer: (deviceId: string) => peerMap.get(deviceId) ?? null,
+        lookupPeer,
       });
+      socket.setTimeout(0);
 
-      receiver.done.then(() => {
+      const receiverDone = receiver.done.then(() => {
         process.stdout.write(`[done] Transfer completed from ${remoteAddr}\n`);
       }).catch((error: Error) => {
         process.stderr.write(`[error] Transfer failed from ${remoteAddr}: ${error.message}\n`);
+      }).finally(() => {
+        socket.destroy();
+        activeReceivers.delete(receiverDone);
       });
+      activeReceivers.add(receiverDone);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[error] Receiver setup failed from ${remoteAddr}: ${msg}\n`);
@@ -94,13 +112,17 @@ export async function receiveCommand(args: string[]): Promise<void> {
     }
   });
 
+  const listenPort = opts.port ?? 0;
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once('error', onError);
+    server.listen(listenPort, '0.0.0.0', () => {
+      server.off('error', onError);
+      resolve();
+    });
+  });
   server.on('error', (error: Error) => {
     process.stderr.write(`Server error: ${error.message}\n`);
-  });
-
-  const listenPort = opts.port ?? 0;
-  await new Promise<void>((resolve) => {
-    server.listen(listenPort, '0.0.0.0', () => resolve());
   });
   const actualPort = (server.address() as { port: number }).port;
 
@@ -122,12 +144,48 @@ export async function receiveCommand(args: string[]): Promise<void> {
   process.stdout.write(`Listening on port ${actualPort}...\n`);
   process.stdout.write('Waiting for incoming transfers (Ctrl+C to stop)\n\n');
 
-  process.on('SIGINT', () => {
+  let resolveShutdown!: () => void;
+  const shutdownComplete = new Promise<void>((resolve) => { resolveShutdown = resolve; });
+  let shutdownPromise: Promise<void> | null = null;
+  const shutdown = () => {
+    if (shutdownPromise) return shutdownPromise;
     process.stdout.write('\nStopping...\n');
     discovery.stop();
-    server.close();
-    process.exit(0);
-  });
+    for (const socket of activeSockets) socket.destroy();
+    shutdownPromise = Promise.allSettled(Array.from(activeReceivers))
+      .then(() => closeNetServer(server))
+      .finally(() => {
+        connectionLimiter.clear();
+        resolveShutdown();
+      });
+    return shutdownPromise;
+  };
+  const onSignal = () => {
+    void shutdown();
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
 
-  await new Promise<void>(() => {});
+  await shutdownComplete;
+  process.off('SIGINT', onSignal);
+  process.off('SIGTERM', onSignal);
+  await shutdown();
+}
+
+function closeNetServer(server: ReturnType<typeof createServer>): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+  });
+}
+
+export function createLiveTrustLookup(trustStore: JsonTrustStore) {
+  return (deviceId: string): { signingPublicKey: string; deviceName?: string } | null => {
+    const peer = trustStore.loadSync().find((record) => record.deviceId === deviceId);
+    if (!peer) return null;
+    return {
+      signingPublicKey: rawEd25519ToPem(peer.signingPublicKey),
+      deviceName: peer.name,
+    };
+  };
 }

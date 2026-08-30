@@ -21,25 +21,33 @@ npm install -g @luo-5/cli
 # List devices on the LAN
 nearby-transfer devices
 
-# Send a file
-nearby-transfer send ./report.pdf --to 192.168.1.50
-
 # Receive files
 nearby-transfer receive --dir ~/Downloads
 
-# Inspect a pairing candidate (does not persist mutual trust yet)
-nearby-transfer pair --to a1b2c3d4e5f60718
-
-# Manage trusted devices
+# Inspect or remove already provisioned trust records
 nearby-transfer trust list
 nearby-transfer trust remove a1b2c3d4e5f60718
 ```
 
+`pair`, `send`, and `sync` are developer-preview commands. `pair` currently
+inspects a candidate but does not persist mutual trust; consequently there is
+no supported first-use CLI path for `send` or `sync` yet. Those commands fail
+closed unless a compatible client has already provisioned the matching trust
+record.
+
 ## Docker
 
 ```bash
-docker run --rm -v /host/dir:/data @luo-5/cli send /data/file.txt --to 192.168.1.50
+docker run --rm --network host \
+  -v nearby-transfer-config:/config \
+  ghcr.io/luo-5/nearby-transfer-cli:<version> \
+  devices --data-dir /config
 ```
+
+Host networking is required for multicast discovery and is supported by Docker
+Engine on Linux. Docker Desktop networking differs by platform. Sending also
+requires a separately provisioned trust record, as described above; pin a
+released image version instead of using `latest`.
 
 ## License
 

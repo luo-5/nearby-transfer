@@ -117,7 +117,21 @@ export function parseCommonOptions(args: string[]): { dataDir: string | undefine
     port: undefined,
     timeout: undefined,
   };
-  if (values.port) result.port = Number(values.port);
-  if (values.timeout) result.timeout = Number(values.timeout);
+  if (values['data-dir'] !== undefined && values['data-dir'].trim().length === 0) {
+    throw new TypeError('--data-dir must not be empty');
+  }
+  if (values.port !== undefined) result.port = parseIntegerOption(values.port, '--port', 0, 65535);
+  if (values.timeout !== undefined) result.timeout = parseIntegerOption(values.timeout, '--timeout', 1, 10 * 60 * 1000);
   return result;
+}
+
+function parseIntegerOption(value: string, label: string, minimum: number, maximum: number): number {
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new TypeError(`${label} must be an integer between ${minimum} and ${maximum}`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new TypeError(`${label} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return parsed;
 }

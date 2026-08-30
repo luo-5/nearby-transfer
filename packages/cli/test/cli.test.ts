@@ -3,13 +3,15 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPublicKey } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 
 import { loadOrCreateDevice, parseCommonOptions, getDataDir, requireTrustedPeerIdentity } from '../src/device.js';
+import { createLiveTrustLookup } from '../src/commands/receive.js';
+import { scanDirectory } from '../src/commands/sync.js';
 import { JsonTrustStore, createEd25519KeyPair, deriveDeviceId, fingerprintFor } from '@luo-5/core';
 
 test('device: loadOrCreateDevice generates a new identity on first run', () => {
@@ -78,6 +80,21 @@ test('device: parseCommonOptions returns undefined for missing options', () => {
   assert.equal(opts.timeout, undefined);
 });
 
+test('device: parseCommonOptions rejects invalid ports, timeouts, and empty data directories', () => {
+  for (const args of [
+    ['--port', '-1'],
+    ['--port', '65536'],
+    ['--port', '1.5'],
+    ['--timeout', '0'],
+    ['--timeout', 'NaN'],
+    ['--timeout', '600001'],
+    ['--data-dir', ''],
+  ]) {
+    assert.throws(() => parseCommonOptions(args));
+  }
+  assert.equal(parseCommonOptions(['--port', '0']).port, 0);
+});
+
 test('trust: JsonTrustStore CRUD works with CLI data dir', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'nt-cli-trust-'));
   try {
@@ -143,6 +160,44 @@ test('trust: discovered peer must have a persisted matching signing key', async 
       requireTrustedPeerIdentity({ deviceId, signingPublicKey: impostor.publicKey }, dir),
       /does not match the trusted record/,
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('receive: live trust lookup observes revocation without a receiver restart', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt-cli-live-trust-'));
+  try {
+    const signing = createEd25519KeyPair();
+    const deviceId = deriveDeviceId(signing.publicKey);
+    const der = createPublicKey(signing.publicKey).export({ type: 'spki', format: 'der' });
+    const store = new JsonTrustStore(dir);
+    await store.save({
+      deviceId,
+      name: 'live-peer',
+      signingPublicKey: new Uint8Array(Buffer.from(der).subarray(-32)),
+      trustedAt: Date.now(),
+    });
+    const lookup = createLiveTrustLookup(store);
+    assert.equal(lookup(deviceId)?.deviceName, 'live-peer');
+    await store.remove(deviceId);
+    assert.equal(lookup(deviceId), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('sync: recursive scan declares parent and empty directories before nested files', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt-cli-sync-tree-'));
+  try {
+    mkdirSync(join(dir, 'nested', 'empty'), { recursive: true });
+    writeFileSync(join(dir, 'nested', 'payload.txt'), 'payload');
+    const entries = scanDirectory(dir);
+    assert.deepEqual(entries.map(({ kind, relativePath }) => ({ kind, relativePath })), [
+      { kind: 'directory', relativePath: 'nested' },
+      { kind: 'directory', relativePath: 'nested/empty' },
+      { kind: 'file', relativePath: 'nested/payload.txt' },
+    ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

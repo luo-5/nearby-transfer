@@ -14,13 +14,13 @@ import {
   V2Discovery,
   createTransferManifest,
   createDesktopTransferExecutor,
-  JOB_DIRECTION,
-  JOB_STATUS,
   type DiscoveredPeerEntry,
 } from '@luo-5/core';
 import { loadOrCreateDevice, parseCommonOptions, requireTrustedPeerIdentity } from '../device.js';
+import { commitCliCheckpoint, createCliTransferContext } from '../transfer-context.js';
 
 export interface ScanResult {
+  kind: 'directory' | 'file';
   relativePath: string;
   absolutePath: string;
   size: number;
@@ -33,15 +33,26 @@ export function scanDirectory(root: string): ScanResult[] {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
+        const stat = statSync(fullPath);
+        results.push({
+          kind: 'directory',
+          relativePath: relative(root, fullPath).split(sep).join('/'),
+          absolutePath: fullPath,
+          size: 0,
+          mtimeMs: stat.mtimeMs,
+        });
         walk(fullPath);
       } else if (entry.isFile()) {
         const stat = statSync(fullPath);
         results.push({
+          kind: 'file',
           relativePath: relative(root, fullPath).split(sep).join('/'),
           absolutePath: fullPath,
           size: stat.size,
           mtimeMs: stat.mtimeMs,
         });
+      } else {
+        throw new TypeError(`Unsupported directory entry (links and special files are not synced): ${relative(root, fullPath)}`);
       }
     }
   }
@@ -86,34 +97,11 @@ export async function syncCommand(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  process.stdout.write(`Scanning ${rootDir}...\n`);
-  const scanResults = scanDirectory(rootDir);
-
-  if (scanResults.length === 0) {
-    process.stderr.write('Error: directory is empty\n');
-    process.exit(1);
-  }
-
-  process.stdout.write(`Found ${scanResults.length} file(s)\n`);
-
-  // Build manifest entries with relative paths
-  process.stdout.write('Computing hashes...\n');
-  const entries = [];
-  const sources = [];
-  for (const file of scanResults) {
-    const sha256 = await computeFileHash(file.absolutePath);
-    entries.push({ kind: 'file' as const, path: file.relativePath, size: file.size, sha256 });
-    sources.push({ path: file.relativePath, sourcePath: file.absolutePath, size: file.size, sha256 });
-  }
-
-  const manifest = createTransferManifest({ entries });
-  const totalBytes = scanResults.reduce((sum, f) => sum + f.size, 0);
-  process.stdout.write(`  Total: ${manifest.totalFiles} file(s), ${formatBytes(totalBytes)}\n\n`);
-
   // Discover the target device
   const discovery = new V2Discovery({
     device,
     port: 0,
+    announce: false,
     capabilities: ['pairing', 'transfer'],
   });
 
@@ -141,28 +129,43 @@ export async function syncCommand(args: string[]): Promise<void> {
   await requireTrustedPeerIdentity(peer, opts.dataDir);
   process.stdout.write(`Connected to: ${peer.deviceName} (${peer.deviceId})\n\n`);
 
-  const now = Date.now();
-  const job = {
-    taskId: manifest.taskId,
-    peerDeviceId: peer.deviceId,
-    direction: JOB_DIRECTION.OUTGOING,
-    status: JOB_STATUS.TRANSFERRING,
-    manifest,
-    sources,
-    createdAt: now,
-    updatedAt: now,
-    errorMessage: null,
-    diagnosticCode: null,
-    files: [],
-    outgoingCheckpoint: null,
-    localDeviceId: device.deviceId,
-    signingPrivateKey: device.signingPrivateKey,
-    remoteSigningPublicKey: peer.signingPublicKey,
-    remoteEncryptionPublicKey: peer.encryptionPublicKey,
-    peer: { host: peer.host, port: peer.port },
-  };
+  process.stdout.write(`Scanning ${rootDir}...\n`);
+  const scanResults = scanDirectory(rootDir);
+  if (scanResults.length === 0) {
+    process.stderr.write('Error: directory is empty\n');
+    process.exit(1);
+  }
+  const fileResults = scanResults.filter((entry) => entry.kind === 'file');
+  const directoryResults = scanResults.filter((entry) => entry.kind === 'directory');
+  process.stdout.write(`Found ${fileResults.length} file(s) and ${directoryResults.length} director${directoryResults.length === 1 ? 'y' : 'ies'}\n`);
+
+  process.stdout.write('Computing hashes...\n');
+  const entries = [];
+  const sources = [];
+  for (const directory of directoryResults) {
+    entries.push({ kind: 'directory' as const, path: directory.relativePath });
+  }
+  for (const file of fileResults) {
+    const sha256 = await computeFileHash(file.absolutePath);
+    entries.push({ kind: 'file' as const, path: file.relativePath, size: file.size, sha256 });
+    sources.push({ path: file.relativePath, sourcePath: file.absolutePath, size: file.size, sha256 });
+  }
+  const manifest = createTransferManifest({ entries });
+  const totalBytes = fileResults.reduce((sum, f) => sum + f.size, 0);
+  process.stdout.write(`  Total: ${manifest.totalFiles} file(s), ${formatBytes(totalBytes)}\n\n`);
+
+  const { job, trustedPeer } = createCliTransferContext({ device, peer, manifest, sources });
 
   const controller = new AbortController();
+  let interrupted = false;
+  const onSignal = () => {
+    if (interrupted) return;
+    interrupted = true;
+    process.stderr.write('\nStopping sync...\n');
+    controller.abort(new Error('Sync interrupted by user'));
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
   const checkpoint = {
     files: sources.map((f) => ({ path: f.path, size: f.size, committedOffset: 0, completed: false })),
     nextSequence: 0,
@@ -175,20 +178,13 @@ export async function syncCommand(args: string[]): Promise<void> {
       job: job as never,
       checkpoint: checkpoint as never,
       signal: controller.signal,
-      commitRemoteCheckpoint: (() => job) as never,
+      commitRemoteCheckpoint: commitCliCheckpoint,
       localDevice: {
         deviceId: device.deviceId,
         signingPrivateKey: device.signingPrivateKey,
       },
       trustedPeerStore: {
-        getTrustedPeer: () => ({
-          identity: {
-            deviceId: peer.deviceId,
-            signingPublicKey: peer.signingPublicKey,
-            encryptionPublicKey: peer.encryptionPublicKey,
-          },
-          permissions: { transfer: true },
-        }),
+        getTrustedPeer: () => trustedPeer,
       },
       lanService: {
         listPeers: () => [peer as never],
@@ -198,8 +194,11 @@ export async function syncCommand(args: string[]): Promise<void> {
     process.stdout.write('\nSync completed successfully!\n');
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Sync failed: ${msg}\n`);
-    process.exit(1);
+    process.stderr.write(`${interrupted ? 'Sync interrupted' : 'Sync failed'}: ${msg}\n`);
+    process.exitCode = interrupted ? 130 : 1;
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
   }
 }
 

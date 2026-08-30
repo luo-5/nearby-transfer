@@ -24,6 +24,7 @@ import {
   JOB_DIRECTION,
   JOB_STATUS,
 } from '@luo-5/core';
+import { commitCliCheckpoint, createCliTransferContext } from '../src/transfer-context.js';
 
 interface TestDevice {
   deviceId: string;
@@ -222,52 +223,36 @@ test('e2e: sender → receiver transfers a 256 KB file with correct SHA-256', as
     try {
       const controller = new AbortController();
       const totalBytes = sm.files.reduce((sum, f) => sum + f.size, 0);
+      const peer = {
+        ...receiver,
+        host: '127.0.0.1',
+        port,
+      };
+      const { job, trustedPeer } = createCliTransferContext({
+        device: sender,
+        peer,
+        manifest: sm.manifest,
+        sources: sm.files,
+      });
       const checkpoint = {
         files: sm.files.map((f) => ({ path: f.path, size: f.size, committedOffset: 0, completed: false })),
         nextSequence: 0,
         totalTransferred: 0,
       };
       const executor = await createDesktopTransferExecutor({
-        job: {
-          taskId: sm.manifest.taskId,
-          peerDeviceId: receiver.deviceId,
-          direction: JOB_DIRECTION.OUTGOING,
-          status: JOB_STATUS.TRANSFERRING,
-          manifest: sm.manifest,
-          sources: sm.files,
-          sourceMappingStatus: 'available',
-          progress: { transferredBytes: 0, totalBytes },
-        } as never,
+        job: job as never,
         checkpoint,
         signal: controller.signal,
-        commitRemoteCheckpoint: (cp) => cp,
+        commitRemoteCheckpoint: commitCliCheckpoint,
         localDevice: {
           deviceId: sender.deviceId,
           signingPrivateKey: sender.signingPrivateKey,
         },
         trustedPeerStore: {
-          getTrustedPeer: () => ({
-            identity: {
-              deviceId: receiver.deviceId,
-              deviceName: receiver.deviceName,
-              fingerprint: receiver.fingerprint,
-              signingPublicKey: receiver.signingPublicKey,
-              encryptionPublicKey: receiver.encryptionPublicKey,
-            },
-            permissions: { transfer: true },
-            revokedAt: null,
-          }),
+          getTrustedPeer: () => trustedPeer,
         },
         lanService: {
-          listPeers: () => [{
-            deviceId: receiver.deviceId,
-            deviceName: receiver.deviceName,
-            fingerprint: receiver.fingerprint,
-            signingPublicKey: receiver.signingPublicKey,
-            encryptionPublicKey: receiver.encryptionPublicKey,
-            host: '127.0.0.1',
-            port,
-          }],
+          listPeers: () => [peer],
         },
       });
 
