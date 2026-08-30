@@ -8,6 +8,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { Buffer } from 'node:buffer';
 
 export interface WebDavAuth {
@@ -21,6 +22,7 @@ export interface WebDavClientOptions {
   auth?: WebDavAuth | undefined;
   rejectUnauthorized?: boolean | undefined;
   timeoutMs?: number | undefined;
+  maxResponseBytes?: number | undefined;
 }
 
 export interface WebDavItem {
@@ -43,6 +45,7 @@ export class WebDavClient {
   readonly auth?: WebDavAuth | undefined;
   readonly rejectUnauthorized: boolean;
   readonly timeoutMs: number;
+  readonly maxResponseBytes: number;
 
   constructor(options: WebDavClientOptions) {
     if (!options.baseUrl) throw new TypeError('baseUrl is required');
@@ -50,6 +53,10 @@ export class WebDavClient {
     this.auth = options.auth;
     this.rejectUnauthorized = options.rejectUnauthorized ?? true;
     this.timeoutMs = options.timeoutMs ?? 30000;
+    this.maxResponseBytes = options.maxResponseBytes ?? 64 * 1024 * 1024;
+    if (!Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes <= 0) {
+      throw new TypeError('maxResponseBytes must be a positive safe integer');
+    }
   }
 
   async propfind(remotePath = '/', depth: '0' | '1' | 'infinity' = '1'): Promise<WebDavResponse<WebDavItem[]>> {
@@ -180,19 +187,54 @@ export class WebDavClient {
         timeout: this.timeoutMs,
       };
 
-      const req = transport.request(reqOptions, (res) => {
+      let settled = false;
+      let bodyDone = false;
+      let responseDone = false;
+      let responseResult: WebDavResponse<T> | undefined;
+      const bodyStream = options.body instanceof Readable ? options.body : undefined;
+      let req: http.ClientRequest;
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        if (bodyStream && !bodyStream.destroyed) bodyStream.destroy(error);
+        if (req && !req.destroyed) req.destroy(error);
+        reject(error);
+      };
+      const finish = () => {
+        if (!settled && bodyDone && responseDone && responseResult) {
+          settled = true;
+          resolve(responseResult);
+        }
+      };
+
+      req = transport.request(reqOptions, (res) => {
         const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        let responseBytes = 0;
+        res.on('data', (chunk: Buffer) => {
+          responseBytes += chunk.length;
+          if (responseBytes > this.maxResponseBytes) {
+            const error = new Error(`WebDAV response exceeds ${this.maxResponseBytes} bytes`);
+            fail(error);
+            res.destroy(error);
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on('error', fail);
+        res.on('aborted', () => fail(new Error('WebDAV response was aborted')));
         res.on('end', () => {
+          if (settled) return;
           const fullBuf = Buffer.concat(chunks);
           const data = options.responseType === 'buffer' ? fullBuf : fullBuf.toString('utf8');
 
-          resolve({
+          responseResult = {
             statusCode: res.statusCode || 0,
             statusMessage: res.statusMessage || '',
             headers: res.headers,
             data: data as unknown as T,
-          });
+          };
+          responseDone = true;
+          finish();
         });
       });
 
@@ -200,19 +242,23 @@ export class WebDavClient {
         req.destroy(new Error(`WebDAV request timed out after ${this.timeoutMs}ms`));
       });
 
-      req.on('error', (err) => {
-        reject(err);
-      });
+      req.on('error', fail);
 
-      if (options.body) {
-        if (options.body instanceof Readable) {
-          options.body.pipe(req);
-        } else {
-          req.write(options.body);
-          req.end();
-        }
+      if (bodyStream) {
+        pipeline(bodyStream, req).then(() => {
+          bodyDone = true;
+          finish();
+        }, fail);
+      } else if (options.body !== undefined) {
+        req.end(options.body, () => {
+          bodyDone = true;
+          finish();
+        });
       } else {
-        req.end();
+        req.end(() => {
+          bodyDone = true;
+          finish();
+        });
       }
     });
   }
