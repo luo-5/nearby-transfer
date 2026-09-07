@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Buffer } from 'node:buffer';
@@ -229,16 +229,17 @@ test('sender: buildFileSpec creates correct metadata', () => {
 });
 
 test('sender: sendFiles sends to LocalSendReceiver', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'nt-ls-send-'));
+  const receiveDir = mkdtempSync(join(tmpdir(), 'nt-ls-send-receive-'));
+  const sourceDir = mkdtempSync(join(tmpdir(), 'nt-ls-send-source-'));
+  const receiver = new LocalSendReceiver({
+    port: 0, alias: 'recv', fingerprint: 'recv-fp', receiveDir,
+  });
   try {
-    const receiver = new LocalSendReceiver({
-      port: 0, alias: 'recv', fingerprint: 'recv-fp', receiveDir: dir,
-    });
     await receiver.start();
     const port = (receiver as unknown as { server: { address: () => { port: number } } }).server.address().port;
 
     // Create source file
-    const srcFile = join(dir, 'source.bin');
+    const srcFile = join(sourceDir, 'source.bin');
     const srcData = Buffer.from('send test data');
     writeFileSync(srcFile, srcData);
 
@@ -265,12 +266,12 @@ test('sender: sendFiles sends to LocalSendReceiver', async () => {
     assert.ok(result.sessionId);
 
     // Verify received file
-    const received = readFileSync(join(dir, 'source.bin'));
+    const received = readFileSync(join(receiveDir, 'source.bin'));
     assert.deepEqual(received, srcData);
-
-    await receiver.stop();
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    await receiver.stop();
+    rmSync(receiveDir, { recursive: true, force: true });
+    rmSync(sourceDir, { recursive: true, force: true });
   }
 });
 
@@ -309,3 +310,237 @@ test('receiver: cancel endpoint removes session', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('receiver: rejects traversal paths and unsafe cross-platform file names', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt-ls-paths-'));
+  const receiver = new LocalSendReceiver({
+    port: 0, alias: 'paths-test', fingerprint: 'paths-fp', receiveDir: dir,
+  });
+  try {
+    await receiver.start();
+    const port = receiverPort(receiver);
+    const unsafeNames = [
+      '../outside.txt',
+      '..\\outside.txt',
+      '/tmp/outside.txt',
+      'C:\\outside.txt',
+      '\\\\server\\share\\outside.txt',
+      'nested/file.txt',
+      'nested\\file.txt',
+      'CON',
+      'trailing.',
+    ];
+
+    for (const fileName of unsafeNames) {
+      const response = await prepareUpload(port, {
+        f1: { id: 'f1', fileName, size: 1, fileType: 'file' },
+      });
+      assert.equal(response.status, 400, `expected ${JSON.stringify(fileName)} to be rejected`);
+    }
+
+    const unsafeId = await prepareUpload(port, {
+      '../outside': { id: '../outside', fileName: 'safe.txt', size: 1, fileType: 'file' },
+    });
+    assert.equal(unsafeId.status, 400);
+    assert.deepEqual(receiveScratchDirs(dir), []);
+  } finally {
+    await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('receiver: never overwrites an existing destination', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt-ls-no-overwrite-'));
+  const receiver = new LocalSendReceiver({
+    port: 0, alias: 'overwrite-test', fingerprint: 'overwrite-fp', receiveDir: dir,
+  });
+  try {
+    await receiver.start();
+    const port = receiverPort(receiver);
+    const original = Buffer.from('keep me');
+    writeFileSync(join(dir, 'existing.txt'), original);
+    const data = Buffer.from('replace me');
+    const prepared = await prepareUpload(port, {
+      f1: {
+        id: 'f1', fileName: 'existing.txt', size: data.length, fileType: 'file',
+        sha256: createHash('sha256').update(data).digest('hex'),
+      },
+    });
+    assert.equal(prepared.status, 200);
+    const manifest = await prepared.json() as { sessionId: string; files: Record<string, string> };
+
+    const uploaded = await uploadFile(port, manifest, 'f1', data);
+    assert.equal(uploaded.status, 409);
+    assert.deepEqual(readFileSync(join(dir, 'existing.txt')), original);
+
+    await cancelSession(port, manifest.sessionId);
+    assert.deepEqual(receiveScratchDirs(dir), []);
+  } finally {
+    await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('receiver: enforces manifest, body, and declared upload size limits', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt-ls-limits-'));
+  const receiver = new LocalSendReceiver({
+    port: 0,
+    alias: 'limits-test',
+    fingerprint: 'limits-fp',
+    receiveDir: dir,
+    requestBodyLimitBytes: 1024,
+    maxFilesPerSession: 2,
+    maxFileSizeBytes: 4,
+    maxSessionSizeBytes: 4,
+  });
+  try {
+    await receiver.start();
+    const port = receiverPort(receiver);
+
+    const tooLargeManifest = await prepareUpload(port, {
+      f1: { id: 'f1', fileName: 'large.bin', size: 5, fileType: 'file' },
+    });
+    assert.equal(tooLargeManifest.status, 400);
+
+    const tooLargeSession = await prepareUpload(port, {
+      f1: { id: 'f1', fileName: 'one.bin', size: 3, fileType: 'file' },
+      f2: { id: 'f2', fileName: 'two.bin', size: 3, fileType: 'file' },
+    });
+    assert.equal(tooLargeSession.status, 400);
+
+    const tooManyFiles = await prepareUpload(port, {
+      f1: { id: 'f1', fileName: 'one.bin', size: 1, fileType: 'file' },
+      f2: { id: 'f2', fileName: 'two.bin', size: 1, fileType: 'file' },
+      f3: { id: 'f3', fileName: 'three.bin', size: 1, fileType: 'file' },
+    });
+    assert.equal(tooManyFiles.status, 400);
+
+    const oversizedBody = await fetch(`http://127.0.0.1:${port}${LOCALSEND_API_PREFIX}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ padding: 'x'.repeat(2048) }),
+    });
+    assert.equal(oversizedBody.status, 413);
+
+    const prepared = await prepareUpload(port, {
+      f1: { id: 'f1', fileName: 'one.bin', size: 1, fileType: 'file' },
+    });
+    assert.equal(prepared.status, 200);
+    const manifest = await prepared.json() as { sessionId: string; files: Record<string, string> };
+    const oversizedUpload = await uploadFile(port, manifest, 'f1', Buffer.from('xx'));
+    assert.equal(oversizedUpload.status, 413);
+
+    const retried = await uploadFile(port, manifest, 'f1', Buffer.from('x'));
+    assert.equal(retried.status, 200);
+    assert.deepEqual(readFileSync(join(dir, 'one.bin')), Buffer.from('x'));
+    assert.deepEqual(receiveScratchDirs(dir), []);
+  } finally {
+    await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('receiver: expires abandoned sessions and removes their scratch data', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt-ls-expiry-'));
+  const receiver = new LocalSendReceiver({
+    port: 0,
+    alias: 'expiry-test',
+    fingerprint: 'expiry-fp',
+    receiveDir: dir,
+    sessionTimeoutMs: 50,
+  });
+  try {
+    await receiver.start();
+    const port = receiverPort(receiver);
+    const prepared = await prepareUpload(port, {
+      f1: { id: 'f1', fileName: 'expired.txt', size: 1, fileType: 'file' },
+    });
+    assert.equal(prepared.status, 200);
+    const manifest = await prepared.json() as { sessionId: string; files: Record<string, string> };
+    assert.equal(receiveScratchDirs(dir).length, 1);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const upload = await uploadFile(port, manifest, 'f1', Buffer.from('x'));
+    assert.equal(upload.status, 403);
+    assert.deepEqual(receiveScratchDirs(dir), []);
+  } finally {
+    await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('receiver: bounds pending sessions and cleans scratch data on cancel and stop', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt-ls-sessions-'));
+  const receiver = new LocalSendReceiver({
+    port: 0, alias: 'sessions-test', fingerprint: 'sessions-fp', receiveDir: dir, maxSessions: 1,
+  });
+  try {
+    await receiver.start();
+    const port = receiverPort(receiver);
+    const first = await prepareUpload(port, {
+      f1: { id: 'f1', fileName: 'first.txt', size: 1, fileType: 'file' },
+    });
+    assert.equal(first.status, 200);
+    const firstManifest = await first.json() as { sessionId: string };
+    assert.equal(receiveScratchDirs(dir).length, 1);
+
+    const second = await prepareUpload(port, {
+      f2: { id: 'f2', fileName: 'second.txt', size: 1, fileType: 'file' },
+    });
+    assert.equal(second.status, 503);
+
+    await cancelSession(port, firstManifest.sessionId);
+    assert.deepEqual(receiveScratchDirs(dir), []);
+
+    const third = await prepareUpload(port, {
+      f3: { id: 'f3', fileName: 'third.txt', size: 1, fileType: 'file' },
+    });
+    assert.equal(third.status, 200);
+    assert.equal(receiveScratchDirs(dir).length, 1);
+
+    await receiver.stop();
+    assert.deepEqual(receiveScratchDirs(dir), []);
+  } finally {
+    await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function receiverPort(receiver: LocalSendReceiver): number {
+  return (receiver as unknown as { server: { address: () => { port: number } } }).server.address().port;
+}
+
+function prepareUpload(port: number, files: Record<string, Record<string, unknown>>): Promise<Response> {
+  const senderInfo = createDeviceInfo({ alias: 'sender', fingerprint: 'sender-fp', port: 12345 });
+  return fetch(`http://127.0.0.1:${port}${LOCALSEND_API_PREFIX}/prepare-upload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ info: senderInfo, files }),
+  });
+}
+
+function uploadFile(
+  port: number,
+  manifest: { sessionId: string; files: Record<string, string> },
+  fileId: string,
+  data: Buffer,
+): Promise<Response> {
+  const token = manifest.files[fileId];
+  assert.ok(token);
+  return fetch(
+    `http://127.0.0.1:${port}${LOCALSEND_API_PREFIX}/upload?sessionId=${manifest.sessionId}&fileId=${encodeURIComponent(fileId)}&token=${token}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: data },
+  );
+}
+
+function cancelSession(port: number, sessionId: string): Promise<Response> {
+  return fetch(
+    `http://127.0.0.1:${port}${LOCALSEND_API_PREFIX}/cancel?sessionId=${sessionId}`,
+    { method: 'POST' },
+  );
+}
+
+function receiveScratchDirs(receiveDir: string): string[] {
+  if (!existsSync(receiveDir)) return [];
+  return readdirSync(receiveDir).filter((entry) => entry.startsWith('.localsend-tmp-'));
+}
